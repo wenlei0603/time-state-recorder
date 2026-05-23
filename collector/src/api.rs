@@ -20,6 +20,7 @@ use tower_http::services::ServeDir;
 
 use crate::{
     blocker::BlockerEngine,
+    input,
     interval::build_time_events,
     models::{
         BlockerHit, ScreenshotMeta, ScreenshotSummary, TimeEvent,
@@ -74,6 +75,18 @@ struct ScreenshotsResponse {
     screenshots: Vec<ScreenshotMeta>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InputEventsResponse {
+    events: Vec<crate::models::InputEvent>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TextSegmentsResponse {
+    segments: Vec<crate::models::TextSegment>,
+}
+
 const DEFAULT_SCREENSHOT_INTERVAL: u64 = 60;
 const DEFAULT_IDLE_THRESHOLD: u64 = 120;
 const DEFAULT_SCREENSHOT_LIMIT: usize = 1440;
@@ -105,6 +118,9 @@ fn router_from_state(state: AppState) -> Router {
         .route("/api/blockers", get(blockers))
         .route("/api/screenshots", get(screenshots))
         .route("/api/screenshot-summary", get(screenshot_summary))
+        .route("/api/input-events", get(input_events))
+        .route("/api/input-summary", get(input_summary))
+        .route("/api/text-segments", get(text_segments))
         .nest_service("/screenshots", ServeDir::new(screenshot_dir))
         .with_state(state)
 }
@@ -121,6 +137,7 @@ pub async fn serve(
 
     spawn_collector_loop(state.clone(), session_id.clone(), poll_ms);
     spawn_screenshot_loop(state.clone(), session_id);
+    input::spawn_input_collector(state.store.clone());
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, router_from_state(state)).await?;
@@ -325,6 +342,62 @@ async fn screenshot_summary(
 
     match store.get_screenshot_summary(&date) {
         Ok(summary) => Json(summary).into_response(),
+        Err(err) => internal_error(err),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct InputEventsQuery {
+    limit: Option<usize>,
+    #[serde(rename = "segmentId")]
+    segment_id: Option<String>,
+}
+
+async fn input_events(
+    State(state): State<AppState>,
+    Query(query): Query<InputEventsQuery>,
+) -> impl IntoResponse {
+    let limit = query.limit.unwrap_or(500).min(5_000);
+    let store = match state.store.lock() {
+        Ok(store) => store,
+        Err(_) => return internal_error("store lock poisoned"),
+    };
+
+    match store.list_input_events(limit, query.segment_id.as_deref()) {
+        Ok(events) => Json(InputEventsResponse { events }).into_response(),
+        Err(err) => internal_error(err),
+    }
+}
+
+async fn input_summary(
+    State(state): State<AppState>,
+    Query(query): Query<DateQuery>,
+) -> impl IntoResponse {
+    let date = query.date.unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+    let store = match state.store.lock() {
+        Ok(store) => store,
+        Err(_) => return internal_error("store lock poisoned"),
+    };
+
+    match store.get_input_summary(&date) {
+        Ok(summary) => Json(summary).into_response(),
+        Err(err) => internal_error(err),
+    }
+}
+
+async fn text_segments(
+    State(state): State<AppState>,
+    Query(query): Query<DateQuery>,
+) -> impl IntoResponse {
+    let date = query.date.unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+    let limit = query.limit.unwrap_or(500).min(5_000);
+    let store = match state.store.lock() {
+        Ok(store) => store,
+        Err(_) => return internal_error("store lock poisoned"),
+    };
+
+    match store.list_text_segments(&date, limit) {
+        Ok(segments) => Json(TextSegmentsResponse { segments }).into_response(),
         Err(err) => internal_error(err),
     }
 }
