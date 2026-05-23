@@ -223,7 +223,7 @@ fn spawn_collector_loop(state: AppState, session_id: String, poll_ms: u64) {
     });
 }
 
-fn spawn_screenshot_loop(state: AppState, _session_id: String) {
+fn spawn_screenshot_loop(state: AppState, session_id: String) {
     let interval = *state.screenshot_interval_secs;
     let idle_threshold = *state.idle_threshold_secs;
     let screenshot_dir = state.screenshot_dir.to_path_buf();
@@ -305,20 +305,33 @@ fn spawn_screenshot_loop(state: AppState, _session_id: String) {
             let relative_path = format!("{}/{}", date_dir, filename);
 
             if let Ok(mut store) = state.store.lock() {
-                let _ = store.insert_screenshot(&ScreenshotMeta {
-                    id: 0,
-                    captured_at: now,
-                    file_path: relative_path,
-                    width: w,
-                    height: h,
-                    process_name: Some(snapshot.process_name),
-                    window_title: snapshot.window_title,
-                    capture_status: "ok".to_string(),
-                });
-                if let Ok(mut h) = state.health.lock() {
-                    h.screenshot_collector.last_event_at = Some(Utc::now());
-                    h.screenshot_collector.error_count = 0;
-                    h.screenshot_collector.last_error = None;
+                match store.insert_screenshot(
+                    &session_id,
+                    &ScreenshotMeta {
+                        id: 0,
+                        captured_at: now,
+                        file_path: relative_path,
+                        width: w,
+                        height: h,
+                        process_name: Some(snapshot.process_name),
+                        window_title: snapshot.window_title,
+                        capture_status: "ok".to_string(),
+                    },
+                ) {
+                    Ok(_) => {
+                        if let Ok(mut h) = state.health.lock() {
+                            h.screenshot_collector.last_event_at = Some(Utc::now());
+                            h.screenshot_collector.error_count = 0;
+                            h.screenshot_collector.last_error = None;
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("screenshot metadata write failed: {err:#}");
+                        if let Ok(mut h) = state.health.lock() {
+                            h.screenshot_collector.error_count += 1;
+                            h.screenshot_collector.last_error = Some(format!("{err:#}"));
+                        }
+                    }
                 }
             }
         }

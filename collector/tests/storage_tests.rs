@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use tsr_collector::{
-    models::{CaptureStatus, WindowSnapshot},
+    models::{CaptureStatus, ScreenshotMeta, WindowSnapshot},
     storage::Store,
 };
 
@@ -65,6 +65,35 @@ fn lists_latest_window_focus_events_in_chronological_order() {
             .collect::<Vec<_>>(),
         vec!["App-1", "App-2"]
     );
+}
+
+#[test]
+fn persists_screenshot_metadata_for_session() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+
+    store
+        .insert_screenshot(
+            &session_id,
+            &ScreenshotMeta {
+                id: 0,
+                captured_at: ts("2026-05-23T09:01:00Z"),
+                file_path: "2026-05-23/09-01.jpg".into(),
+                width: 640,
+                height: 360,
+                process_name: Some("Code.exe".into()),
+                window_title: Some("main.rs".into()),
+                capture_status: "ok".into(),
+            },
+        )
+        .unwrap();
+
+    let rows = store.list_screenshots_by_date("2026-05-23", 10).unwrap();
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].file_path, "2026-05-23/09-01.jpg");
+    assert_eq!(rows[0].process_name.as_deref(), Some("Code.exe"));
 }
 
 fn ts(value: &str) -> DateTime<Utc> {

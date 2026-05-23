@@ -294,7 +294,7 @@ impl Store {
         Ok(hits)
     }
 
-    pub fn insert_screenshot(&mut self, meta: &ScreenshotMeta) -> Result<i64> {
+    pub fn insert_screenshot(&mut self, session_id: &str, meta: &ScreenshotMeta) -> Result<i64> {
         self.conn.execute(
             r#"
             INSERT INTO screenshot_thumbnails
@@ -309,7 +309,7 @@ impl Store {
                 meta.process_name,
                 meta.window_title,
                 meta.capture_status,
-                "current",
+                session_id,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
