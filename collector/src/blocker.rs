@@ -67,16 +67,12 @@ impl BlockerEngine {
 
         match rule.operator.as_str() {
             "equals" => actual_value.eq_ignore_ascii_case(&rule.value),
-            "contains" => {
-                actual_value
-                    .to_lowercase()
-                    .contains(&rule.value.to_lowercase())
-            }
-            "starts_with" => {
-                actual_value
-                    .to_lowercase()
-                    .starts_with(&rule.value.to_lowercase())
-            }
+            "contains" => actual_value
+                .to_lowercase()
+                .contains(&rule.value.to_lowercase()),
+            "starts_with" => actual_value
+                .to_lowercase()
+                .starts_with(&rule.value.to_lowercase()),
             _ => false,
         }
     }

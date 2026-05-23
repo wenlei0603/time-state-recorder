@@ -1,14 +1,13 @@
 #[cfg(windows)]
 mod platform {
-    use anyhow::Result;
-    use image::{DynamicImage, ImageFormat, imageops::FilterType};
+    use image::{ImageFormat, imageops};
     use std::io::Cursor;
     use windows_sys::Win32::{
         System::SystemInformation::GetTickCount,
-        UI::Input::{GetLastInputInfo, LASTINPUTINFO},
+        UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO},
     };
 
-    pub fn capture_thumbnail(max_width: u32, quality: u8) -> Option<(Vec<u8>, u32, u32)> {
+    pub fn capture_thumbnail(max_width: u32, _quality: u8) -> Option<(Vec<u8>, u32, u32)> {
         let monitors = xcap::Monitor::all().ok()?;
         let primary = monitors.iter().find(|m| m.is_primary().unwrap_or(false))?;
         let image = primary.capture_image().ok()?;
@@ -17,19 +16,16 @@ mod platform {
         let thumb = if w > max_width {
             let ratio = max_width as f64 / w as f64;
             let new_h = (h as f64 * ratio) as u32;
-            image.resize(max_width, new_h, FilterType::Lanczos3)
+            let dynamic = image::DynamicImage::ImageRgba8(image);
+            dynamic.resize(max_width, new_h, imageops::FilterType::Lanczos3)
         } else {
-            image
+            image::DynamicImage::ImageRgba8(image)
         };
 
         let mut buf = Cursor::new(Vec::new());
-        thumb
-            .write_to(&mut buf, ImageFormat::Jpeg)
-            .ok()?;
+        thumb.write_to(&mut buf, ImageFormat::Jpeg).ok()?;
 
         let inner = buf.into_inner();
-        // Set JPEG quality by re-encoding if needed (image crate write_to uses default quality)
-        // For MVP, use default quality; adjust later with turbojpeg or custom encoder if needed
         let (tw, th) = (thumb.width(), thumb.height());
         Some((inner, tw, th))
     }

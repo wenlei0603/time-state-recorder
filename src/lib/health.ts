@@ -17,14 +17,16 @@ export async function fetchCollectorHealth(
     throw new Error("Collector API returned an invalid health response");
   }
 
+  const subsystems: SubsystemHealth = { status: "not_started", errorCount: 0 };
+
   return {
-    status: readStatus(body, "status"),
-    startedAt: readString(body, "startedAt"),
-    uptimeSeconds: readNumber(body, "uptimeSeconds"),
-    version: readString(body, "version"),
-    windowCollector: readSubsystem(body, "windowCollector"),
-    inputCollector: readSubsystem(body, "inputCollector"),
-    screenshotCollector: readSubsystem(body, "screenshotCollector"),
+    status: readStatus(body, "status", "error"),
+    startedAt: readString(body, "startedAt", new Date().toISOString()),
+    uptimeSeconds: readNumber(body, "uptimeSeconds", 0),
+    version: readString(body, "version", "unknown"),
+    windowCollector: readSubsystem(body, "windowCollector", subsystems),
+    inputCollector: readSubsystem(body, "inputCollector", subsystems),
+    screenshotCollector: readSubsystem(body, "screenshotCollector", subsystems),
     dbStats: readDbStats(body, "dbStats"),
   };
 }
@@ -32,15 +34,14 @@ export async function fetchCollectorHealth(
 function readSubsystem(
   record: Record<string, unknown>,
   key: string,
+  fallback: SubsystemHealth,
 ): SubsystemHealth {
   const value = record[key];
-  if (!isRecord(value)) {
-    throw new Error(`Collector API row is missing ${key}`);
-  }
+  if (!isRecord(value)) return fallback;
   return {
     status: readSubsystemStatus(value, "status"),
     lastEventAt: readOptionalString(value, "lastEventAt"),
-    errorCount: readNumber(value, "errorCount"),
+    errorCount: readNumber(value, "errorCount", 0),
     lastError: readOptionalString(value, "lastError"),
   };
 }
@@ -51,28 +52,25 @@ function readDbStats(
 ): DbStats {
   const value = record[key];
   if (!isRecord(value)) {
-    throw new Error(`Collector API row is missing ${key}`);
+    return { windowEvents: 0, inputEvents: 0, textSegments: 0, screenshots: 0, blockerHits: 0 };
   }
   return {
-    windowEvents: readNumber(value, "windowEvents"),
-    inputEvents: readNumber(value, "inputEvents"),
-    textSegments: readNumber(value, "textSegments"),
-    screenshots: readNumber(value, "screenshots"),
-    blockerHits: readNumber(value, "blockerHits"),
+    windowEvents: readNumber(value, "windowEvents", 0),
+    inputEvents: readNumber(value, "inputEvents", 0),
+    textSegments: readNumber(value, "textSegments", 0),
+    screenshots: readNumber(value, "screenshots", 0),
+    blockerHits: readNumber(value, "blockerHits", 0),
   };
 }
 
 function readStatus(
   record: Record<string, unknown>,
   key: string,
+  fallback: "ok" | "degraded" | "error",
 ): "ok" | "degraded" | "error" {
   const value = record[key];
-  if (typeof value !== "string") {
-    throw new Error(`Collector API row is missing ${key}`);
-  }
-  if (value !== "ok" && value !== "degraded" && value !== "error") {
-    throw new Error(`Collector API row has invalid ${key}: ${value}`);
-  }
+  if (typeof value !== "string") return fallback;
+  if (value !== "ok" && value !== "degraded" && value !== "error") return fallback;
   return value;
 }
 
@@ -81,20 +79,18 @@ function readSubsystemStatus(
   key: string,
 ): "running" | "error" | "not_started" {
   const value = record[key];
-  if (typeof value !== "string") {
-    throw new Error(`Collector API row is missing ${key}`);
-  }
-  if (value !== "running" && value !== "error" && value !== "not_started") {
-    throw new Error(`Collector API row has invalid ${key}: ${value}`);
-  }
+  if (typeof value !== "string") return "not_started";
+  if (value !== "running" && value !== "error" && value !== "not_started") return "not_started";
   return value;
 }
 
-function readString(record: Record<string, unknown>, key: string): string {
+function readString(
+  record: Record<string, unknown>,
+  key: string,
+  fallback: string,
+): string {
   const value = record[key];
-  if (typeof value !== "string") {
-    throw new Error(`Collector API row is missing ${key}`);
-  }
+  if (typeof value !== "string") return fallback;
   return value;
 }
 
@@ -103,20 +99,18 @@ function readOptionalString(
   key: string,
 ): string | undefined {
   const value = record[key];
-  if (value === null || value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "string") {
-    throw new Error(`Collector API row has invalid ${key}`);
-  }
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== "string") return undefined;
   return value;
 }
 
-function readNumber(record: Record<string, unknown>, key: string): number {
+function readNumber(
+  record: Record<string, unknown>,
+  key: string,
+  fallback: number,
+): number {
   const value = record[key];
-  if (typeof value !== "number") {
-    throw new Error(`Collector API row is missing ${key}`);
-  }
+  if (typeof value !== "number") return fallback;
   return value;
 }
 

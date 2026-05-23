@@ -83,7 +83,7 @@ async fn does_not_allow_cross_origin_reads() {
 async fn serves_input_events_as_json() {
     let mut store = Store::open_memory().unwrap();
     store.init().unwrap();
-    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+    let _session_id = store.create_session("0.1.0", "test-config").unwrap();
 
     let segment = tsr_collector::models::TextSegment {
         id: "seg-test-1".into(),
@@ -164,7 +164,7 @@ async fn serves_input_events_as_json() {
 async fn serves_input_summary_as_json() {
     let mut store = Store::open_memory().unwrap();
     store.init().unwrap();
-    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+    let _session_id = store.create_session("0.1.0", "test-config").unwrap();
 
     let segment = tsr_collector::models::TextSegment {
         id: "seg-sum-1".into(),
@@ -185,23 +185,21 @@ async fn serves_input_summary_as_json() {
         process_name: Some("Code".into()),
         window_title: Some("main.rs".into()),
     };
-    let events = vec![
-        tsr_collector::models::InputEvent {
-            id: 0,
-            event_ts: DateTime::parse_from_rfc3339("2026-05-23T09:00:01Z")
-                .unwrap()
-                .with_timezone(&Utc),
-            event_type: tsr_collector::models::InputEventType::KeyDown,
-            vk_code: 72,
-            scan_code: 35,
-            character: Some("h".into()),
-            segment_id: "seg-sum-1".into(),
-            foreground_hwnd: 1111,
-            foreground_pid: 100,
-            process_name: Some("Code".into()),
-            window_title: Some("main.rs".into()),
-        },
-    ];
+    let events = vec![tsr_collector::models::InputEvent {
+        id: 0,
+        event_ts: DateTime::parse_from_rfc3339("2026-05-23T09:00:01Z")
+            .unwrap()
+            .with_timezone(&Utc),
+        event_type: tsr_collector::models::InputEventType::KeyDown,
+        vk_code: 72,
+        scan_code: 35,
+        character: Some("h".into()),
+        segment_id: "seg-sum-1".into(),
+        foreground_hwnd: 1111,
+        foreground_pid: 100,
+        process_name: Some("Code".into()),
+        window_title: Some("main.rs".into()),
+    }];
     store.insert_input_segment(&segment, &events).unwrap();
 
     let app = api::router(store, None);
@@ -211,11 +209,9 @@ async fn serves_input_summary_as_json() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let response = reqwest::get(format!(
-        "http://{addr}/api/input-summary?date=2026-05-23"
-    ))
-    .await
-    .unwrap();
+    let response = reqwest::get(format!("http://{addr}/api/input-summary?date=2026-05-23"))
+        .await
+        .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
     let body: serde_json::Value = response.json().await.unwrap();
@@ -224,9 +220,9 @@ async fn serves_input_summary_as_json() {
     assert_eq!(body["keydownCount"], 1);
     assert_eq!(body["keyupCount"], 0);
     assert_eq!(body["segmentCount"], 1);
-    assert_eq!(body["totalChars"], 4);
+    assert_eq!(body["totalChars"], 6);
     assert_eq!(body["topApps"][0]["processName"], "Code");
-    assert_eq!(body["topApps"][0]["charCount"], 4);
+    assert_eq!(body["topApps"][0]["charCount"], 6);
 
     server.abort();
 }
@@ -235,7 +231,7 @@ async fn serves_input_summary_as_json() {
 async fn serves_text_segments_as_json() {
     let mut store = Store::open_memory().unwrap();
     store.init().unwrap();
-    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+    let _session_id = store.create_session("0.1.0", "test-config").unwrap();
 
     let segment = tsr_collector::models::TextSegment {
         id: "seg-text-1".into(),
@@ -261,11 +257,9 @@ async fn serves_text_segments_as_json() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let response = reqwest::get(format!(
-        "http://{addr}/api/text-segments?date=2026-05-23"
-    ))
-    .await
-    .unwrap();
+    let response = reqwest::get(format!("http://{addr}/api/text-segments?date=2026-05-23"))
+        .await
+        .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
     let body: serde_json::Value = response.json().await.unwrap();

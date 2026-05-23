@@ -1,6 +1,6 @@
 use std::{
     net::SocketAddr,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -22,10 +22,7 @@ use crate::{
     blocker::BlockerEngine,
     input,
     interval::build_time_events,
-    models::{
-        BlockerHit, CollectorHealth, DbStats, ScreenshotMeta, ScreenshotSummary,
-        SubsystemHealth, TimeEvent,
-    },
+    models::{BlockerHit, CollectorHealth, DbStats, ScreenshotMeta, SubsystemHealth, TimeEvent},
     screenshot,
     storage::Store,
     window::sample_foreground_window,
@@ -207,8 +204,7 @@ fn spawn_collector_loop(state: AppState, session_id: String, poll_ms: u64) {
                             eprintln!("window event write failed: store lock poisoned");
                             if let Ok(mut h) = state.health.lock() {
                                 h.window_collector.error_count += 1;
-                                h.window_collector.last_error =
-                                    Some("store lock poisoned".into());
+                                h.window_collector.last_error = Some("store lock poisoned".into());
                             }
                         }
                     }
@@ -227,7 +223,7 @@ fn spawn_collector_loop(state: AppState, session_id: String, poll_ms: u64) {
     });
 }
 
-fn spawn_screenshot_loop(state: AppState, session_id: String) {
+fn spawn_screenshot_loop(state: AppState, _session_id: String) {
     let interval = *state.screenshot_interval_secs;
     let idle_threshold = *state.idle_threshold_secs;
     let screenshot_dir = state.screenshot_dir.to_path_buf();
@@ -262,9 +258,7 @@ fn spawn_screenshot_loop(state: AppState, session_id: String) {
                             rule_value: rule.value.clone(),
                             actual_value: match rule.field.as_str() {
                                 "process_name" => snapshot.process_name.clone(),
-                                "window_title" => {
-                                    snapshot.window_title.clone().unwrap_or_default()
-                                }
+                                "window_title" => snapshot.window_title.clone().unwrap_or_default(),
                                 _ => String::new(),
                             },
                         });
@@ -438,7 +432,9 @@ async fn screenshots(
     State(state): State<AppState>,
     Query(query): Query<DateQuery>,
 ) -> impl IntoResponse {
-    let date = query.date.unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+    let date = query
+        .date
+        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
     let limit = query.limit.unwrap_or(DEFAULT_SCREENSHOT_LIMIT).min(5000);
     let store = match state.store.lock() {
         Ok(store) => store,
@@ -446,9 +442,7 @@ async fn screenshots(
     };
 
     match store.list_screenshots_by_date(&date, limit) {
-        Ok(screenshots) => {
-            Json(ScreenshotsResponse { screenshots }).into_response()
-        }
+        Ok(screenshots) => Json(ScreenshotsResponse { screenshots }).into_response(),
         Err(err) => internal_error(err),
     }
 }
@@ -457,7 +451,9 @@ async fn screenshot_summary(
     State(state): State<AppState>,
     Query(query): Query<DateQuery>,
 ) -> impl IntoResponse {
-    let date = query.date.unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+    let date = query
+        .date
+        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
     let store = match state.store.lock() {
         Ok(store) => store,
         Err(_) => return internal_error("store lock poisoned"),
@@ -496,7 +492,9 @@ async fn input_summary(
     State(state): State<AppState>,
     Query(query): Query<DateQuery>,
 ) -> impl IntoResponse {
-    let date = query.date.unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+    let date = query
+        .date
+        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
     let store = match state.store.lock() {
         Ok(store) => store,
         Err(_) => return internal_error("store lock poisoned"),
@@ -512,7 +510,9 @@ async fn text_segments(
     State(state): State<AppState>,
     Query(query): Query<DateQuery>,
 ) -> impl IntoResponse {
-    let date = query.date.unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+    let date = query
+        .date
+        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
     let limit = query.limit.unwrap_or(500).min(5_000);
     let store = match state.store.lock() {
         Ok(store) => store,

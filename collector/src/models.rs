@@ -125,9 +125,10 @@ pub struct AppScreenshotCount {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum InputEventType {
+    #[serde(rename = "keydown")]
     KeyDown,
+    #[serde(rename = "keyup")]
     KeyUp,
 }
 

@@ -10,7 +10,6 @@ use uuid::Uuid;
 use crate::{
     models::{CollectorHealth, InputEvent, InputEventType, TextSegment},
     storage::Store,
-    window::sample_foreground_window,
 };
 
 const VK_BACK: u16 = 0x08;
@@ -71,7 +70,9 @@ impl SegmentBuffer {
         self.window_title = signal.window_title.clone();
 
         let vk = signal.vk_code;
-        let is_enter = vk == VK_RETURN && signal.is_keydown;
+        let is_keydown = signal.is_keydown;
+        let is_enter = vk == VK_RETURN && is_keydown;
+        let ch = signal.character.clone();
 
         self.events.push(signal);
 
@@ -80,7 +81,7 @@ impl SegmentBuffer {
             return true;
         }
 
-        if signal.is_keydown {
+        if is_keydown {
             self.key_count += 1;
 
             if vk == VK_BACK {
@@ -88,9 +89,9 @@ impl SegmentBuffer {
                 self.backspace_count += 1;
             } else if vk == VK_DELETE {
                 self.delete_count += 1;
-            } else if let Some(ref ch) = signal.character {
-                if !ch.is_empty() {
-                    self.current_text.push_str(ch);
+            } else if let Some(ref c) = ch {
+                if !c.is_empty() {
+                    self.current_text.push_str(c);
                 }
             }
         }
@@ -212,23 +213,26 @@ mod platform {
 
     use tokio::sync::mpsc;
     use windows_sys::Win32::{
+        Devices::HumanInterfaceDevice::{HID_USAGE_GENERIC_KEYBOARD, HID_USAGE_PAGE_GENERIC},
+        Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
+        System::LibraryLoader::GetModuleHandleW,
         UI::{
-            Input::KeyboardAndMouse::{
-                GetRawInputData, RAWINPUT, RAWINPUTHEADER,
-                RIDEV_INPUTSINK, RID_INPUT, RIM_TYPEKEYBOARD, RI_KEY_BREAK,
-                RegisterRawInputDevices, RAWINPUTDEVICE, HID_USAGE_PAGE_GENERIC,
-                HID_USAGE_GENERIC_KEYBOARD,
+            Input::KeyboardAndMouse::{GetKeyboardLayout, ToUnicodeEx},
+            Input::{
+                GetRawInputData, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER, RID_INPUT,
+                RIDEV_INPUTSINK, RIM_TYPEKEYBOARD, RegisterRawInputDevices,
             },
             WindowsAndMessaging::{
-                CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-                GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
-                PostQuitMessage, RegisterClassW, SetWindowLongPtrW, GetWindowLongPtrW,
-                TranslateMessage, CS_HREDRAW, CS_VREDRAW, HWND, HWND_MESSAGE, LPARAM,
-                LRESULT, MSG, WNDCLASSW, WPARAM, WM_DESTROY, WM_INPUT, GWLP_USERDATA,
+                CS_HREDRAW, CS_VREDRAW, CreateWindowExW, DefWindowProcW, DestroyWindow,
+                DispatchMessageW, GWLP_USERDATA, GetForegroundWindow, GetMessageW,
+                GetWindowLongPtrW, GetWindowThreadProcessId, HWND_MESSAGE, MSG, PostQuitMessage,
+                RI_KEY_BREAK, RegisterClassW, SetWindowLongPtrW, TranslateMessage, WM_DESTROY,
+                WM_INPUT, WNDCLASSW,
             },
         },
-        System::LibraryLoader::GetModuleHandleW,
     };
+
+    use chrono::Utc;
 
     use super::InputSignal;
     use crate::window::sample_foreground_window;
@@ -285,50 +289,41 @@ mod platform {
                 sender: tx,
                 key_state: [0u8; 256],
             });
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA, &mut *state as *mut WindowState as isize);
+            SetWindowLongPtrW(
+                hwnd,
+                GWLP_USERDATA,
+                &mut *state as *mut WindowState as isize,
+            );
 
-            let mut rid = RAWINPUTDEVICE {
+            let rid = RAWINPUTDEVICE {
                 usUsagePage: HID_USAGE_PAGE_GENERIC,
                 usUsage: HID_USAGE_GENERIC_KEYBOARD,
                 dwFlags: RIDEV_INPUTSINK,
                 hwndTarget: hwnd,
             };
 
-            if RegisterRawInputDevices(
-                &rid,
-                1,
-                std::mem::size_of::<RAWINPUTDEVICE>() as u32,
-            ) == 0
-            {
+            if RegisterRawInputDevices(&rid, 1, std::mem::size_of::<RAWINPUTDEVICE>() as u32) == 0 {
                 eprintln!("input collector: RegisterRawInputDevices failed");
                 DestroyWindow(hwnd);
                 return;
             }
 
             let mut msg = MSG {
-                hwnd: HWND(std::ptr::null_mut()),
+                hwnd: std::ptr::null_mut(),
                 message: 0,
-                wParam: WPARAM(0),
-                lParam: LPARAM(0),
+                wParam: 0,
+                lParam: 0,
                 time: 0,
-                pt: windows_sys::Foundation::POINT { x: 0, y: 0 },
+                pt: POINT { x: 0, y: 0 },
             };
 
-            while GetMessageW(
-                &mut msg,
-                HWND(std::ptr::null_mut()),
-                0,
-                0,
-            ) > 0
-            {
+            while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
 
             // Clean up
-            let _boxed = Box::from_raw(
-                GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState,
-            );
+            let _boxed = Box::from_raw(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState);
             DestroyWindow(hwnd);
         }
     }
@@ -339,120 +334,123 @@ mod platform {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
-        if msg == WM_INPUT {
-            let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState;
-            if state_ptr.is_null() {
-                return DefWindowProcW(hwnd, msg, wparam, lparam);
-            }
-
-            let state = &mut *state_ptr;
-
-            let mut size: u32 = 0;
-            if GetRawInputData(
-                windows_sys::Win32::UI::Input::KeyboardAndMouse::HRAWINPUT(lparam.0),
-                RID_INPUT,
-                std::ptr::null_mut(),
-                &mut size,
-                std::mem::size_of::<RAWINPUTHEADER>() as u32,
-            ) != 0
-            {
-                return DefWindowProcW(hwnd, msg, wparam, lparam);
-            }
-
-            let mut buf: Vec<u8> = vec![0; size as usize];
-            let copied = GetRawInputData(
-                windows_sys::Win32::UI::Input::KeyboardAndMouse::HRAWINPUT(lparam.0),
-                RID_INPUT,
-                buf.as_mut_ptr() as *mut _,
-                &mut size,
-                std::mem::size_of::<RAWINPUTHEADER>() as u32,
-            );
-
-            if copied as u32 != size {
-                return DefWindowProcW(hwnd, msg, wparam, lparam);
-            }
-
-            let raw = buf.as_ptr() as *const RAWINPUT;
-            if (*raw).header.dwType == RIM_TYPEKEYBOARD {
-                let kb = &(*raw).data.keyboard;
-
-                let vk = kb.VKey as u16;
-                let scan = kb.MakeCode as u16;
-                let is_keydown = kb.Flags & RI_KEY_BREAK == 0;
-                let is_e0 = kb.Flags & 0x02 != 0;
-
-                // Update key state for ToUnicodeEx
-                if is_keydown {
-                    state.key_state[vk as usize] = 0x80;
-                } else {
-                    state.key_state[vk as usize] = 0;
-                }
-                if is_e0 {
-                    state.key_state[scan as usize] = 0x80;
+        unsafe {
+            if msg == WM_INPUT {
+                let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState;
+                if state_ptr.is_null() {
+                    return DefWindowProcW(hwnd, msg, wparam, lparam);
                 }
 
-                // Map to character on keydown
-                let character = if is_keydown {
-                    let mut buf = [0u16; 4];
-                    let result = {
-                        let keyboard_layout = {
-                            let fg = GetForegroundWindow();
-                            let mut tid = 0u32;
-                            GetWindowThreadProcessId(fg, &mut tid);
-                            windows_sys::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout(tid)
+                let state = &mut *state_ptr;
+
+                let mut size: u32 = 0;
+                let hrawinput = lparam as HRAWINPUT;
+                if GetRawInputData(
+                    hrawinput,
+                    RID_INPUT,
+                    std::ptr::null_mut(),
+                    &mut size,
+                    std::mem::size_of::<RAWINPUTHEADER>() as u32,
+                ) != 0
+                {
+                    return DefWindowProcW(hwnd, msg, wparam, lparam);
+                }
+
+                let mut buf: Vec<u8> = vec![0; size as usize];
+                let copied = GetRawInputData(
+                    hrawinput,
+                    RID_INPUT,
+                    buf.as_mut_ptr() as *mut _,
+                    &mut size,
+                    std::mem::size_of::<RAWINPUTHEADER>() as u32,
+                );
+
+                if copied as u32 != size {
+                    return DefWindowProcW(hwnd, msg, wparam, lparam);
+                }
+
+                let raw = buf.as_ptr() as *const RAWINPUT;
+                if (*raw).header.dwType == RIM_TYPEKEYBOARD {
+                    let kb = &(*raw).data.keyboard;
+
+                    let vk = kb.VKey as u16;
+                    let scan = kb.MakeCode as u16;
+                    let is_keydown = kb.Flags & RI_KEY_BREAK as u16 == 0;
+                    let is_e0 = kb.Flags & 0x02 != 0;
+
+                    // Update key state for ToUnicodeEx
+                    if is_keydown {
+                        state.key_state[vk as usize] = 0x80;
+                    } else {
+                        state.key_state[vk as usize] = 0;
+                    }
+                    if is_e0 {
+                        state.key_state[scan as usize] = 0x80;
+                    }
+
+                    // Map to character on keydown
+                    let character = if is_keydown {
+                        let mut buf = [0u16; 4];
+                        let result = {
+                            let keyboard_layout = {
+                                let fg = GetForegroundWindow();
+                                let mut tid = 0u32;
+                                GetWindowThreadProcessId(fg, &mut tid);
+                                GetKeyboardLayout(tid)
+                            };
+
+                            ToUnicodeEx(
+                                vk as u32,
+                                scan as u32,
+                                state.key_state.as_ptr(),
+                                buf.as_mut_ptr(),
+                                buf.len() as i32,
+                                0,
+                                keyboard_layout,
+                            )
                         };
 
-                        windows_sys::Win32::UI::Input::KeyboardAndMouse::ToUnicodeEx(
-                            vk as u32,
-                            scan as u32,
-                            state.key_state.as_ptr(),
-                            buf.as_mut_ptr(),
-                            buf.len() as i32,
-                            0,
-                            keyboard_layout,
-                        )
-                    };
-
-                    if result > 0 {
-                        Some(String::from_utf16_lossy(&buf[..result as usize]))
+                        if result > 0 {
+                            Some(String::from_utf16_lossy(&buf[..result as usize]))
+                        } else {
+                            None
+                        }
                     } else {
                         None
-                    }
-                } else {
-                    None
-                };
+                    };
 
-                let foreground = sample_foreground_window().ok();
-                let (fh, fp, pn, wt) = match foreground {
-                    Some(ref snap) => (
-                        snap.hwnd,
-                        snap.pid,
-                        Some(snap.process_name.clone()),
-                        snap.window_title.clone(),
-                    ),
-                    None => (0, 0, None, None),
-                };
+                    let foreground = sample_foreground_window().ok();
+                    let (fh, fp, pn, wt) = match foreground {
+                        Some(ref snap) => (
+                            snap.hwnd,
+                            snap.pid,
+                            Some(snap.process_name.clone()),
+                            snap.window_title.clone(),
+                        ),
+                        None => (0, 0, None, None),
+                    };
 
-                let signal = InputSignal {
-                    event_ts: Utc::now(),
-                    is_keydown,
-                    vk_code: vk,
-                    scan_code: scan,
-                    character,
-                    foreground_hwnd: fh,
-                    foreground_pid: fp,
-                    process_name: pn,
-                    window_title: wt,
-                };
+                    let signal = InputSignal {
+                        event_ts: Utc::now(),
+                        is_keydown,
+                        vk_code: vk,
+                        scan_code: scan,
+                        character,
+                        foreground_hwnd: fh,
+                        foreground_pid: fp,
+                        process_name: pn,
+                        window_title: wt,
+                    };
 
-                let _ = state.sender.send(signal);
+                    let _ = state.sender.send(signal);
+                }
+            } else if msg == WM_DESTROY {
+                PostQuitMessage(0);
+                return 0;
             }
-        } else if msg == WM_DESTROY {
-            PostQuitMessage(0);
-            return 0;
-        }
 
-        DefWindowProcW(hwnd, msg, wparam, lparam)
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
     }
 
     fn encode_wide(s: &str) -> Vec<u16> {
@@ -462,8 +460,8 @@ mod platform {
 
 #[cfg(not(windows))]
 mod platform {
-    use tokio::sync::mpsc;
     use super::InputSignal;
+    use tokio::sync::mpsc;
 
     pub(super) fn run_raw_input_loop(_tx: mpsc::UnboundedSender<InputSignal>) {
         eprintln!("input collector: not supported on this platform");

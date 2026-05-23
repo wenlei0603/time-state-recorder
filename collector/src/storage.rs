@@ -6,9 +6,8 @@ use rusqlite::{Connection, params};
 use uuid::Uuid;
 
 use crate::models::{
-    AppInputCount, AppScreenshotCount, BlockerHit, CaptureStatus, InputEvent,
-    InputEventType, InputSummary, ScreenshotMeta, ScreenshotSummary,
-    StoredWindowEvent, TextSegment, WindowSnapshot,
+    AppScreenshotCount, BlockerHit, CaptureStatus, ScreenshotMeta, ScreenshotSummary,
+    StoredWindowEvent, WindowSnapshot,
 };
 
 pub struct Store {
@@ -473,49 +472,22 @@ impl Store {
         } else {
             "SELECT id, event_ts, event_type, vk_code, scan_code, character, segment_id,
                     foreground_hwnd, foreground_pid, process_name, window_title
-             FROM input_events
-             ORDER BY event_ts DESC, id DESC
-             LIMIT ?1"
+             FROM (
+               SELECT id, event_ts, event_type, vk_code, scan_code, character, segment_id,
+                      foreground_hwnd, foreground_pid, process_name, window_title
+               FROM input_events
+               ORDER BY event_ts DESC, id DESC
+               LIMIT ?1
+             )
+             ORDER BY event_ts ASC, id ASC"
         };
 
         let mut stmt = self.conn.prepare(query)?;
 
         let rows = if let Some(sid) = segment_id {
-            stmt.query_map(params![limit as i64, sid], |row| {
-                let event_ts: String = row.get(1)?;
-                let event_type: String = row.get(2)?;
-                Ok(crate::models::InputEvent {
-                    id: row.get(0)?,
-                    event_ts: parse_ts(&event_ts)?,
-                    event_type: crate::models::InputEventType::from_db(&event_type),
-                    vk_code: row.get(3)?,
-                    scan_code: row.get(4)?,
-                    character: row.get(5)?,
-                    segment_id: row.get(6)?,
-                    foreground_hwnd: row.get(7)?,
-                    foreground_pid: row.get(8)?,
-                    process_name: row.get(9)?,
-                    window_title: row.get(10)?,
-                })
-            })?
+            stmt.query_map(params![limit as i64, sid], map_input_event_row)?
         } else {
-            stmt.query_map(params![limit as i64], |row| {
-                let event_ts: String = row.get(1)?;
-                let event_type: String = row.get(2)?;
-                Ok(crate::models::InputEvent {
-                    id: row.get(0)?,
-                    event_ts: parse_ts(&event_ts)?,
-                    event_type: crate::models::InputEventType::from_db(&event_type),
-                    vk_code: row.get(3)?,
-                    scan_code: row.get(4)?,
-                    character: row.get(5)?,
-                    segment_id: row.get(6)?,
-                    foreground_hwnd: row.get(7)?,
-                    foreground_pid: row.get(8)?,
-                    process_name: row.get(9)?,
-                    window_title: row.get(10)?,
-                })
-            })?
+            stmt.query_map(params![limit as i64], map_input_event_row)?
         };
 
         let mut events = Vec::new();
@@ -573,11 +545,14 @@ impl Store {
     pub fn get_input_summary(&self, date: &str) -> Result<crate::models::InputSummary> {
         let pattern = format!("{date}%");
 
-        let total: usize = self.conn.query_row(
-            "SELECT COUNT(*) FROM input_events WHERE event_ts LIKE ?1",
-            params![&pattern],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let total: usize = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM input_events WHERE event_ts LIKE ?1",
+                params![&pattern],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
         let keydown: usize = self.conn.query_row(
             "SELECT COUNT(*) FROM input_events WHERE event_ts LIKE ?1 AND event_type = 'keydown'",
@@ -585,17 +560,23 @@ impl Store {
             |row| row.get(0),
         ).unwrap_or(0);
 
-        let keyup: usize = self.conn.query_row(
-            "SELECT COUNT(*) FROM input_events WHERE event_ts LIKE ?1 AND event_type = 'keyup'",
-            params![&pattern],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let keyup: usize = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM input_events WHERE event_ts LIKE ?1 AND event_type = 'keyup'",
+                params![&pattern],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
-        let segments: usize = self.conn.query_row(
-            "SELECT COUNT(*) FROM text_segments WHERE started_at LIKE ?1",
-            params![&pattern],
-            |row| row.get(0),
-        ).unwrap_or(0);
+        let segments: usize = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM text_segments WHERE started_at LIKE ?1",
+                params![&pattern],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
 
         let total_chars: usize = self.conn.query_row(
             "SELECT COALESCE(SUM(LENGTH(text_content)), 0) FROM text_segments WHERE started_at LIKE ?1",
@@ -643,21 +624,23 @@ impl Store {
     }
 
     pub fn get_db_stats(&self) -> Result<crate::models::DbStats> {
-        let window_events: usize = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM window_events", [], |r| r.get(0))?;
-        let input_events: usize = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM input_events", [], |r| r.get(0))?;
-        let text_segments: usize = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM text_segments", [], |r| r.get(0))?;
-        let screenshots: usize = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM screenshot_thumbnails", [], |r| r.get(0))?;
-        let blocker_hits: usize = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM blocker_hits", [], |r| r.get(0))?;
+        let window_events: usize =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM window_events", [], |r| r.get(0))?;
+        let input_events: usize =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM input_events", [], |r| r.get(0))?;
+        let text_segments: usize =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM text_segments", [], |r| r.get(0))?;
+        let screenshots: usize =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM screenshot_thumbnails", [], |r| {
+                    r.get(0)
+                })?;
+        let blocker_hits: usize =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM blocker_hits", [], |r| r.get(0))?;
 
         Ok(crate::models::DbStats {
             window_events,
@@ -667,6 +650,24 @@ impl Store {
             blocker_hits,
         })
     }
+}
+
+fn map_input_event_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<crate::models::InputEvent> {
+    let event_ts: String = row.get(1)?;
+    let event_type: String = row.get(2)?;
+    Ok(crate::models::InputEvent {
+        id: row.get(0)?,
+        event_ts: parse_ts(&event_ts)?,
+        event_type: crate::models::InputEventType::from_db(&event_type),
+        vk_code: row.get(3)?,
+        scan_code: row.get(4)?,
+        character: row.get(5)?,
+        segment_id: row.get(6)?,
+        foreground_hwnd: row.get(7)?,
+        foreground_pid: row.get(8)?,
+        process_name: row.get(9)?,
+        window_title: row.get(10)?,
+    })
 }
 
 pub(crate) fn parse_ts(value: &str) -> rusqlite::Result<DateTime<Utc>> {
