@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::{
-    models::{InputEvent, InputEventType, TextSegment},
+    models::{CollectorHealth, InputEvent, InputEventType, TextSegment},
     storage::Store,
     window::sample_foreground_window,
 };
@@ -139,8 +139,13 @@ impl SegmentBuffer {
     }
 }
 
-pub fn spawn_input_collector(store: Arc<Mutex<Store>>) {
+pub fn spawn_input_collector(store: Arc<Mutex<Store>>, health: Arc<Mutex<CollectorHealth>>) {
     let (tx, mut rx) = mpsc::unbounded_channel::<InputSignal>();
+
+    {
+        let mut h = health.lock().unwrap();
+        h.input_collector.status = "running".into();
+    }
 
     std::thread::spawn(move || {
         platform::run_raw_input_loop(tx);
@@ -161,6 +166,11 @@ pub fn spawn_input_collector(store: Arc<Mutex<Store>>) {
                         let (segment, events) = buffer.take().unwrap().flush();
                         if let Ok(mut store) = store.lock() {
                             let _ = store.insert_input_segment(&segment, &events);
+                            if let Ok(mut h) = health.lock() {
+                                h.input_collector.last_event_at = Some(Utc::now());
+                                h.input_collector.error_count = 0;
+                                h.input_collector.last_error = None;
+                            }
                         }
                     }
                 }
@@ -169,6 +179,11 @@ pub fn spawn_input_collector(store: Arc<Mutex<Store>>) {
                         let (segment, events) = buf.flush();
                         if let Ok(mut store) = store.lock() {
                             let _ = store.insert_input_segment(&segment, &events);
+                            if let Ok(mut h) = health.lock() {
+                                h.input_collector.last_event_at = Some(Utc::now());
+                                h.input_collector.error_count = 0;
+                                h.input_collector.last_error = None;
+                            }
                         }
                     }
                     break;
@@ -178,6 +193,11 @@ pub fn spawn_input_collector(store: Arc<Mutex<Store>>) {
                         let (segment, events) = buf.flush();
                         if let Ok(mut store) = store.lock() {
                             let _ = store.insert_input_segment(&segment, &events);
+                            if let Ok(mut h) = health.lock() {
+                                h.input_collector.last_event_at = Some(Utc::now());
+                                h.input_collector.error_count = 0;
+                                h.input_collector.last_error = None;
+                            }
                         }
                     }
                 }
