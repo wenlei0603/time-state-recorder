@@ -158,7 +158,7 @@ Espanso 的 Windows 采集更值得参考。它使用 Raw Input 处理 `WM_INPUT
 - Core agent：Rust。原因是 Windows API、Raw Input、UI Automation、截图、SQLite writer 都需要低延迟和稳定长驻。
 - UI：Tauri 或独立 tray app。第一版可以只做 tray、暂停/恢复、配置窗口、导出命令。
 - Storage：SQLite WAL。后续可加 SQLCipher 或 OS 密钥保护。截图缩略图放文件系统，DB 只存路径、hash、尺寸、触发原因。
-- Query/export：本地 HTTP API 或 CLI，导出 Markdown/CSV/Parquet。
+- Query/export：本地 HTTP API 或 CLI，导出 JSON/Markdown/Parquet。
 
 ## Modules
 

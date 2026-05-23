@@ -2,7 +2,7 @@
 
 Time State Recorder is a local-first, Windows-first project for understanding how time is spent on a computer. The long-term product is a recorder that stores raw activity events locally, derives rollups, and presents useful summaries without sending private activity data to a cloud service.
 
-This repository currently documents and prototypes the first UI-facing slice. The MVP is intentionally smaller than the full recorder: it is a static React/TypeScript WebUI that can load active-window sample events from CSV or a built-in `feature1` dataset, calculate descriptive statistics, and summarize active duration by application.
+This repository now contains the first live collector slice: a Rust/SQLite Windows foreground-window collector with a local JSON API, plus a React/TypeScript WebUI that consumes that API and computes descriptive statistics.
 
 ## Current MVP Scope
 
@@ -12,17 +12,19 @@ The MVP answers one question:
 
 Included:
 
-- Load active-window records from a user-provided CSV file.
+- Sample the real Windows foreground window with a Rust CLI.
+- Store `window_focus` raw events in SQLite.
+- Serve collector data over local REST JSON endpoints.
 - Load the built-in `feature1` sample dataset for demo and regression checks.
 - Validate required fields before analysis.
 - Calculate count, mean, median, standard deviation, min, max, quartiles, and total duration.
 - Group active duration by application/process and display cards or tables in the WebUI.
-- Run fully locally in the browser/dev server.
+- Run fully locally through `tsr-collector` and the browser/dev server.
 
 Not included yet:
 
-- Real Windows API collection.
-- SQLite storage, event bus, recorder service, tray app, or background agent.
+- `SetWinEventHook` event-driven collection.
+- Tray app or installed background service.
 - Keyboard/input monitoring.
 - Screenshot thumbnail capture.
 - Cloud sync or multi-device support.
@@ -33,43 +35,46 @@ Feature 1 is active window/process monitoring.
 
 In the full recorder, Feature 1 will observe foreground-window changes on Windows and write raw `window_focus` events containing timestamp, process name, PID, window title or redacted title, executable hash, and capture status.
 
-In this MVP, Feature 1 is represented by sample/imported rows rather than live collection. The UI treats each row as an already-captured active-window interval or event-derived interval.
+In this MVP, Feature 1 is implemented by the Rust collector. The WebUI can still fall back to built-in sample rows when the collector is offline.
 
 ## App Architecture
 
-The MVP uses a small one-way flow:
+The MVP uses a local frontend/backend flow:
 
-1. Data source: built-in `feature1` sample or user CSV upload.
-2. Parser: converts CSV/sample rows into typed event records.
-3. Validation: checks required fields, timestamp/duration shape, and rejects unusable rows.
-4. Stats engine: computes descriptive statistics and per-application duration summaries.
-5. UI: renders summary cards, validation messages, and application tables.
+1. Windows collector samples foreground-window state.
+2. SQLite stores `raw_events` and `window_events`.
+3. Local REST API exposes raw focus events and interval-shaped time events.
+4. WebUI fetches `/api/time-events`.
+5. Stats engine computes descriptive statistics and per-application duration summaries.
+6. UI renders summary cards, collector status, and event tables.
 
-The architecture deliberately mirrors the future recorder, but only the browser-side analysis path is implemented now. Future collectors and storage should feed the same logical data model so the UI can stay mostly unchanged.
+The collector uses polling first because it is verifiable and provides the fallback path required by the architecture. A later collector iteration can add `SetWinEventHook` without changing the WebUI contract.
 
 ## UI Data Model
 
-The WebUI expects active-window records with these logical fields. The CSV parser accepts both camelCase UI names and snake_case recorder-export names where noted.
+The WebUI expects `GET /api/time-events` to return `{ "events": [...] }` with normalized interval records.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `started_at` | ISO timestamp/string | Yes | Start time of the active interval. |
-| `ended_at` | ISO timestamp/string | Preferred | End time. If absent, `duration_seconds` must exist. |
-| `duration_seconds` | number | Preferred | Active duration for this row. Can be derived from start/end. |
-| `app` | string | Yes | Application or process display name. |
-| `process_name` | string | Optional | Raw process name when distinct from `app`. |
-| `window_title` | string | Optional | May be redacted or omitted for privacy. |
-| `pid` | number/string | Optional | Process identifier from live collection in future. |
-| `capture_status` | string | Optional | Example: `ok`, `permission_denied`, `locked`, `unavailable`. |
+| `id` | string | Yes | Stable UI row identifier derived from raw event ids. |
+| `app` | string | Yes | Application/process display name. |
+| `title` | string | Yes | Window title or redacted/empty fallback. |
+| `startedAt` | ISO timestamp/string | Yes | Start time of the active interval. |
+| `endedAt` | ISO timestamp/string | Optional | End time. The currently focused window has no end yet. |
+| `durationSeconds` | number | Optional | Active duration for completed intervals. |
 
-Derived analysis objects should not mutate normalized event rows. In the current MVP, the source CSV text remains visible in the editor for review; a future recorder/export layer should preserve full raw row provenance alongside normalized records.
+`GET /api/window-events` exposes lower-level collector rows for debugging and future recorder work. Those rows include `rawEventId`, `sessionId`, `eventTs`, `hwnd`, `pid`, `processName`, `exePathHash`, `windowTitle`, and `captureStatus`.
+
+Derived analysis objects should not mutate normalized event rows. In the current MVP, SQLite preserves raw collector payloads and the WebUI receives normalized JSON from the local API. Future recorder/export layers should preserve full raw event provenance alongside derived records.
 
 ## Local Run and Test Commands
 
-Use the project package manager once the WebUI files are present:
+Use the project package manager and Rust toolchain:
 
 ```powershell
 npm install
+cargo test -p tsr-collector
+cargo run -p tsr-collector -- serve --db data/local.sqlite3 --addr 127.0.0.1:4317
 npm run dev
 npm test
 npm run build
@@ -78,34 +83,33 @@ npm run build
 If the implementation uses a different package manager, keep equivalent scripts for:
 
 - `dev`: start the local WebUI.
-- `test`: run parser/statistics tests.
+- `test`: run WebUI API/statistics tests.
 - `build`: verify the static app compiles.
 
 ## Verification Checklist
 
-- Built-in `feature1` sample loads without user input.
-- CSV upload accepts valid active-window rows and reports invalid rows clearly.
-- Duration calculations are correct when using explicit `duration_seconds`.
-- Duration calculations are correct when deriving from `started_at` and `ended_at`.
-- Reversed intervals and calendar-invalid ISO timestamps are rejected with row-level errors.
+- `sample-once` returns the current foreground process/window JSON.
+- `record` writes `window_focus` events into SQLite.
+- `serve` exposes `/api/health`, `/api/window-events`, and `/api/time-events`.
+- WebUI loads collector data from `/api/time-events` and falls back to `feature1` sample when offline.
 - Descriptive statistics include count, mean, median, standard deviation, min, max, Q1, and Q3.
 - Per-application summary totals match the row-level total duration.
-- Empty data, malformed CSV, missing app name, and invalid timestamps are handled without crashing.
-- `npm test` and `npm run build` pass before review.
+- Empty API responses, malformed JSON payloads, missing app names, and invalid timestamps are handled without crashing.
+- `cargo test -p tsr-collector`, `npm test`, and `npm run build` pass before review.
 
 ## Non-Goals and Risks
 
 Non-goals for this MVP:
 
-- No live recorder or Windows service.
+- No installed Windows service.
 - No background collection, hooks, Raw Input, UI Automation, or screenshot APIs.
-- No SQLite database yet.
 - No sensitive text capture.
 - No productivity classification, AI labeling, or automatic task inference.
 
 Risks:
 
-- Sample data can hide edge cases that live Windows collection will produce, such as permission-denied windows, lock screen gaps, title changes, and rapid focus switches.
-- CSV field names may drift unless parser aliases and documentation stay aligned.
+- Sample fallback data can hide edge cases that live Windows collection will produce, such as permission-denied windows, lock screen gaps, title changes, and rapid focus switches.
+- API response fields may drift unless collector models, WebUI validation, and documentation stay aligned.
 - Window titles can contain private information. The MVP should tolerate missing or redacted titles.
+- Local browser access must stay same-origin or proxied; permissive CORS would expose private activity data to arbitrary websites.
 - Statistics are only as reliable as interval construction. Future recorder work must define how focus events become intervals.
