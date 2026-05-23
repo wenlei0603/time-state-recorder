@@ -548,6 +548,76 @@ td:nth-child(2) {
   }
 }
 
+/* Input Activity */
+
+.inputActivity {
+  display: grid;
+  gap: 16px;
+}
+
+.segmentRow {
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.segmentRow:hover {
+  border-color: #4c7a64;
+}
+
+.segmentRow:focus-visible {
+  outline: 2px solid #356b63;
+  outline-offset: 1px;
+}
+
+.segmentRow.expanded td {
+  border-bottom-color: #356b63;
+}
+
+.segmentExpand td {
+  padding: 0 10px 14px;
+  border-top: none;
+}
+
+.segmentText {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: #f3f6f2;
+  color: #17211b;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.cellMono {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.cellNum {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  text-align: right;
+}
+
+.cellTitle {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cellAction {
+  width: 30px;
+  text-align: center;
+  color: #5f6d65;
+}
+
 @media (max-width: 620px) {
   .shell {
     width: min(100vw - 20px, 1180px);

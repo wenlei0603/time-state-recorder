@@ -1,6 +1,7 @@
-import { BarChart3, Camera, RefreshCw, RotateCcw, Server, TableProperties } from "lucide-react";
+import { BarChart3, Camera, Keyboard, RefreshCw, RotateCcw, Server, TableProperties } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { DailyTracking } from "./DailyTracking";
+import { InputActivity } from "./InputActivity";
 import { feature1SampleEvents } from "./data/feature1Sample";
 import { fetchTimeEvents } from "./lib/api";
 import {
@@ -12,7 +13,7 @@ import type { TimeEvent } from "./types";
 import "./styles.css";
 
 type CollectorStatus = "sample" | "loading" | "connected" | "offline";
-type ViewMode = "stats" | "daily";
+type ViewMode = "stats" | "daily" | "input";
 
 export function App() {
   const [events, setEvents] = useState<TimeEvent[]>(feature1SampleEvents);
@@ -85,10 +86,20 @@ export function App() {
           <Camera aria-hidden="true" size={16} />
           <span>Daily Tracking</span>
         </button>
+        <button
+          type="button"
+          className={`tab ${viewMode === "input" ? "active" : ""}`}
+          onClick={() => setViewMode("input")}
+        >
+          <Keyboard aria-hidden="true" size={16} />
+          <span>Input Activity</span>
+        </button>
       </nav>
 
       {viewMode === "daily" ? (
         <DailyTracking date={today} />
+      ) : viewMode === "input" ? (
+        <InputActivity />
       ) : (
         <>
           <section className="statsGrid" aria-label="Descriptive statistics">
