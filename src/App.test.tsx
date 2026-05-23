@@ -2,6 +2,24 @@ import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
+function healthResponse() {
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    json: async () => ({
+      status: "ok",
+      startedAt: "2026-05-24T00:00:00Z",
+      uptimeSeconds: 120,
+      version: "0.1.0",
+      windowCollector: { status: "running", errorCount: 0 },
+      inputCollector: { status: "running", errorCount: 0 },
+      screenshotCollector: { status: "running", errorCount: 0 },
+      dbStats: { windowEvents: 10, inputEvents: 0, textSegments: 0, screenshots: 5, blockerHits: 0 },
+    }),
+  };
+}
+
 describe("App", () => {
   beforeEach(() => {
     vi.stubGlobal(
@@ -21,11 +39,11 @@ describe("App", () => {
     expect(screen.getByText("87m")).toBeInTheDocument();
   });
 
-  it("exposes collector refresh as a keyboard-focusable button", () => {
+  it("exposes collector data button as a keyboard-focusable control", () => {
     render(<App />);
 
     expect(
-      screen.getByRole("button", { name: /refresh collector/i })
+      screen.getByRole("button", { name: /collector data/i })
     ).toBeInTheDocument();
   });
 
@@ -54,7 +72,20 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText("Planner")).toBeInTheDocument();
-    expect(screen.getByText("Connected")).toBeInTheDocument();
     expect(screen.getAllByText("5m").length).toBeGreaterThan(0);
+  });
+
+  it("renders CollectorMonitor when connected to health API", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(healthResponse())
+    );
+
+    render(<App />);
+
+    expect(await screen.findByText("Collector Monitor")).toBeInTheDocument();
+    expect(screen.getByText("Subsystems")).toBeInTheDocument();
+    expect(screen.getByText("Window Collector")).toBeInTheDocument();
+    expect(screen.getByText("Database")).toBeInTheDocument();
   });
 });
