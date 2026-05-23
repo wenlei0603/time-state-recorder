@@ -49,3 +49,47 @@ export type AppScreenshotCount = {
   processName: string;
   count: number;
 };
+
+export type InputEvent = {
+  id: number;
+  eventTs: string;
+  eventType: "keydown" | "keyup";
+  vkCode: number;
+  scanCode: number;
+  character?: string;
+  segmentId: string;
+  foregroundHwnd: number;
+  foregroundPid: number;
+  processName?: string;
+  windowTitle?: string;
+};
+
+export type TextSegment = {
+  id: string;
+  startedAt: string;
+  endedAt?: string;
+  textContent: string;
+  keyCount: number;
+  backspaceCount: number;
+  deleteCount: number;
+  foregroundHwnd: number;
+  foregroundPid: number;
+  processName?: string;
+  windowTitle?: string;
+};
+
+export type InputSummary = {
+  date: string;
+  totalEvents: number;
+  keydownCount: number;
+  keyupCount: number;
+  segmentCount: number;
+  totalChars: number;
+  lastActivity?: string;
+  topApps: AppInputCount[];
+};
+
+export type AppInputCount = {
+  processName: string;
+  charCount: number;
+};
