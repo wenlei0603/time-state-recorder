@@ -77,7 +77,7 @@ Storage:
 
 API:
 
-- `/api/health` — local backend health.
+- `/api/health` — full collector health (status, uptime, per-subsystem state, DB row counts).
 - `/api/window-events` — raw joined focus events.
 - `/api/time-events` — interval-shaped records for the WebUI.
 - `/api/blockers` — blocker rules and recent hits.
@@ -112,6 +112,7 @@ UI cards/tables:
 - Cards show global metrics at a glance.
 - Tables show per-application active duration and event counts.
 - Tab bar switches between Statistics (Feature 1), Input Activity (Feature 2), and Daily Tracking (Feature 3) views.
+- Collector Monitor panel replaces the old Collector Connection panel with real-time subsystem health and DB row counts.
 - Both views support sample data fallback and live collector data.
 - Validation output should be visible and actionable for bad API payloads or empty collector responses.
 

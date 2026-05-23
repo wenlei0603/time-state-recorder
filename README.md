@@ -94,7 +94,7 @@ Supported fields: `process_name`, `window_title`, `exe_path_hash`. Operators: `e
 
 The MVP uses a local frontend/backend flow:
 
-1. Windows collector samples foreground-window state, captures keyboard input via Raw Input, and takes periodic screen thumbnails.
+1. Windows collector starts via `start.bat` or `npm run collector`; it samples foreground-window state, captures keyboard input via Raw Input, and takes periodic screen thumbnails.
 2. SQLite stores `raw_events`, `window_events`, `screenshot_thumbnails`, `input_events`, `text_segments`, and `blocker_hits`.
 3. Local REST API exposes raw focus events, interval-shaped time events, input events, text segments, input summaries, screenshot metadata, screenshot summaries, and blocker config/hits.
 4. Screenshot image files are served as static files via `/screenshots/`.
@@ -108,7 +108,7 @@ The collector uses polling first because it is verifiable and provides the fallb
 
 | Method | Path | Query Params | Description |
 | --- | --- | --- | --- |
-| `GET` | `/api/health` | — | `{"status":"ok"}` |
+| `GET` | `/api/health` | — | Collector health (status, uptime, per-subsystem states, DB row counts) |
 | `GET` | `/api/window-events` | `?limit=N` | Raw joined window-focus events |
 | `GET` | `/api/time-events` | `?limit=N` | Interval-shaped time events for statistics |
 | `GET` | `/api/blockers` | `?limit=N` | Blocker rules and recent hits |
@@ -227,6 +227,9 @@ If the implementation uses a different package manager, keep equivalent scripts 
 - `sample-once` returns the current foreground process/window JSON.
 - `record` writes `window_focus` events into SQLite.
 - `serve` exposes `/api/health`, `/api/window-events`, `/api/time-events`, `/api/blockers`, `/api/screenshots`, `/api/screenshot-summary`, `/api/input-events`, `/api/input-summary`, and `/api/text-segments`.
+- `/api/health` returns full `CollectorHealth` JSON with uptime, subsystem states, and DB row counts.
+- WebUI CollectorMonitor shows offline state with launch instructions when collector is unreachable.
+- WebUI CollectorMonitor auto-refreshes every 5 seconds with live subsystem health and DB stats.
 - Screenshot capture writes JPEG files to `data/screenshots/YYYY-MM-DD/HH-MM.jpg` every 60s when user is active.
 - Screenshots are skipped when the user has been idle for >2 minutes.
 - Blocked apps/windows are never captured; hits are logged in `blocker_hits`.
