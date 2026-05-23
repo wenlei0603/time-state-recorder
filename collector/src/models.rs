@@ -123,3 +123,78 @@ pub struct AppScreenshotCount {
     pub process_name: String,
     pub count: usize,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputEventType {
+    KeyDown,
+    KeyUp,
+}
+
+impl InputEventType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::KeyDown => "keydown",
+            Self::KeyUp => "keyup",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Self {
+        match value {
+            "keyup" => Self::KeyUp,
+            _ => Self::KeyDown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InputEvent {
+    pub id: i64,
+    pub event_ts: DateTime<Utc>,
+    pub event_type: InputEventType,
+    pub vk_code: u32,
+    pub scan_code: u32,
+    pub character: Option<String>,
+    pub segment_id: String,
+    pub foreground_hwnd: i64,
+    pub foreground_pid: u32,
+    pub process_name: Option<String>,
+    pub window_title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextSegment {
+    pub id: String,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub text_content: String,
+    pub key_count: usize,
+    pub backspace_count: usize,
+    pub delete_count: usize,
+    pub foreground_hwnd: i64,
+    pub foreground_pid: u32,
+    pub process_name: Option<String>,
+    pub window_title: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InputSummary {
+    pub date: String,
+    pub total_events: usize,
+    pub keydown_count: usize,
+    pub keyup_count: usize,
+    pub segment_count: usize,
+    pub total_chars: usize,
+    pub last_activity: Option<DateTime<Utc>>,
+    pub top_apps: Vec<AppInputCount>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInputCount {
+    pub process_name: String,
+    pub char_count: usize,
+}
