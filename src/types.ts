@@ -93,3 +93,29 @@ export type AppInputCount = {
   processName: string;
   charCount: number;
 };
+
+export type SubsystemHealth = {
+  status: "running" | "error" | "not_started";
+  lastEventAt?: string;
+  errorCount: number;
+  lastError?: string;
+};
+
+export type DbStats = {
+  windowEvents: number;
+  inputEvents: number;
+  textSegments: number;
+  screenshots: number;
+  blockerHits: number;
+};
+
+export type CollectorHealth = {
+  status: "ok" | "degraded" | "error";
+  startedAt: string;
+  uptimeSeconds: number;
+  version: string;
+  windowCollector: SubsystemHealth;
+  inputCollector: SubsystemHealth;
+  screenshotCollector: SubsystemHealth;
+  dbStats: DbStats;
+};
