@@ -198,3 +198,35 @@ pub struct AppInputCount {
     pub process_name: String,
     pub char_count: usize,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectorHealth {
+    pub status: String,
+    pub started_at: DateTime<Utc>,
+    pub uptime_seconds: u64,
+    pub version: String,
+    pub window_collector: SubsystemHealth,
+    pub input_collector: SubsystemHealth,
+    pub screenshot_collector: SubsystemHealth,
+    pub db_stats: DbStats,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubsystemHealth {
+    pub status: String,
+    pub last_event_at: Option<DateTime<Utc>>,
+    pub error_count: u64,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbStats {
+    pub window_events: usize,
+    pub input_events: usize,
+    pub text_segments: usize,
+    pub screenshots: usize,
+    pub blocker_hits: usize,
+}
