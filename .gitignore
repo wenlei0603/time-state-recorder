@@ -2,10 +2,10 @@ node_modules/
 dist/
 coverage/
 .vite/
-output/
-.tools/
-target/
-collector/target/
-data/
+/output/
+/.tools/
+/target/
+/collector/target/
+/data/
 *.local
 *.log
