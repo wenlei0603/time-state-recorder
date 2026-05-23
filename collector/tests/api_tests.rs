@@ -296,3 +296,30 @@ fn insert(store: &mut Store, session_id: &str, ts: &str, hwnd: i64, app: &str, t
         )
         .unwrap();
 }
+
+#[tokio::test]
+async fn serves_health_with_subsystem_status() {
+    let store = Store::open_memory().unwrap();
+    store.init().unwrap();
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!("http://{addr}/api/health"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert!(body["status"].as_str().is_some());
+    assert!(body["uptimeSeconds"].as_u64().is_some());
+    assert_eq!(body["version"], "0.1.0");
+    assert!(body["windowCollector"]["status"].as_str().is_some());
+    assert!(body["dbStats"]["windowEvents"].as_u64().is_some());
+
+    server.abort();
+}
