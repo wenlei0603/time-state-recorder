@@ -272,6 +272,189 @@ textarea {
   font-size: 0.84rem;
 }
 
+/* Collector Monitor */
+
+.collectorMonitor {
+  display: grid;
+  gap: 14px;
+}
+
+.healthGrid {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: #f3f6f2;
+}
+
+.healthOverview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.healthUptime {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #5f6d65;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.healthMeta {
+  display: flex;
+  gap: 16px;
+  color: #5f6d65;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.monitorConnecting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  color: #5f6d65;
+  font-size: 0.88rem;
+}
+
+.offlineHint {
+  margin: 8px 0 0;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: #f5dfdd;
+  color: #8a312e;
+  font-size: 0.82rem;
+}
+
+.offlineHint code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.healthPill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.healthPill.ok,
+.healthPill.running {
+  background: #d9ecdf;
+  color: #1f6b3b;
+}
+
+.healthPill.degraded,
+.healthPill.not_started {
+  background: #fef3cf;
+  color: #8a6d10;
+}
+
+.healthPill.error {
+  background: #f5dfdd;
+  color: #8a312e;
+}
+
+.monitorSection {
+  border-top: 1px solid #e2e6e1;
+  padding-top: 10px;
+}
+
+.monitorSectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #5f6d65;
+}
+
+.monitorSectionHeader h3 {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.subsystemList {
+  display: grid;
+  gap: 8px;
+}
+
+.subsystemRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.subsystemIcon {
+  color: #5f6d65;
+  display: flex;
+}
+
+.subsystemLabel {
+  flex: 1;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: #17211b;
+}
+
+.subsystemTime {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.75rem;
+  color: #5f6d65;
+}
+
+.subsystemErrors {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #b84a45;
+}
+
+.dbStatList {
+  display: grid;
+  gap: 6px;
+}
+
+.dbStatRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  font-size: 0.84rem;
+}
+
+.dbStatRow strong {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.82rem;
+}
+
+.errorBanner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: #f5dfdd;
+  color: #8a312e;
+  font-size: 0.8rem;
+}
+
+.errorBanner p {
+  margin: 2px 0;
+}
+
 .tablePanel {
   margin-top: 16px;
 }

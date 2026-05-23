@@ -1,7 +1,8 @@
-import { BarChart3, Camera, Keyboard, RefreshCw, RotateCcw, Server, TableProperties } from "lucide-react";
+import { BarChart3, Camera, Keyboard, RefreshCw, RotateCcw, TableProperties } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { DailyTracking } from "./DailyTracking";
 import { InputActivity } from "./InputActivity";
+import { CollectorMonitor } from "./CollectorMonitor";
 import { feature1SampleEvents } from "./data/feature1Sample";
 import { fetchTimeEvents } from "./lib/api";
 import {
@@ -140,41 +141,7 @@ export function App() {
               </div>
             </div>
 
-            <div className="panel">
-              <div className="panelHeader">
-                <Server aria-hidden="true" size={20} />
-                <h2>Collector Connection</h2>
-              </div>
-              <dl className="statusList">
-                <div>
-                  <dt>Status</dt>
-                  <dd>
-                    <span className={`statusPill ${collectorStatus}`}>
-                      {statusLabel(collectorStatus)}
-                    </span>
-                  </dd>
-                </div>
-                <div>
-                  <dt>Endpoint</dt>
-                  <dd className="codeLine">/api/time-events</dd>
-                </div>
-                <div>
-                  <dt>Rows</dt>
-                  <dd>{events.length}</dd>
-                </div>
-              </dl>
-              <div className="inlineActions">
-                <button type="button" onClick={() => void refreshCollector()}>
-                  <RefreshCw aria-hidden="true" size={18} />
-                  <span>Refresh Collector</span>
-                </button>
-              </div>
-              {collectorError && (
-                <p className="errors" role="status">
-                  {collectorError}
-                </p>
-              )}
-            </div>
+            <CollectorMonitor />
           </section>
 
           <section className="panel tablePanel">
