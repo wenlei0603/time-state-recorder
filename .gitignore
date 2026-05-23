@@ -3,5 +3,9 @@ dist/
 coverage/
 .vite/
 output/
+.tools/
+target/
+collector/target/
+data/
 *.local
 *.log
