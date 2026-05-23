@@ -4,23 +4,28 @@ This document explains how information moves through the live collector MVP and 
 
 ## Current Flow
 
-The current MVP has a real local backend with three subsystems: a window collector, a screenshot collector with idle detection, and a blocker/filter engine. The Rust collector writes SQLite rows and JPEG files, exposes JSON over a local REST API, serves screenshot images as static files, and the WebUI renders descriptive statistics and a daily screenshot timeline.
+The current MVP has a real local backend with four subsystems: a window collector, a keyboard input collector via Raw Input, a screenshot collector with idle detection, and a blocker/filter engine. The Rust collector writes SQLite rows and JPEG files, exposes JSON over a local REST API, serves screenshot images as static files, and the WebUI renders descriptive statistics, keyboard input activity, and a daily screenshot timeline.
 
 ```mermaid
 flowchart LR
     OS["Windows foreground + input APIs"] --> WinCollector["Window Collector"]
+    OS --> InputCollector["Input Collector"]
     OS --> SSCollector["Screenshot Collector"]
     WinCollector --> Storage["SQLite"]
+    InputCollector --> Storage
     SSCollector --> Storage
     SSCollector --> Files["data/screenshots/"]
-    Blocker["Blocker Engine"] --> SSCollector
+    Blocker["Blocker Engine"] --> InputCollector
+    Blocker --> SSCollector
     Storage --> API["Local REST API"]
     API --> Client["WebUI API Client"]
     Files --> Client
     Sample1["feature1 sample"] --> Client
+    Sample2["feature2 sample"] --> Client
     Sample3["feature3 sample"] --> Client
     Client --> Stats["Stats engine"]
     Client --> Timeline["Daily Tracking timeline"]
+    Client --> InputView["Input Activity panel"]
     Stats --> Cards["UI summary cards"]
     Stats --> Tables["Per-application tables"]
 ```
@@ -45,6 +50,16 @@ Screenshot Collector (Feature 3):
 - Metadata (timestamp, file path, dimensions, foreground app/window) is stored in the `screenshot_thumbnails` table.
 - Checks blocker config before capture — blocked apps/windows are never screenshotted.
 
+Input Collector (Feature 2):
+
+- Runs in a dedicated background thread using Raw Input API.
+- Creates a message-only window (`HWND_MESSAGE`) with `RIDEV_INPUTSINK` for system-wide keyboard events.
+- Maps virtual-key codes to characters via `ToUnicodeEx` using the foreground window's keyboard layout.
+- Buffers keydown/keyup events into text segments, flushing on Enter (VK_RETURN) or after 30s idle timeout.
+- Tracks backspace (pop from buffer) and delete (increment counter) per segment.
+- Cross-thread communication via `tokio::sync::mpsc::unbounded_channel` (Raw Input thread to async drain task).
+- Known limitation: Raw Input cannot capture composed IME characters (Chinese/Japanese). Feature 2B will add a WH_GETMESSAGE hook DLL.
+
 Blocker Engine:
 
 - Loads rules from `collector/blocker_config.json` at startup.
@@ -55,7 +70,7 @@ Blocker Engine:
 
 Storage:
 
-- SQLite stores append-only `raw_events`, `window_events`, `screenshot_thumbnails`, and `blocker_hits`.
+- SQLite stores append-only `raw_events`, `window_events`, `screenshot_thumbnails`, `input_events`, `text_segments`, and `blocker_hits`.
 - Raw event payloads preserve the sampled window snapshot as JSON.
 - Screenshot image data lives on the filesystem; SQLite stores only metadata and file paths.
 - The open interval is derived at query time and has no `endedAt` until the next focus event.
@@ -68,6 +83,9 @@ API:
 - `/api/blockers` — blocker rules and recent hits.
 - `/api/screenshots` — screenshot metadata for a given date.
 - `/api/screenshot-summary` — aggregated stats (count, hours, top apps).
+- `/api/input-events` — raw keyboard input events.
+- `/api/input-summary` — aggregated input stats (events, keydown/keyup, segments, chars, top apps).
+- `/api/text-segments` — text segments with content and edit stats.
 - `/screenshots/` — static file serving for captured thumbnail images.
 
 Descriptive stats engine:
@@ -83,18 +101,24 @@ Daily Tracking timeline:
 - Click-to-expand for full-size view.
 - Summary bar shows total screenshots, hours covered, and top apps by screenshot count.
 
+Input Activity panel:
+
+- Summary cards show total events, keydown/keyup counts, segments, total characters, and last activity time.
+- Per-application character bar chart.
+- Expandable text segments table with text content, edit stats (backspace/delete), and foreground app context.
+
 UI cards/tables:
 
 - Cards show global metrics at a glance.
 - Tables show per-application active duration and event counts.
-- Tab bar switches between Statistics (Feature 1) and Daily Tracking (Feature 3) views.
+- Tab bar switches between Statistics (Feature 1), Input Activity (Feature 2), and Daily Tracking (Feature 3) views.
 - Both views support sample data fallback and live collector data.
 - Validation output should be visible and actionable for bad API payloads or empty collector responses.
 
 Future recorder pipeline:
 
 - Event-driven `SetWinEventHook` can replace or augment window polling.
-- Feature 2 (text capture) can use the same blocker engine and session infrastructure.
+- Feature 2 (text capture) is implemented on Raw Input; Feature 2B (IME/hook) can use the same blocker engine and session infrastructure.
 - A bounded event bus will decouple collectors from storage.
 - Derived rollups can be persisted for faster queries.
 - Server-Sent Events or WebSocket streaming can push live focus changes.
@@ -103,8 +127,8 @@ Future recorder pipeline:
 
 Current WebUI owns:
 
-- REST client for `/api/time-events`, `/api/screenshots`, and `/api/screenshot-summary`.
-- Built-in sample fallbacks (feature1 and feature3).
+- REST client for `/api/time-events`, `/api/input-events`, `/api/input-summary`, `/api/text-segments`, `/api/screenshots`, and `/api/screenshot-summary`.
+- Built-in sample fallbacks (feature1, feature2, and feature3).
 - Descriptive statistics.
 - Per-application summaries.
 - Daily screenshot timeline.
@@ -114,12 +138,13 @@ Current WebUI owns:
 Current collector/storage owns:
 
 - Windows foreground-window polling.
+- Raw Input keyboard capture with text segment reconstruction.
 - Periodic screenshot capture with idle detection.
 - Blocker/filter engine with JSON config.
 - Raw event creation, including `window_focus` events.
 - Screenshot thumbnail generation and file storage.
 - Capture status handling for lock screen, UAC, permission errors, and unavailable windows.
-- SQLite WAL storage (4 tables).
+- SQLite WAL storage (6 tables).
 - Interval generation from raw events.
 - Local REST JSON API + static file serving for the WebUI.
 
