@@ -26,3 +26,26 @@ export type ApplicationSummary = {
   averageSeconds: number;
   share: number;
 };
+
+export type ScreenshotMeta = {
+  id: number;
+  capturedAt: string;
+  filePath: string;
+  width: number;
+  height: number;
+  processName?: string;
+  windowTitle?: string;
+  captureStatus: string;
+};
+
+export type ScreenshotSummary = {
+  date: string;
+  totalScreenshots: number;
+  hoursCovered: number;
+  topApps: AppScreenshotCount[];
+};
+
+export type AppScreenshotCount = {
+  processName: string;
+  count: number;
+};

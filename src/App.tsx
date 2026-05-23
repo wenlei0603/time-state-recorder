@@ -1,5 +1,6 @@
-import { BarChart3, RefreshCw, RotateCcw, Server, TableProperties } from "lucide-react";
+import { BarChart3, Camera, RefreshCw, RotateCcw, Server, TableProperties } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { DailyTracking } from "./DailyTracking";
 import { feature1SampleEvents } from "./data/feature1Sample";
 import { fetchTimeEvents } from "./lib/api";
 import {
@@ -11,11 +12,13 @@ import type { TimeEvent } from "./types";
 import "./styles.css";
 
 type CollectorStatus = "sample" | "loading" | "connected" | "offline";
+type ViewMode = "stats" | "daily";
 
 export function App() {
   const [events, setEvents] = useState<TimeEvent[]>(feature1SampleEvents);
   const [collectorStatus, setCollectorStatus] = useState<CollectorStatus>("sample");
   const [collectorError, setCollectorError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("stats");
 
   const durationSummary = useMemo(() => summarizeDurations(events), [events]);
   const appSummary = useMemo(() => summarizeByApplication(events), [events]);
@@ -44,12 +47,13 @@ export function App() {
   }
 
   const largest = Math.max(...appSummary.map((item) => item.totalSeconds), 1);
+  const today = new Date().toISOString().slice(0, 10);
 
   return (
     <main className="shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">MVP / Feature 1</p>
+          <p className="eyebrow">MVP / Features 1 &amp; 3</p>
           <h1>Time State Recorder</h1>
         </div>
         <div className="actions" aria-label="Dataset actions">
@@ -64,111 +68,136 @@ export function App() {
         </div>
       </header>
 
-      <section className="statsGrid" aria-label="Descriptive statistics">
-        <Metric label="Count" value={durationSummary.count.toString()} />
-        <Metric label="Total" value={formatMetricSeconds(durationSummary.total)} />
-        <Metric label="Mean" value={formatMetricSeconds(durationSummary.mean)} />
-        <Metric label="Median" value={formatMetricSeconds(durationSummary.median)} />
-        <Metric label="Std dev" value={formatMetricSeconds(durationSummary.standardDeviation)} />
-        <Metric label="Min / Max" value={`${formatMetricSeconds(durationSummary.min)} / ${formatMetricSeconds(durationSummary.max)}`} />
-        <Metric label="Q1 / Q3" value={`${formatMetricSeconds(durationSummary.q1)} / ${formatMetricSeconds(durationSummary.q3)}`} />
-      </section>
+      <nav className="tabBar" aria-label="View mode">
+        <button
+          type="button"
+          className={`tab ${viewMode === "stats" ? "active" : ""}`}
+          onClick={() => setViewMode("stats")}
+        >
+          <BarChart3 aria-hidden="true" size={16} />
+          <span>Statistics</span>
+        </button>
+        <button
+          type="button"
+          className={`tab ${viewMode === "daily" ? "active" : ""}`}
+          onClick={() => setViewMode("daily")}
+        >
+          <Camera aria-hidden="true" size={16} />
+          <span>Daily Tracking</span>
+        </button>
+      </nav>
 
-      <section className="workspace">
-        <div className="panel">
-          <div className="panelHeader">
-            <BarChart3 aria-hidden="true" size={20} />
-            <h2>Application Time</h2>
-          </div>
-          <div className="bars">
-            {appSummary.map((item) => (
-              <div className="barRow" key={item.app}>
-                <div className="barLabel">
-                  <span>{item.app}</span>
-                  <strong>{formatSeconds(item.totalSeconds)}</strong>
-                </div>
-                <div className="barTrack" aria-hidden="true">
-                  <div
-                    className="barFill"
-                    style={{ width: `${(item.totalSeconds / largest) * 100}%` }}
-                  />
-                </div>
-                <div className="barMeta">
-                  <span>{item.eventCount} events</span>
-                  <span>{Math.round(item.share * 100)}%</span>
-                </div>
+      {viewMode === "daily" ? (
+        <DailyTracking date={today} />
+      ) : (
+        <>
+          <section className="statsGrid" aria-label="Descriptive statistics">
+            <Metric label="Count" value={durationSummary.count.toString()} />
+            <Metric label="Total" value={formatMetricSeconds(durationSummary.total)} />
+            <Metric label="Mean" value={formatMetricSeconds(durationSummary.mean)} />
+            <Metric label="Median" value={formatMetricSeconds(durationSummary.median)} />
+            <Metric label="Std dev" value={formatMetricSeconds(durationSummary.standardDeviation)} />
+            <Metric label="Min / Max" value={`${formatMetricSeconds(durationSummary.min)} / ${formatMetricSeconds(durationSummary.max)}`} />
+            <Metric label="Q1 / Q3" value={`${formatMetricSeconds(durationSummary.q1)} / ${formatMetricSeconds(durationSummary.q3)}`} />
+          </section>
+
+          <section className="workspace">
+            <div className="panel">
+              <div className="panelHeader">
+                <BarChart3 aria-hidden="true" size={20} />
+                <h2>Application Time</h2>
               </div>
-            ))}
-          </div>
-        </div>
+              <div className="bars">
+                {appSummary.map((item) => (
+                  <div className="barRow" key={item.app}>
+                    <div className="barLabel">
+                      <span>{item.app}</span>
+                      <strong>{formatSeconds(item.totalSeconds)}</strong>
+                    </div>
+                    <div className="barTrack" aria-hidden="true">
+                      <div
+                        className="barFill"
+                        style={{ width: `${(item.totalSeconds / largest) * 100}%` }}
+                      />
+                    </div>
+                    <div className="barMeta">
+                      <span>{item.eventCount} events</span>
+                      <span>{Math.round(item.share * 100)}%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
 
-        <div className="panel">
-          <div className="panelHeader">
-            <Server aria-hidden="true" size={20} />
-            <h2>Collector Connection</h2>
-          </div>
-          <dl className="statusList">
-            <div>
-              <dt>Status</dt>
-              <dd>
-                <span className={`statusPill ${collectorStatus}`}>
-                  {statusLabel(collectorStatus)}
-                </span>
-              </dd>
+            <div className="panel">
+              <div className="panelHeader">
+                <Server aria-hidden="true" size={20} />
+                <h2>Collector Connection</h2>
+              </div>
+              <dl className="statusList">
+                <div>
+                  <dt>Status</dt>
+                  <dd>
+                    <span className={`statusPill ${collectorStatus}`}>
+                      {statusLabel(collectorStatus)}
+                    </span>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Endpoint</dt>
+                  <dd className="codeLine">/api/time-events</dd>
+                </div>
+                <div>
+                  <dt>Rows</dt>
+                  <dd>{events.length}</dd>
+                </div>
+              </dl>
+              <div className="inlineActions">
+                <button type="button" onClick={() => void refreshCollector()}>
+                  <RefreshCw aria-hidden="true" size={18} />
+                  <span>Refresh Collector</span>
+                </button>
+              </div>
+              {collectorError && (
+                <p className="errors" role="status">
+                  {collectorError}
+                </p>
+              )}
             </div>
-            <div>
-              <dt>Endpoint</dt>
-              <dd className="codeLine">/api/time-events</dd>
-            </div>
-            <div>
-              <dt>Rows</dt>
-              <dd>{events.length}</dd>
-            </div>
-          </dl>
-          <div className="inlineActions">
-            <button type="button" onClick={() => void refreshCollector()}>
-              <RefreshCw aria-hidden="true" size={18} />
-              <span>Refresh Collector</span>
-            </button>
-          </div>
-          {collectorError && (
-            <p className="errors" role="status">
-              {collectorError}
-            </p>
-          )}
-        </div>
-      </section>
+          </section>
 
-      <section className="panel tablePanel">
-        <div className="panelHeader">
-          <TableProperties aria-hidden="true" size={20} />
-          <h2>Event Rows</h2>
-        </div>
-        <div className="tableWrap">
-          <table>
-            <thead>
-              <tr>
-                <th>App</th>
-                <th>Title</th>
-                <th>Started</th>
-                <th>Ended</th>
-                <th>Duration</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.map((event) => (
-                <tr key={event.id}>
-                  <td>{event.app}</td>
-                  <td>{event.title}</td>
-                  <td>{formatTime(event.startedAt)}</td>
-                  <td>{event.endedAt ? formatTime(event.endedAt) : "Open"}</td>
-                  <td>{formatSeconds(toDurationSeconds(event))}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+          <section className="panel tablePanel">
+            <div className="panelHeader">
+              <TableProperties aria-hidden="true" size={20} />
+              <h2>Event Rows</h2>
+            </div>
+            <div className="tableWrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>App</th>
+                    <th>Title</th>
+                    <th>Started</th>
+                    <th>Ended</th>
+                    <th>Duration</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {events.map((event) => (
+                    <tr key={event.id}>
+                      <td>{event.app}</td>
+                      <td>{event.title}</td>
+                      <td>{formatTime(event.startedAt)}</td>
+                      <td>{event.endedAt ? formatTime(event.endedAt) : "Open"}</td>
+                      <td>{formatSeconds(toDurationSeconds(event))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
+      )}
     </main>
   );
 }

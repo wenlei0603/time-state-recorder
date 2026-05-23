@@ -31,6 +31,8 @@ enum Command {
         addr: SocketAddr,
         #[arg(long, default_value_t = 1000)]
         poll_ms: u64,
+        #[arg(long, default_value = "blocker_config.json")]
+        blocker_config: PathBuf,
     },
 }
 
@@ -55,11 +57,16 @@ async fn main() -> Result<()> {
             let mut store = store;
             record_for(&mut store, &session_id, seconds, poll_ms).await?;
         }
-        Command::Serve { db, addr, poll_ms } => {
+        Command::Serve {
+            db,
+            addr,
+            poll_ms,
+            blocker_config,
+        } => {
             ensure_poll_ms(poll_ms)?;
             let store = Store::open(db)?;
             store.init()?;
-            api::serve(store, addr, poll_ms).await?;
+            api::serve(store, addr, poll_ms, Some(blocker_config)).await?;
         }
     }
 

@@ -30,7 +30,7 @@ async fn serves_time_events_as_json() {
         "Docs",
     );
 
-    let app = api::router(store);
+    let app = api::router(store, None);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
@@ -54,7 +54,7 @@ async fn does_not_allow_cross_origin_reads() {
     let store = Store::open_memory().unwrap();
     store.init().unwrap();
 
-    let app = api::router(store);
+    let app = api::router(store, None);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
