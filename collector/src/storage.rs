@@ -641,6 +641,32 @@ impl Store {
             top_apps,
         })
     }
+
+    pub fn get_db_stats(&self) -> Result<crate::models::DbStats> {
+        let window_events: usize = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM window_events", [], |r| r.get(0))?;
+        let input_events: usize = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM input_events", [], |r| r.get(0))?;
+        let text_segments: usize = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM text_segments", [], |r| r.get(0))?;
+        let screenshots: usize = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM screenshot_thumbnails", [], |r| r.get(0))?;
+        let blocker_hits: usize = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM blocker_hits", [], |r| r.get(0))?;
+
+        Ok(crate::models::DbStats {
+            window_events,
+            input_events,
+            text_segments,
+            screenshots,
+            blocker_hits,
+        })
+    }
 }
 
 pub(crate) fn parse_ts(value: &str) -> rusqlite::Result<DateTime<Utc>> {
