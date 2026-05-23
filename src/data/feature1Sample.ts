@@ -39,9 +39,8 @@ export const feature1SampleEvents: TimeEvent[] = [
   {
     id: "feature1-6",
     app: "Browser",
-    title: "MDN CSV import notes",
+    title: "MDN API integration notes",
     startedAt: "2026-05-23T10:17:00.000Z",
     endedAt: "2026-05-23T10:27:00.000Z"
   }
 ];
-

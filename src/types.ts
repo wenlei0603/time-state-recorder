@@ -26,8 +26,3 @@ export type ApplicationSummary = {
   averageSeconds: number;
   share: number;
 };
-
-export type CsvParseResult = {
-  events: TimeEvent[];
-  errors: string[];
-};

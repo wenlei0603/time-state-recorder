@@ -212,7 +212,64 @@ textarea {
   margin: 12px 0 0;
   border-left: 3px solid #b84a45;
   color: #8a312e;
-  padding-left: 18px;
+  padding-left: 12px;
+}
+
+.statusList {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+}
+
+.statusList div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid #e2e6e1;
+  padding-top: 14px;
+}
+
+.statusList dt {
+  color: #5f6d65;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.statusList dd {
+  margin: 0;
+  text-align: right;
+  font-weight: 700;
+}
+
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: #e5eae4;
+  color: #29352e;
+}
+
+.statusPill.connected {
+  background: #d9ecdf;
+  color: #1f6b3b;
+}
+
+.statusPill.loading {
+  background: #e5ebf7;
+  color: #315a9f;
+}
+
+.statusPill.offline {
+  background: #f5dfdd;
+  color: #8a312e;
+}
+
+.codeLine {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.84rem;
 }
 
 .tablePanel {

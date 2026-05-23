@@ -1,7 +1,7 @@
-import { BarChart3, FileUp, RotateCcw, TableProperties } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { BarChart3, RefreshCw, RotateCcw, Server, TableProperties } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { feature1SampleEvents } from "./data/feature1Sample";
-import { parseTimeEventsCsv } from "./lib/csv";
+import { fetchTimeEvents } from "./lib/api";
 import {
   summarizeByApplication,
   summarizeDurations,
@@ -10,43 +10,37 @@ import {
 import type { TimeEvent } from "./types";
 import "./styles.css";
 
-const sampleCsv = [
-  "app,title,startedAt,endedAt",
-  ...feature1SampleEvents.map((event) =>
-    [event.app, event.title, event.startedAt, event.endedAt ?? ""]
-      .map((cell) => `"${cell.replaceAll('"', '""')}"`)
-      .join(",")
-  )
-].join("\n");
+type CollectorStatus = "sample" | "loading" | "connected" | "offline";
 
 export function App() {
   const [events, setEvents] = useState<TimeEvent[]>(feature1SampleEvents);
-  const [csvText, setCsvText] = useState(sampleCsv);
-  const [errors, setErrors] = useState<string[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [collectorStatus, setCollectorStatus] = useState<CollectorStatus>("sample");
+  const [collectorError, setCollectorError] = useState<string | null>(null);
 
   const durationSummary = useMemo(() => summarizeDurations(events), [events]);
   const appSummary = useMemo(() => summarizeByApplication(events), [events]);
 
+  useEffect(() => {
+    void refreshCollector();
+  }, []);
+
   function loadSample() {
-    setCsvText(sampleCsv);
     setEvents(feature1SampleEvents);
-    setErrors([]);
+    setCollectorStatus("sample");
+    setCollectorError(null);
   }
 
-  function importCsv(nextText = csvText) {
-    const parsed = parseTimeEventsCsv(nextText);
-    setEvents(parsed.events);
-    setErrors(parsed.errors);
-  }
-
-  async function handleFile(file: File | undefined) {
-    if (!file) {
-      return;
+  async function refreshCollector() {
+    setCollectorStatus("loading");
+    setCollectorError(null);
+    try {
+      const nextEvents = await fetchTimeEvents();
+      setEvents(nextEvents);
+      setCollectorStatus("connected");
+    } catch (error) {
+      setCollectorStatus("offline");
+      setCollectorError(error instanceof Error ? error.message : String(error));
     }
-    const text = await file.text();
-    setCsvText(text);
-    importCsv(text);
   }
 
   const largest = Math.max(...appSummary.map((item) => item.totalSeconds), 1);
@@ -63,23 +57,10 @@ export function App() {
             <RotateCcw aria-hidden="true" size={18} />
             <span>Feature1 Sample</span>
           </button>
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            title="Import CSV"
-          >
-            <FileUp aria-hidden="true" size={18} />
-            <span>Import CSV</span>
+          <button type="button" onClick={() => void refreshCollector()}>
+            <RefreshCw aria-hidden="true" size={18} />
+            <span>Collector Data</span>
           </button>
-          <input
-            ref={fileInputRef}
-            className="visuallyHidden"
-            type="file"
-            accept=".csv,text/csv"
-            tabIndex={-1}
-            aria-label="CSV file"
-            onChange={(event) => void handleFile(event.target.files?.[0])}
-          />
         </div>
       </header>
 
@@ -123,27 +104,37 @@ export function App() {
 
         <div className="panel">
           <div className="panelHeader">
-            <FileUp aria-hidden="true" size={20} />
-            <h2>CSV Input</h2>
+            <Server aria-hidden="true" size={20} />
+            <h2>Collector Connection</h2>
           </div>
-          <textarea
-            value={csvText}
-            onChange={(event) => setCsvText(event.target.value)}
-            spellCheck={false}
-            aria-label="CSV input"
-          />
+          <dl className="statusList">
+            <div>
+              <dt>Status</dt>
+              <dd>
+                <span className={`statusPill ${collectorStatus}`}>
+                  {statusLabel(collectorStatus)}
+                </span>
+              </dd>
+            </div>
+            <div>
+              <dt>Endpoint</dt>
+              <dd className="codeLine">/api/time-events</dd>
+            </div>
+            <div>
+              <dt>Rows</dt>
+              <dd>{events.length}</dd>
+            </div>
+          </dl>
           <div className="inlineActions">
-            <button type="button" onClick={() => importCsv()}>
-              <TableProperties aria-hidden="true" size={18} />
-              <span>Calculate</span>
+            <button type="button" onClick={() => void refreshCollector()}>
+              <RefreshCw aria-hidden="true" size={18} />
+              <span>Refresh Collector</span>
             </button>
           </div>
-          {errors.length > 0 && (
-            <ul className="errors" aria-label="CSV errors">
-              {errors.map((error) => (
-                <li key={error}>{error}</li>
-              ))}
-            </ul>
+          {collectorError && (
+            <p className="errors" role="status">
+              {collectorError}
+            </p>
           )}
         </div>
       </section>
@@ -170,7 +161,7 @@ export function App() {
                   <td>{event.app}</td>
                   <td>{event.title}</td>
                   <td>{formatTime(event.startedAt)}</td>
-                  <td>{event.endedAt ? formatTime(event.endedAt) : "Duration only"}</td>
+                  <td>{event.endedAt ? formatTime(event.endedAt) : "Open"}</td>
                   <td>{formatSeconds(toDurationSeconds(event))}</td>
                 </tr>
               ))}
@@ -180,6 +171,19 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function statusLabel(status: CollectorStatus): string {
+  switch (status) {
+    case "connected":
+      return "Connected";
+    case "loading":
+      return "Loading";
+    case "offline":
+      return "Offline";
+    case "sample":
+      return "Sample";
+  }
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
