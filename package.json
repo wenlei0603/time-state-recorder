@@ -7,7 +7,9 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "collector": "cargo run -p tsr-collector -- serve --db data/local.sqlite3 --addr 127.0.0.1:4317",
+    "collector:release": "cargo run -p tsr-collector --release -- serve --db data/local.sqlite3 --addr 127.0.0.1:4317"
   },
   "dependencies": {
     "react": "^19.2.3",
