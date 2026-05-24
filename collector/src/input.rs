@@ -140,7 +140,10 @@ impl SegmentBuffer {
     }
 }
 
-pub fn spawn_input_collector(store: Arc<Mutex<Store>>, health: Arc<Mutex<CollectorHealth>>) {
+pub fn spawn_input_collector(
+    store: Arc<Mutex<Store>>,
+    health: Arc<Mutex<CollectorHealth>>,
+) -> tokio::task::JoinHandle<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<InputSignal>();
 
     {
@@ -204,7 +207,7 @@ pub fn spawn_input_collector(store: Arc<Mutex<Store>>, health: Arc<Mutex<Collect
                 }
             }
         }
-    });
+    })
 }
 
 #[cfg(windows)]

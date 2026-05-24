@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
@@ -230,6 +230,44 @@ async fn serve_bind_failure_does_not_close_open_sessions() {
             .close_stale_sessions(ts("2026-05-23T10:00:00Z"), "abnormal_stop")
             .unwrap(),
         vec![session_id]
+    );
+}
+
+#[tokio::test]
+async fn serve_shutdown_endpoint_records_service_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("shutdown.sqlite3");
+    let store = Store::open(&db_path).unwrap();
+    store.init().unwrap();
+
+    let port_probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = port_probe.local_addr().unwrap();
+    drop(port_probe);
+
+    let server = tokio::spawn(async move { api::serve(store, addr, 100, None).await });
+    wait_for_health(addr).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("http://{addr}/api/shutdown"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let store = Store::open(&db_path).unwrap();
+    store.init().unwrap();
+    let lifecycle_rows = store.list_lifecycle_events(10).unwrap();
+    assert!(
+        lifecycle_rows
+            .iter()
+            .any(|row| row.lifecycle_type == LifecycleType::SessionStop
+                && row.reason.as_deref() == Some("service_stop"))
     );
 }
 
@@ -479,6 +517,20 @@ fn ts(value: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(value)
         .unwrap()
         .with_timezone(&Utc)
+}
+
+async fn wait_for_health(addr: SocketAddr) {
+    let client = reqwest::Client::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline {
+        if let Ok(response) = client.get(format!("http://{addr}/api/health")).send().await {
+            if response.status() == StatusCode::OK {
+                return;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("collector health endpoint did not become ready");
 }
 
 #[tokio::test]

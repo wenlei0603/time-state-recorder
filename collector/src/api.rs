@@ -11,11 +11,11 @@ use axum::{
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tokio::time;
+use tokio::{sync::oneshot, time};
 use tower_http::services::ServeDir;
 
 use crate::{
@@ -39,6 +39,7 @@ pub struct AppState {
     screenshot_interval_secs: Arc<u64>,
     idle_threshold_secs: Arc<u64>,
     health: Arc<Mutex<CollectorHealth>>,
+    shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,10 +95,14 @@ const DEFAULT_IDLE_THRESHOLD: u64 = 120;
 const DEFAULT_SCREENSHOT_LIMIT: usize = 1440;
 
 pub fn router(store: Store, blocker_config_path: Option<PathBuf>) -> Router {
-    router_from_state(default_state(store, blocker_config_path))
+    router_from_state(default_state(store, blocker_config_path, None))
 }
 
-fn default_state(store: Store, blocker_config_path: Option<PathBuf>) -> AppState {
+fn default_state(
+    store: Store,
+    blocker_config_path: Option<PathBuf>,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+) -> AppState {
     let engine = blocker_config_path
         .as_deref()
         .and_then(|p| BlockerEngine::load(p).ok())
@@ -141,6 +146,7 @@ fn default_state(store: Store, blocker_config_path: Option<PathBuf>) -> AppState
                 blocker_hits: 0,
             },
         })),
+        shutdown_tx: Arc::new(Mutex::new(shutdown_tx)),
     }
 }
 
@@ -157,6 +163,7 @@ fn router_from_state(state: AppState) -> Router {
         .route("/api/input-events", get(input_events))
         .route("/api/input-summary", get(input_summary))
         .route("/api/text-segments", get(text_segments))
+        .route("/api/shutdown", post(shutdown))
         .nest_service("/screenshots", ServeDir::new(screenshot_dir))
         .with_state(state)
 }
@@ -179,25 +186,30 @@ pub async fn serve(
         None,
         serde_json::json!({ "appVersion": env!("CARGO_PKG_VERSION") }),
     )?;
-    let state = default_state(store, blocker_config_path);
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let state = default_state(store, blocker_config_path, Some(shutdown_tx));
 
     let window_collector = spawn_collector_loop(state.clone(), session_id.clone(), poll_ms);
     let screenshot_collector = spawn_screenshot_loop(state.clone(), session_id.clone());
-    input::spawn_input_collector(state.store.clone(), state.health.clone());
+    let input_collector = input::spawn_input_collector(state.store.clone(), state.health.clone());
 
     let app = router_from_state(state.clone());
     let serve_result = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(shutdown_rx))
         .await;
+
+    window_collector.abort();
+    screenshot_collector.abort();
+    input_collector.abort();
+    let _ = window_collector.await;
+    let _ = screenshot_collector.await;
+    let _ = input_collector.await;
 
     if let Ok(mut store) = state.store.lock() {
         if let Err(err) = store.close_session(&session_id, Utc::now(), "service_stop") {
             eprintln!("session close failed: {err:#}");
         }
     }
-
-    window_collector.abort();
-    screenshot_collector.abort();
 
     serve_result?;
     Ok(())
@@ -610,12 +622,32 @@ async fn text_segments(
     }
 }
 
+async fn shutdown(State(state): State<AppState>) -> impl IntoResponse {
+    let tx = match state.shutdown_tx.lock() {
+        Ok(mut tx) => tx.take(),
+        Err(_) => return internal_error("shutdown lock poisoned"),
+    };
+
+    match tx {
+        Some(tx) => {
+            let _ = tx.send(());
+            StatusCode::OK.into_response()
+        }
+        None => (StatusCode::SERVICE_UNAVAILABLE, "shutdown unavailable").into_response(),
+    }
+}
+
 fn internal_error(message: impl std::fmt::Display) -> axum::response::Response {
     (StatusCode::INTERNAL_SERVER_ERROR, message.to_string()).into_response()
 }
 
-async fn shutdown_signal() {
-    if let Err(err) = tokio::signal::ctrl_c().await {
-        eprintln!("shutdown signal listener failed: {err:#}");
+async fn shutdown_signal(mut shutdown_rx: oneshot::Receiver<()>) {
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => {
+            if let Err(err) = result {
+                eprintln!("shutdown signal listener failed: {err:#}");
+            }
+        }
+        _ = &mut shutdown_rx => {}
     }
 }
