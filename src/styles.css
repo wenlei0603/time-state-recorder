@@ -65,6 +65,17 @@ button:hover {
   padding: 12px 0 24px;
 }
 
+.headerMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  color: #5f6d65;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
 .eyebrow {
   margin: 0 0 4px;
   color: #4c7a64;
@@ -94,6 +105,109 @@ h2 {
   gap: 10px;
 }
 
+.controlPanel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.segmentedGroup {
+  display: grid;
+  gap: 5px;
+}
+
+.segmentedGroup > span,
+.dateQuery > span {
+  color: #5f6d65;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.dateQuery {
+  display: grid;
+  gap: 5px;
+}
+
+.dateQuery input {
+  min-height: 38px;
+  width: 148px;
+  border: 1px solid #c6d2c9;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #17211b;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 700;
+  padding: 0 10px;
+}
+
+.dateQuery input:focus-visible {
+  outline: 2px solid #8fb6a7;
+  outline-offset: 2px;
+}
+
+.segmentedControl {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid #c6d2c9;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 3px;
+}
+
+.segmentedControl button,
+.togglePill {
+  min-height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #5f6d65;
+  box-shadow: none;
+  font-size: 0.8rem;
+  font-weight: 800;
+  padding: 0 10px;
+}
+
+.segmentedControl button:hover,
+.togglePill:hover {
+  color: #17211b;
+  box-shadow: none;
+}
+
+.segmentedControl button.active,
+.togglePill.active {
+  background: #2f635c;
+  color: #ffffff;
+}
+
+.iconButton {
+  min-height: 38px;
+}
+
+.filterBand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 10px 12px;
+  border: 1px solid #d9dfd8;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.layerToggles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
 .statsGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -112,6 +226,24 @@ h2 {
 .metric {
   min-height: 92px;
   padding: 16px;
+}
+
+.metricWithIcon {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.metricIcon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: #e5ebf7;
+  color: #315a9f;
 }
 
 .metric span,
@@ -248,6 +380,11 @@ textarea {
   align-items: center;
   border-radius: 999px;
   padding: 4px 10px;
+  background: #e5eae4;
+  color: #29352e;
+}
+
+.statusPill.sample {
   background: #e5eae4;
   color: #29352e;
 }
@@ -540,6 +677,159 @@ td:nth-child(2) {
   border-color: #356b63;
 }
 
+/* Dashboard and timeline */
+
+.sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.sectionHeader h2 {
+  font-size: 1.25rem;
+}
+
+.sectionHeader p {
+  margin: 4px 0 0;
+  color: #5f6d65;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.dashboard,
+.timelineView {
+  display: grid;
+  gap: 16px;
+}
+
+.dashboardWorkspace {
+  align-items: start;
+}
+
+.dashboardMonitor {
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: 16px;
+}
+
+.panelHeader h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.timelineList {
+  display: grid;
+  gap: 10px;
+}
+
+.compactList {
+  gap: 8px;
+}
+
+.timelineCard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 14px;
+  align-items: center;
+  border: 1px solid #d9dfd8;
+  border-left: 4px solid #356b63;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px 14px;
+}
+
+.timelineCard.lifecycle {
+  border-left-color: #d85c48;
+}
+
+.timelineCard.hour {
+  border-left-color: #446ccf;
+}
+
+.timelineCardLead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.timelineCardLead svg {
+  color: #356b63;
+  flex: 0 0 auto;
+}
+
+.timelineCard.lifecycle .timelineCardLead svg {
+  color: #d85c48;
+}
+
+.timelineCard.hour .timelineCardLead svg {
+  color: #446ccf;
+}
+
+.timelineCard strong,
+.timelineCard span {
+  min-width: 0;
+}
+
+.timelineCard div > span,
+.timelineCardLead span {
+  display: block;
+  overflow: hidden;
+  color: #5f6d65;
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timelineCardMeta {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.8rem;
+}
+
+.timelineSplit {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: #5f6d65;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.timelineStatus {
+  grid-column: 1 / -1;
+  width: fit-content;
+  border-radius: 999px;
+  background: #f5dfdd;
+  color: #8a312e;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 3px 8px;
+  text-transform: uppercase;
+}
+
+.emptyState {
+  margin: 0;
+  padding: 14px;
+  border-radius: 8px;
+  background: #f3f6f2;
+  color: #5f6d65;
+  font-weight: 700;
+}
+
+.density-compact .metric {
+  min-height: 76px;
+  padding: 12px;
+}
+
+.density-compact .timelineCard {
+  padding: 8px 10px;
+}
+
 /* Daily Tracking */
 
 .dailyTracking {
@@ -738,6 +1028,49 @@ td:nth-child(2) {
   gap: 16px;
 }
 
+.insightStrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.insightStrip .metric {
+  min-height: 76px;
+  padding: 12px 14px;
+}
+
+.tableTools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tableTools label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #5f6d65;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.tableTools select {
+  min-height: 34px;
+  border: 1px solid #c6d2c9;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17211b;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 700;
+  padding: 0 10px;
+  text-transform: none;
+}
+
 .segmentRow {
   cursor: pointer;
   transition: border-color 0.15s;
@@ -774,6 +1107,13 @@ td:nth-child(2) {
   word-break: break-word;
   max-height: 320px;
   overflow-y: auto;
+}
+
+.redactedText {
+  border: 1px dashed #c6d2c9;
+  color: #5f6d65;
+  font-family: inherit;
+  font-weight: 700;
 }
 
 .cellMono {

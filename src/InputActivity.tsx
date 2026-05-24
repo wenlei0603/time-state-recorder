@@ -1,10 +1,25 @@
 import { BarChart3, Clock, Keyboard, Maximize2, TableProperties } from "lucide-react";
-import { Fragment, useMemo, useState } from "react";
-import { feature2SampleSegments, feature2SampleSummary } from "./data/feature2Sample";
-import { fetchInputSummary, fetchTextSegments } from "./lib/input";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import {
+  listSegmentApps,
+  summarizeInputInsights,
+  type PrivacyMode,
+  type UiSourceMode
+} from "./lib/uiModel";
 import type { InputSummary, TextSegment } from "./types";
 
-type DataSource = "sample" | "live";
+type AppFilter = "all" | string;
+
+type InputActivityProps = {
+  privacyMode?: PrivacyMode;
+  summary: InputSummary;
+  segments: TextSegment[];
+  sourceMode: UiSourceMode;
+  loading: boolean;
+  error: string | null;
+  onLoadSample: () => void;
+  onLoadLive: () => void;
+};
 
 function formatTime(value: string): string {
   const date = new Date(value);
@@ -12,57 +27,61 @@ function formatTime(value: string): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export function InputActivity() {
-  const [summary, setSummary] = useState<InputSummary>(feature2SampleSummary);
-  const [segments, setSegments] = useState<TextSegment[]>(feature2SampleSegments);
-  const [source, setSource] = useState<DataSource>("sample");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function InputActivity({
+  privacyMode = "redacted",
+  summary,
+  segments,
+  sourceMode,
+  loading,
+  error,
+  onLoadSample,
+  onLoadLive
+}: InputActivityProps) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [appFilter, setAppFilter] = useState<AppFilter>("all");
 
   const largest = useMemo(() => {
     const max = Math.max(...summary.topApps.map((a) => a.charCount), 1);
     return max;
   }, [summary.topApps]);
+  const appOptions = useMemo(() => listSegmentApps(segments), [segments]);
+  const visibleSegments = useMemo(
+    () =>
+      appFilter === "all"
+        ? segments
+        : segments.filter((segment) => segment.processName === appFilter),
+    [appFilter, segments]
+  );
+  const inputInsights = useMemo(
+    () => summarizeInputInsights(visibleSegments),
+    [visibleSegments]
+  );
 
-  async function loadLive() {
-    setLoading(true);
-    setError(null);
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const [sum, segs] = await Promise.all([
-        fetchInputSummary(today),
-        fetchTextSegments(today),
-      ]);
-      setSummary(sum);
-      setSegments(segs);
-      setSource("live");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    if (appFilter !== "all" && !appOptions.includes(appFilter)) {
+      setAppFilter("all");
+      setExpanded(null);
     }
-  }
-
-  function loadSample() {
-    setSummary(feature2SampleSummary);
-    setSegments(feature2SampleSegments);
-    setSource("sample");
-    setError(null);
-  }
+  }, [appFilter, appOptions]);
 
   return (
     <section className="inputActivity">
       <div className="dailyHeader">
         <div>
           <h2>Input Activity</h2>
-          <p className="dailyDate">Keyboard capture via Raw Input</p>
+          <p className="dailyDate">
+            Keyboard capture via Raw Input · {sourceMode === "live" ? "Live" : "Sample"} input data
+          </p>
         </div>
         <div className="actions">
-          <button type="button" onClick={loadSample}>
+          <button type="button" onClick={() => {
+            setAppFilter("all");
+            setExpanded(null);
+            onLoadSample();
+          }}>
             Sample
           </button>
-          <button type="button" onClick={() => void loadLive()} disabled={loading}>
+          <button type="button" onClick={onLoadLive} disabled={loading}>
             <Keyboard aria-hidden="true" size={18} />
             <span>{loading ? "Loading..." : "Live Data"}</span>
           </button>
@@ -81,13 +100,24 @@ export function InputActivity() {
         />
       </section>
 
+      <section className="insightStrip" aria-label="Input insights">
+        <Metric label="Visible Keys" value={inputInsights.totalKeys.toLocaleString()} />
+        <Metric label="Corrections" value={inputInsights.correctionCount.toString()} />
+        <Metric
+          label="Correction Ratio"
+          value={`${Math.round(inputInsights.correctionRatio * 100)}%`}
+        />
+        <Metric label="Input Bursts" value={inputInsights.burstCount.toString()} />
+        <Metric label="Input Apps" value={inputInsights.activeAppCount.toString()} />
+      </section>
+
       {error && (
         <p className="errors" role="status">
           {error}
         </p>
       )}
 
-      {source === "sample" && (
+      {sourceMode === "sample" && (
         <p className="sampleNotice">
           Showing sample data. Click "Live Data" when the collector is running.
         </p>
@@ -155,6 +185,28 @@ export function InputActivity() {
           <TableProperties aria-hidden="true" size={20} />
           <h2>Text Segments</h2>
         </div>
+        <div className="tableTools">
+          <label>
+            App
+            <select
+              value={appFilter}
+              onChange={(event) => {
+                setAppFilter(event.target.value);
+                setExpanded(null);
+              }}
+            >
+              <option value="all">All apps</option>
+              {appOptions.map((app) => (
+                <option key={app} value={app}>
+                  {app}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="statusPill">
+            {privacyMode === "raw" ? "Raw text visible" : "Raw text hidden"}
+          </span>
+        </div>
         <div className="tableWrap">
           <table>
             <thead>
@@ -169,7 +221,7 @@ export function InputActivity() {
               </tr>
             </thead>
             <tbody>
-              {segments.map((seg) => (
+              {visibleSegments.map((seg) => (
                 <Fragment key={seg.id}>
                   <tr
                     className={`segmentRow ${expanded === seg.id ? "expanded" : ""}`}
@@ -204,7 +256,14 @@ export function InputActivity() {
                   {expanded === seg.id && (
                     <tr className="segmentExpand">
                       <td colSpan={7}>
-                        <pre className="segmentText">{seg.textContent}</pre>
+                        {privacyMode === "raw" ? (
+                          <pre className="segmentText">{seg.textContent}</pre>
+                        ) : (
+                          <p className="segmentText redactedText">
+                            Raw text hidden in redacted mode. Keys: {seg.keyCount}, corrections:{" "}
+                            {seg.backspaceCount + seg.deleteCount}.
+                          </p>
+                        )}
                       </td>
                     </tr>
                   )}

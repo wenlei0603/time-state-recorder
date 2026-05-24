@@ -42,5 +42,15 @@ export const feature1SampleEvents: TimeEvent[] = [
     title: "MDN API integration notes",
     startedAt: "2026-05-23T10:17:00.000Z",
     endedAt: "2026-05-23T10:27:00.000Z"
+  },
+  {
+    id: "feature1-lifecycle-1",
+    app: "System",
+    title: "Windows locked",
+    kind: "lifecycle",
+    status: "windows_lock",
+    startedAt: "2026-05-23T10:27:00.000Z",
+    endedAt: "2026-05-23T10:39:00.000Z",
+    durationSeconds: 720
   }
 ];

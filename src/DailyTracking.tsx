@@ -1,13 +1,19 @@
 import { Camera, Clock, ImageIcon } from "lucide-react";
 import { useMemo, useState } from "react";
-import { feature3SampleScreenshots, feature3SampleSummary } from "./data/feature3Sample";
-import { fetchScreenshots, fetchScreenshotSummary } from "./lib/screenshots";
+import type { PrivacyMode, UiSourceMode } from "./lib/uiModel";
 import type { ScreenshotMeta, ScreenshotSummary } from "./types";
-
-type DataSource = "sample" | "live";
 
 interface DailyTrackingProps {
   date: string;
+  screenshots: ScreenshotMeta[];
+  summary: ScreenshotSummary;
+  sourceMode: UiSourceMode;
+  loading: boolean;
+  error: string | null;
+  screenshotsVisible: boolean;
+  privacyMode: PrivacyMode;
+  onLoadSample: () => void;
+  onLoadLive: () => void;
 }
 
 function formatTime(value: string): string {
@@ -25,12 +31,18 @@ function toLocalDate(value: string): string {
   return `${y}-${m}-${d}`;
 }
 
-export function DailyTracking({ date }: DailyTrackingProps) {
-  const [screenshots, setScreenshots] = useState<ScreenshotMeta[]>(feature3SampleScreenshots);
-  const [summary, setSummary] = useState<ScreenshotSummary>(feature3SampleSummary);
-  const [source, setSource] = useState<DataSource>("sample");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function DailyTracking({
+  date,
+  screenshots,
+  summary,
+  sourceMode,
+  loading,
+  error,
+  screenshotsVisible,
+  privacyMode,
+  onLoadSample,
+  onLoadLive
+}: DailyTrackingProps) {
   const [expanded, setExpanded] = useState<number | null>(null);
 
   const grouped = useMemo(() => {
@@ -48,31 +60,6 @@ export function DailyTracking({ date }: DailyTrackingProps) {
     return map;
   }, [screenshots]);
 
-  async function loadLive() {
-    setLoading(true);
-    setError(null);
-    try {
-      const [shots, sum] = await Promise.all([
-        fetchScreenshots(date),
-        fetchScreenshotSummary(date),
-      ]);
-      setScreenshots(shots);
-      setSummary(sum);
-      setSource("live");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function loadSample() {
-    setScreenshots(feature3SampleScreenshots);
-    setSummary(feature3SampleSummary);
-    setSource("sample");
-    setError(null);
-  }
-
   const topAppList = summary.topApps
     .slice(0, 3)
     .map((a) => `${a.processName} (${a.count})`)
@@ -86,10 +73,10 @@ export function DailyTracking({ date }: DailyTrackingProps) {
           <p className="dailyDate">{date}</p>
         </div>
         <div className="actions">
-          <button type="button" onClick={loadSample}>
+          <button type="button" onClick={onLoadSample}>
             Sample
           </button>
-          <button type="button" onClick={() => void loadLive()} disabled={loading}>
+          <button type="button" onClick={onLoadLive} disabled={loading}>
             <Camera aria-hidden="true" size={18} />
             <span>{loading ? "Loading..." : "Live Data"}</span>
           </button>
@@ -124,12 +111,25 @@ export function DailyTracking({ date }: DailyTrackingProps) {
         </p>
       )}
 
-      {source === "sample" && (
+      {sourceMode === "sample" && (
         <p className="sampleNotice">
           Showing sample data. Click "Live Data" when the collector is running.
         </p>
       )}
 
+      {!screenshotsVisible && (
+        <p className="sampleNotice">
+          Screenshots layer is hidden. Summary counts stay visible; screenshot evidence is not rendered.
+        </p>
+      )}
+
+      {screenshotsVisible && privacyMode === "redacted" && (
+        <p className="sampleNotice">
+          Screenshot images are hidden in redacted mode. Switch to Raw to load visual evidence.
+        </p>
+      )}
+
+      {screenshotsVisible ? (
       <div className="timeline">
         {[...grouped].map(([hour, shots]) => (
           <div className="timelineGroup" key={hour}>
@@ -154,22 +154,27 @@ export function DailyTracking({ date }: DailyTrackingProps) {
                 >
                   <div className="timelineTime">{formatTime(shot.capturedAt)}</div>
                   <div className="timelineThumb">
-                    <img
-                      src={`/screenshots/${shot.filePath}`}
-                      alt={`Screenshot at ${formatTime(shot.capturedAt)}`}
-                      width={shot.width}
-                      height={shot.height}
-                      loading="lazy"
-                      onError={(e) => {
-                        const target = e.currentTarget;
-                        target.style.display = "none";
-                        const placeholder = target.nextElementSibling;
-                        if (placeholder) {
-                          (placeholder as HTMLElement).style.display = "flex";
-                        }
-                      }}
-                    />
-                    <div className="thumbPlaceholder" style={{ display: "none" }}>
+                    {privacyMode === "raw" ? (
+                      <img
+                        src={`/screenshots/${shot.filePath}`}
+                        alt={`Screenshot at ${formatTime(shot.capturedAt)}`}
+                        width={shot.width}
+                        height={shot.height}
+                        loading="lazy"
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          target.style.display = "none";
+                          const placeholder = target.nextElementSibling;
+                          if (placeholder) {
+                            (placeholder as HTMLElement).style.display = "flex";
+                          }
+                        }}
+                      />
+                    ) : null}
+                    <div
+                      className="thumbPlaceholder"
+                      style={{ display: privacyMode === "raw" ? "none" : "flex" }}
+                    >
                       <ImageIcon aria-hidden="true" size={24} />
                     </div>
                   </div>
@@ -179,7 +184,7 @@ export function DailyTracking({ date }: DailyTrackingProps) {
                       {shot.windowTitle || ""}
                     </span>
                   </div>
-                  {expanded === shot.id && (
+                  {expanded === shot.id && privacyMode === "raw" && (
                     <div className="timelineExpand">
                       <img
                         src={`/screenshots/${shot.filePath}`}
@@ -196,6 +201,7 @@ export function DailyTracking({ date }: DailyTrackingProps) {
           </div>
         ))}
       </div>
+      ) : null}
     </section>
   );
 }
