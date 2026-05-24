@@ -20,7 +20,11 @@ pub fn build_time_events_with_lifecycle(
         let next_lifecycle_cut = lifecycle_events
             .iter()
             .filter(|lifecycle| lifecycle.session_id == event.session_id)
-            .filter(|lifecycle| lifecycle.event_ts > event.event_ts)
+            .filter(|lifecycle| {
+                lifecycle.event_ts > event.event_ts
+                    || (lifecycle.event_ts == event.event_ts
+                        && lifecycle.lifecycle_type == LifecycleType::CollectorGap)
+            })
             .filter(|lifecycle| {
                 next_window_at
                     .map(|window_at| lifecycle.event_ts <= window_at)
@@ -53,8 +57,9 @@ pub fn build_time_events_with_lifecycle(
             .iter()
             .filter(|candidate| candidate.session_id == lifecycle.session_id)
             .filter(|candidate| candidate.event_ts > lifecycle.event_ts)
-            .find(|candidate| candidate.lifecycle_type == end_type)
+            .filter(|candidate| candidate.lifecycle_type == end_type)
             .map(|candidate| candidate.event_ts)
+            .min()
             .or_else(|| {
                 events
                     .iter()

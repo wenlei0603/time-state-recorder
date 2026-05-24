@@ -140,20 +140,21 @@ impl LifecycleType {
         }
     }
 
-    pub fn from_db(value: &str) -> Self {
+    pub fn from_db(value: &str) -> Option<Self> {
         match value {
-            "session_start" => Self::SessionStart,
-            "session_stop" => Self::SessionStop,
-            "windows_lock" => Self::WindowsLock,
-            "windows_unlock" => Self::WindowsUnlock,
-            "power_suspend" => Self::PowerSuspend,
-            "power_resume" => Self::PowerResume,
-            "idle_start" => Self::IdleStart,
-            "idle_end" => Self::IdleEnd,
-            "collector_gap" => Self::CollectorGap,
-            "session_disconnect" => Self::SessionDisconnect,
-            "session_reconnect" => Self::SessionReconnect,
-            _ => Self::CaptureUnavailable,
+            "session_start" => Some(Self::SessionStart),
+            "session_stop" => Some(Self::SessionStop),
+            "windows_lock" => Some(Self::WindowsLock),
+            "windows_unlock" => Some(Self::WindowsUnlock),
+            "power_suspend" => Some(Self::PowerSuspend),
+            "power_resume" => Some(Self::PowerResume),
+            "idle_start" => Some(Self::IdleStart),
+            "idle_end" => Some(Self::IdleEnd),
+            "capture_unavailable" => Some(Self::CaptureUnavailable),
+            "collector_gap" => Some(Self::CollectorGap),
+            "session_disconnect" => Some(Self::SessionDisconnect),
+            "session_reconnect" => Some(Self::SessionReconnect),
+            _ => None,
         }
     }
 }

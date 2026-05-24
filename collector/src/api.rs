@@ -168,6 +168,7 @@ pub async fn serve(
     blocker_config_path: Option<PathBuf>,
 ) -> Result<()> {
     anyhow::ensure!(poll_ms >= 100, "poll_ms must be at least 100");
+    let listener = tokio::net::TcpListener::bind(addr).await?;
     let now = Utc::now();
     store.close_stale_sessions(now, "abnormal_stop")?;
     let session_id = store.create_session(env!("CARGO_PKG_VERSION"), "default")?;
@@ -181,11 +182,21 @@ pub async fn serve(
     let state = default_state(store, blocker_config_path);
 
     spawn_collector_loop(state.clone(), session_id.clone(), poll_ms);
-    spawn_screenshot_loop(state.clone(), session_id);
+    spawn_screenshot_loop(state.clone(), session_id.clone());
     input::spawn_input_collector(state.store.clone(), state.health.clone());
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, router_from_state(state)).await?;
+    let app = router_from_state(state.clone());
+    let serve_result = axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await;
+
+    if let Ok(mut store) = state.store.lock() {
+        if let Err(err) = store.close_session(&session_id, Utc::now(), "service_stop") {
+            eprintln!("session close failed: {err:#}");
+        }
+    }
+
+    serve_result?;
     Ok(())
 }
 
@@ -432,24 +443,34 @@ async fn time_events(
     Query(query): Query<LimitQuery>,
 ) -> impl IntoResponse {
     let limit = query.limit.unwrap_or(500).min(5_000);
-    let store = match state.store.lock() {
-        Ok(store) => store,
-        Err(_) => return internal_error("store lock poisoned"),
-    };
+    let context_limit = limit.saturating_mul(2).min(10_000);
+    let store = state.store.clone();
+    let mut events = match tokio::task::spawn_blocking(move || -> Result<Vec<TimeEvent>> {
+        let (window_events, lifecycle_events) = {
+            let store = store
+                .lock()
+                .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
+            let window_events = store.list_window_events(context_limit)?;
+            let lifecycle_events = store.list_lifecycle_events(context_limit)?;
+            (window_events, lifecycle_events)
+        };
 
-    let window_events = match store.list_window_events(limit) {
-        Ok(events) => events,
-        Err(err) => return internal_error(err),
-    };
-    let lifecycle_events = match store.list_lifecycle_events(limit) {
-        Ok(events) => events,
-        Err(err) => return internal_error(err),
-    };
-
-    Json(TimeEventsResponse {
-        events: build_time_events_with_lifecycle(&window_events, &lifecycle_events),
+        Ok(build_time_events_with_lifecycle(
+            &window_events,
+            &lifecycle_events,
+        ))
     })
-    .into_response()
+    .await
+    {
+        Ok(Ok(events)) => events,
+        Ok(Err(err)) => return internal_error(err),
+        Err(err) => return internal_error(err),
+    };
+    if events.len() > limit {
+        events = events.split_off(events.len() - limit);
+    }
+
+    Json(TimeEventsResponse { events }).into_response()
 }
 
 async fn lifecycle_events(
@@ -584,4 +605,10 @@ async fn text_segments(
 
 fn internal_error(message: impl std::fmt::Display) -> axum::response::Response {
     (StatusCode::INTERNAL_SERVER_ERROR, message.to_string()).into_response()
+}
+
+async fn shutdown_signal() {
+    if let Err(err) = tokio::signal::ctrl_c().await {
+        eprintln!("shutdown signal listener failed: {err:#}");
+    }
 }

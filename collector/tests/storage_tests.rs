@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
+use rusqlite::params;
 use tsr_collector::{
+    interval::build_time_events_with_lifecycle,
     models::{CaptureStatus, LifecycleType, ScreenshotMeta, WindowSnapshot},
     storage::Store,
 };
@@ -147,6 +149,95 @@ fn closes_stale_sessions_as_abnormal_stop_with_collector_gap() {
     assert_eq!(rows[0].session_id, stale_session_id);
     assert_eq!(rows[0].lifecycle_type, LifecycleType::CollectorGap);
     assert_eq!(rows[0].reason.as_deref(), Some("abnormal_stop"));
+}
+
+#[test]
+fn closes_stale_sessions_at_last_recorded_event_boundary() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let stale_session_id = store.create_session("0.1.0", "test-config").unwrap();
+    store
+        .insert_window_focus(
+            &stale_session_id,
+            &WindowSnapshot {
+                captured_at: ts("2026-05-23T18:00:00Z"),
+                hwnd: 100,
+                pid: 42,
+                process_name: "Code.exe".to_string(),
+                exe_path_hash: None,
+                window_title: Some("main.rs".to_string()),
+                capture_status: CaptureStatus::Ok,
+            },
+        )
+        .unwrap();
+
+    store
+        .close_stale_sessions(ts("2026-05-24T09:00:00Z"), "abnormal_stop")
+        .unwrap();
+
+    let lifecycle_rows = store.list_lifecycle_events(10).unwrap();
+    assert_eq!(lifecycle_rows[0].event_ts, ts("2026-05-23T18:00:00Z"));
+
+    let window_rows = store.list_window_events(10).unwrap();
+    let intervals = build_time_events_with_lifecycle(&window_rows, &lifecycle_rows);
+    assert_eq!(intervals[0].duration_seconds, Some(0));
+}
+
+#[test]
+fn close_session_records_one_terminal_transition() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+
+    store
+        .close_session(&session_id, ts("2026-05-23T10:00:00Z"), "completed")
+        .unwrap();
+    assert!(
+        store
+            .close_session(&session_id, ts("2026-05-23T10:01:00Z"), "completed")
+            .is_err()
+    );
+
+    let lifecycle_rows = store.list_lifecycle_events(10).unwrap();
+    assert_eq!(lifecycle_rows.len(), 1);
+    assert_eq!(lifecycle_rows[0].lifecycle_type, LifecycleType::SessionStop);
+}
+
+#[test]
+fn rejects_unknown_lifecycle_types_from_storage() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("unknown-lifecycle.sqlite3");
+    let store = Store::open(&db_path).unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+    drop(store);
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        r#"
+        INSERT INTO raw_events
+          (session_id, event_ts, event_type, source, target_window_id, payload_json)
+        VALUES (?1, ?2, 'lifecycle', 'test', NULL, '{}')
+        "#,
+        params![session_id, "2026-05-23T09:00:00Z"],
+    )
+    .unwrap();
+    let raw_event_id = conn.last_insert_rowid();
+    conn.execute(
+        r#"
+        INSERT INTO lifecycle_events
+          (raw_event_id, lifecycle_type, reason, active_session_id, payload_json)
+        VALUES (?1, 'future_shutdown', NULL, ?2, '{}')
+        "#,
+        params![raw_event_id, session_id],
+    )
+    .unwrap();
+    drop(conn);
+
+    let store = Store::open(&db_path).unwrap();
+    store.init().unwrap();
+
+    assert!(store.list_lifecycle_events(10).is_err());
 }
 
 fn ts(value: &str) -> DateTime<Utc> {

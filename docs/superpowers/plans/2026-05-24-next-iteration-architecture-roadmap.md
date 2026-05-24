@@ -22,13 +22,17 @@ Implemented on `codex/0524feature` as the first core slice:
 - `capture_sessions` can be closed with `ended_reason`; stale open sessions are closed as `abnormal_stop` and emit `collector_gap` lifecycle facts.
 - `GET /api/time-events` derives lifecycle-aware rows with `kind`, `status`, and `sessionId`.
 - Active window intervals no longer bridge different sessions and are cut by lock, suspend, idle start, capture unavailable, session stop, collector gap, and session disconnect facts.
+- Stale sessions are closed transactionally at their last recorded event boundary so offline time is not counted as active foreground time; restart detection time is preserved in lifecycle payload metadata.
+- The `serve` command binds its API listener before mutating session lifecycle state, records `service_stop` on graceful shutdown, and moves lifecycle-aware time-event reads/derivation off the async reactor thread.
+- Unknown lifecycle values now fail storage reads instead of being silently reclassified.
 - The WebUI API parser preserves lifecycle metadata, and active duration/application summaries exclude lifecycle intervals from active-time totals.
 
 Prototype limitations to carry forward:
 
-- Live Windows lifecycle capture is not wired yet; lock/suspend/shutdown facts currently enter through storage/API code paths and stale-session closure.
+- Live Windows lifecycle capture is not wired yet; lock/suspend/shutdown facts currently enter through storage/API code paths, stale-session closure, and graceful serve shutdown.
 - Schema evolution still uses guarded `CREATE TABLE IF NOT EXISTS` plus `ALTER TABLE`; the explicit migration foundation remains the next critical infrastructure task.
 - The current `/api/time-events` lifecycle rows are a compatibility bridge, not the final `/api/v2/timeline` contract.
+- Multi-process ownership still needs a single-instance guard or heartbeat before multiple collectors can safely share one database.
 
 ## Commit Strategy
 

@@ -55,6 +55,8 @@ Response:
 
 Implemented `lifecycleType` values are `session_start`, `session_stop`, `windows_lock`, `windows_unlock`, `power_suspend`, `power_resume`, `idle_start`, `idle_end`, `capture_unavailable`, `collector_gap`, `session_disconnect`, and `session_reconnect`.
 
+Compatibility payload rule: `payload` is for non-sensitive lifecycle diagnostics only, such as app version, close reason, or stale-session `detectedAt`. It must not contain window titles, raw text, screenshot paths, or external integration identifiers until API v2 redaction policy is enforced.
+
 ### GET /api/time-events
 
 The compatibility time-events endpoint now includes lifecycle-aware metadata:
@@ -92,10 +94,11 @@ Rules:
 
 - Active window intervals do not bridge different `sessionId` values.
 - Active window intervals are cut at lifecycle events that make user activity unavailable, including lock, suspend, idle start, capture unavailable, session stop, collector gap, and session disconnect.
+- Stale-session `collector_gap` facts are written at the last recorded event timestamp for the stale session, with restart detection time in `payload.detectedAt`; this prevents offline time from being counted as active window time.
 - Paired lifecycle intervals are emitted for lock/unlock, suspend/resume, idle start/end, and disconnect/reconnect.
 - Frontend active-time summaries treat missing `kind` as legacy `active_window` and exclude `kind = "lifecycle"` from active application totals.
 
-Current limitation: the prototype records lifecycle facts through storage/API methods and stale-session closure. Live Windows message capture for `WM_WTSSESSION_CHANGE`, `WM_POWERBROADCAST`, and `WM_ENDSESSION` remains a next milestone.
+Current limitation: the prototype records lifecycle facts through storage/API methods, stale-session closure, and `serve` shutdown handling. Live Windows message capture for `WM_WTSSESSION_CHANGE`, `WM_POWERBROADCAST`, and `WM_ENDSESSION` remains a next milestone.
 
 ## Shared Types
 

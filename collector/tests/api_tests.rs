@@ -149,6 +149,91 @@ async fn serves_time_events_with_lifecycle_boundaries() {
 }
 
 #[tokio::test]
+async fn time_events_limit_applies_after_merging_lifecycle_rows() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+    insert(
+        &mut store,
+        &session_id,
+        "2026-05-23T09:00:00Z",
+        100,
+        "Code",
+        "main.rs",
+    );
+    store
+        .insert_lifecycle_event(
+            &session_id,
+            ts("2026-05-23T09:05:00Z"),
+            LifecycleType::WindowsLock,
+            None,
+            serde_json::json!({}),
+        )
+        .unwrap();
+    store
+        .insert_lifecycle_event(
+            &session_id,
+            ts("2026-05-23T09:20:00Z"),
+            LifecycleType::WindowsUnlock,
+            None,
+            serde_json::json!({}),
+        )
+        .unwrap();
+    insert(
+        &mut store,
+        &session_id,
+        "2026-05-23T09:25:00Z",
+        200,
+        "Browser",
+        "Docs",
+    );
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!("http://{addr}/api/time-events?limit=2"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["events"].as_array().unwrap().len(), 2);
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn serve_bind_failure_does_not_close_open_sessions() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("bind-failure.sqlite3");
+    let store = Store::open(&db_path).unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+
+    let occupied_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let occupied_addr = occupied_listener.local_addr().unwrap();
+
+    let result = api::serve(store, occupied_addr, 100, None).await;
+
+    assert!(result.is_err());
+    drop(occupied_listener);
+
+    let mut store = Store::open(&db_path).unwrap();
+    store.init().unwrap();
+    assert!(store.list_lifecycle_events(10).unwrap().is_empty());
+    assert_eq!(
+        store
+            .close_stale_sessions(ts("2026-05-23T10:00:00Z"), "abnormal_stop")
+            .unwrap(),
+        vec![session_id]
+    );
+}
+
+#[tokio::test]
 async fn does_not_allow_cross_origin_reads() {
     let store = Store::open_memory().unwrap();
     store.init().unwrap();
