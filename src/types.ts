@@ -50,6 +50,7 @@ export type TodayFlowModel = {
   activeSeconds: number;
   uncertainSeconds: number;
   screenshotCount: number;
+  screenshotSkippedCount: number;
   inputChars: number;
   skippedReasons: ScreenshotSkippedReasonCount[];
   buckets: FlowBucket[];

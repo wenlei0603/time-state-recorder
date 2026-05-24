@@ -38,7 +38,7 @@ const screenshotSummary: ScreenshotSummary = {
   totalScreenshots: 12,
   hoursCovered: 1,
   topApps: [],
-  skippedReasons: [],
+  skippedReasons: [{ reason: "idle", count: 3 }],
 };
 
 const inputSummary: InputSummary = {
@@ -63,6 +63,7 @@ describe("buildTodayFlowModel", () => {
     expect(model.activeSeconds).toBe(3000);
     expect(model.uncertainSeconds).toBe(600);
     expect(model.screenshotCount).toBe(12);
+    expect(model.screenshotSkippedCount).toBe(3);
     expect(model.inputChars).toBe(120);
     expect(model.buckets.map((bucket) => bucket.confidence)).toEqual([
       "high",
@@ -92,6 +93,18 @@ describe("buildTodayFlowModel", () => {
     });
 
     expect(model.evidence[0].title).toBe("main.rs");
+    expect(model.evidence[0].screenshotVisible).toBe(true);
+  });
+
+  it("keeps raw evidence visible even when no screenshot summary is loaded", () => {
+    const model = buildTodayFlowModel({
+      events,
+      inputSummary,
+      privacyMode: "raw",
+    });
+
+    expect(model.screenshotCount).toBe(0);
+    expect(model.screenshotSkippedCount).toBe(0);
     expect(model.evidence[0].screenshotVisible).toBe(true);
   });
 });

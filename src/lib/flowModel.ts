@@ -34,9 +34,14 @@ export function buildTodayFlowModel({
 }: BuildTodayFlowModelInput): TodayFlowModel {
   const mode: PrivacyMode = privacyMode === "raw" ? "raw" : "redacted";
   const screenshotCount = screenshotSummary?.totalScreenshots ?? 0;
+  const skippedReasons = screenshotSummary?.skippedReasons ?? [];
+  const screenshotSkippedCount = skippedReasons.reduce(
+    (sum, reason) => sum + reason.count,
+    0,
+  );
   const orderedEvents = [...events].sort(compareEvents);
   const evidence = orderedEvents.map((event) =>
-    toFlowEvidence(event, mode, screenshotCount),
+    toFlowEvidence(event, mode),
   );
   const buckets = evidence.map(toFlowBucket);
 
@@ -47,8 +52,9 @@ export function buildTodayFlowModel({
       .filter((item) => item.confidence === "uncertain")
       .reduce((sum, item) => sum + item.durationSeconds, 0),
     screenshotCount,
+    screenshotSkippedCount,
     inputChars: inputSummary?.totalChars ?? 0,
-    skippedReasons: screenshotSummary?.skippedReasons ?? [],
+    skippedReasons,
     buckets,
     evidence,
   };
@@ -57,7 +63,6 @@ export function buildTodayFlowModel({
 function toFlowEvidence(
   event: TimeEvent,
   privacyMode: PrivacyMode,
-  screenshotCount: number,
 ): FlowEvidence {
   const durationSeconds = toDurationSeconds(event);
 
@@ -71,7 +76,7 @@ function toFlowEvidence(
     endedAt: event.endedAt,
     durationSeconds,
     confidence: toConfidence(event, durationSeconds),
-    screenshotVisible: privacyMode === "raw" && screenshotCount > 0,
+    screenshotVisible: privacyMode === "raw",
   };
 }
 
