@@ -1,4 +1,8 @@
-import type { ScreenshotMeta, ScreenshotSummary } from "../types";
+import type {
+  ScreenshotMeta,
+  ScreenshotSkippedReasonCount,
+  ScreenshotSummary,
+} from "../types";
 
 type Fetcher = (input: string) => Promise<Pick<Response, "ok" | "status" | "statusText" | "json">>;
 
@@ -54,6 +58,7 @@ export async function fetchScreenshotSummary(
           };
         })
       : [],
+    skippedReasons: readSkippedReasons(body.skippedReasons),
   };
 }
 
@@ -102,6 +107,36 @@ function readNumber(record: Record<string, unknown>, key: string): number {
     throw new Error(`API row is missing ${key}`);
   }
   return value;
+}
+
+function readSkippedReasons(value: unknown): ScreenshotSkippedReasonCount[] {
+  if (value === null || value === undefined) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error("skippedReasons row is not an array");
+  }
+
+  return value.map(toSkippedReasonCount);
+}
+
+function toSkippedReasonCount(value: unknown): ScreenshotSkippedReasonCount {
+  if (!isRecord(value)) {
+    throw new Error("skippedReasons row is not a record");
+  }
+
+  const reason = value.reason;
+  if (typeof reason !== "string" || reason.length === 0) {
+    throw new Error("skippedReasons row has invalid reason");
+  }
+
+  const count = value.count;
+  if (typeof count !== "number" || !Number.isFinite(count) || count < 0) {
+    throw new Error("skippedReasons row has invalid count");
+  }
+
+  return { reason, count };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

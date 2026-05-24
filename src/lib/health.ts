@@ -43,6 +43,9 @@ function readSubsystem(
     lastEventAt: readOptionalString(value, "lastEventAt"),
     errorCount: readNumber(value, "errorCount", 0),
     lastError: readOptionalString(value, "lastError"),
+    mode: readOptionalString(value, "mode"),
+    lastCaptureStatus: readOptionalString(value, "lastCaptureStatus"),
+    lastSkipReason: readOptionalString(value, "lastSkipReason"),
   };
 }
 

@@ -25,6 +25,9 @@ describe("fetchCollectorHealth", () => {
           lastEventAt: "2026-05-24T09:12:00Z",
           errorCount: 3,
           lastError: "capture_thumbnail returned None",
+          mode: "thumbnail",
+          lastCaptureStatus: "skipped",
+          lastSkipReason: "privacy_blocker",
         },
         dbStats: {
           windowEvents: 452,
@@ -46,6 +49,9 @@ describe("fetchCollectorHealth", () => {
     expect(health.screenshotCollector.status).toBe("error");
     expect(health.screenshotCollector.errorCount).toBe(3);
     expect(health.screenshotCollector.lastError).toBe("capture_thumbnail returned None");
+    expect(health.screenshotCollector.mode).toBe("thumbnail");
+    expect(health.screenshotCollector.lastCaptureStatus).toBe("skipped");
+    expect(health.screenshotCollector.lastSkipReason).toBe("privacy_blocker");
     expect(health.dbStats.windowEvents).toBe(452);
     expect(health.dbStats.blockerHits).toBe(3);
     expect(health.dbStats.lifecycleEvents).toBe(4);

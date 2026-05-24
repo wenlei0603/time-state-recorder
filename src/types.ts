@@ -10,6 +10,52 @@ export type TimeEvent = {
   durationSeconds?: number;
 };
 
+export type PrivacyMode = "redacted" | "raw";
+
+export type FlowConfidence = "high" | "partial" | "uncertain";
+
+export type ScreenshotSkippedReasonCount = {
+  reason: string;
+  count: number;
+};
+
+export type FlowEvidence = {
+  id: string;
+  app: string;
+  title: string;
+  kind?: "active_window" | "lifecycle";
+  status?: string;
+  startedAt: string;
+  endedAt?: string;
+  durationSeconds: number;
+  confidence: FlowConfidence;
+  screenshotVisible: boolean;
+};
+
+export type FlowBucket = {
+  id: string;
+  app: string;
+  title: string;
+  kind?: "active_window" | "lifecycle";
+  status?: string;
+  startedAt: string;
+  endedAt?: string;
+  durationSeconds: number;
+  confidence: FlowConfidence;
+  evidence: FlowEvidence[];
+};
+
+export type TodayFlowModel = {
+  privacyMode: PrivacyMode;
+  activeSeconds: number;
+  uncertainSeconds: number;
+  screenshotCount: number;
+  inputChars: number;
+  skippedReasons: ScreenshotSkippedReasonCount[];
+  buckets: FlowBucket[];
+  evidence: FlowEvidence[];
+};
+
 export type DurationSummary = {
   count: number;
   total: number;
@@ -46,6 +92,7 @@ export type ScreenshotSummary = {
   totalScreenshots: number;
   hoursCovered: number;
   topApps: AppScreenshotCount[];
+  skippedReasons?: ScreenshotSkippedReasonCount[];
 };
 
 export type AppScreenshotCount = {
@@ -102,6 +149,9 @@ export type SubsystemHealth = {
   lastEventAt?: string;
   errorCount: number;
   lastError?: string;
+  mode?: string;
+  lastCaptureStatus?: string;
+  lastSkipReason?: string;
 };
 
 export type DbStats = {
