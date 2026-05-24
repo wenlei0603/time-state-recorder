@@ -94,6 +94,13 @@ export function filterTimelineEvents(
   });
 }
 
+export function toVisibleDashboardEvents(
+  events: TimeEvent[],
+  layers: LayerVisibility
+): TimeEvent[] {
+  return filterTimelineEvents(events, layers);
+}
+
 export function buildTimelineItems(events: TimeEvent[]): TimelineItem[] {
   return [...events]
     .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
@@ -116,33 +123,60 @@ export function buildTimelineItems(events: TimeEvent[]): TimelineItem[] {
     });
 }
 
-export function buildHourlyTimelineItems(events: TimeEvent[]): TimelineItem[] {
+export function buildHourlyTimelineItems(
+  events: TimeEvent[],
+  timeZoneOffsetMinutes = -new Date().getTimezoneOffset()
+): TimelineItem[] {
   const buckets = new Map<string, TimelineItem>();
+  const offsetMs = timeZoneOffsetMinutes * 60 * 1000;
 
   for (const item of buildTimelineItems(events)) {
-    const hourKey = item.startedAt.slice(0, 13);
-    const existing = buckets.get(hourKey);
-    if (existing) {
-      existing.durationSeconds += item.durationSeconds;
-      existing.activeSeconds += item.activeSeconds;
-      existing.lifecycleSeconds += item.lifecycleSeconds;
-      existing.eventCount += 1;
-      existing.endedAt = item.endedAt ?? existing.endedAt;
+    const startMs = Date.parse(item.startedAt);
+    const endMs = item.endedAt
+      ? Date.parse(item.endedAt)
+      : startMs + item.durationSeconds * 1000;
+    if (
+      !Number.isFinite(startMs) ||
+      !Number.isFinite(endMs) ||
+      endMs <= startMs
+    ) {
       continue;
     }
 
-    buckets.set(hourKey, {
-      id: `hour-${hourKey}`,
-      app: "1 hour bucket",
-      title: hourKey.replace("T", " "),
-      startedAt: `${hourKey}:00:00.000Z`,
-      endedAt: item.endedAt,
-      kind: "hour",
-      durationSeconds: item.durationSeconds,
-      activeSeconds: item.activeSeconds,
-      lifecycleSeconds: item.lifecycleSeconds,
-      eventCount: 1
-    });
+    let cursorLocalMs = startMs + offsetMs;
+    const endLocalMs = endMs + offsetMs;
+
+    while (cursorLocalMs < endLocalMs) {
+      const hourLocalMs = floorToHour(cursorLocalMs);
+      const nextHourLocalMs = hourLocalMs + 60 * 60 * 1000;
+      const sliceEndLocalMs = Math.min(endLocalMs, nextHourLocalMs);
+      const sliceSeconds = (sliceEndLocalMs - cursorLocalMs) / 1000;
+      const hourKey = formatLocalHourKey(hourLocalMs);
+      const existing = buckets.get(hourKey);
+
+      if (existing) {
+        existing.durationSeconds += sliceSeconds;
+        existing.activeSeconds += item.kind === "lifecycle" ? 0 : sliceSeconds;
+        existing.lifecycleSeconds += item.kind === "lifecycle" ? sliceSeconds : 0;
+        existing.eventCount += 1;
+        existing.endedAt = new Date(sliceEndLocalMs - offsetMs).toISOString();
+      } else {
+        buckets.set(hourKey, {
+          id: `hour-${hourKey}`,
+          app: "1 hour bucket",
+          title: `${hourKey.replace("T", " ")}:00`,
+          startedAt: new Date(hourLocalMs - offsetMs).toISOString(),
+          endedAt: new Date(sliceEndLocalMs - offsetMs).toISOString(),
+          kind: "hour",
+          durationSeconds: sliceSeconds,
+          activeSeconds: item.kind === "lifecycle" ? 0 : sliceSeconds,
+          lifecycleSeconds: item.kind === "lifecycle" ? sliceSeconds : 0,
+          eventCount: 1
+        });
+      }
+
+      cursorLocalMs = sliceEndLocalMs;
+    }
   }
 
   return [...buckets.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
@@ -257,4 +291,13 @@ function segmentDurationSeconds(segment: TextSegment): number {
 function roundTo(value: number, digits: number): number {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
+}
+
+function floorToHour(valueMs: number): number {
+  const hourMs = 60 * 60 * 1000;
+  return Math.floor(valueMs / hourMs) * hourMs;
+}
+
+function formatLocalHourKey(localHourMs: number): string {
+  return new Date(localHourMs).toISOString().slice(0, 13);
 }

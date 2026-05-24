@@ -5,7 +5,8 @@ import {
   buildHourlyTimelineItems,
   filterTimelineEvents,
   listSegmentApps,
-  summarizeInputInsights
+  summarizeInputInsights,
+  toVisibleDashboardEvents
 } from "./uiModel";
 
 const events: TimeEvent[] = [
@@ -77,6 +78,20 @@ describe("buildDashboardSummary", () => {
     expect(summary.topApp?.app).toBe("Code.exe");
     expect(summary.input.correctionRatio).toBe(0.2);
   });
+
+  it("uses visible layer events for dashboard active and lifecycle metrics", () => {
+    const visible = toVisibleDashboardEvents(events, {
+      windows: false,
+      lifecycle: true,
+      input: true,
+      screenshots: true
+    });
+    const summary = buildDashboardSummary(visible, segments);
+
+    expect(summary.activeSeconds).toBe(0);
+    expect(summary.lifecycleSeconds).toBe(900);
+    expect(summary.contextSwitchCount).toBe(0);
+  });
 });
 
 describe("filterTimelineEvents", () => {
@@ -105,7 +120,7 @@ describe("filterTimelineEvents", () => {
 
 describe("buildHourlyTimelineItems", () => {
   it("aggregates active and lifecycle seconds by local hour", () => {
-    const items = buildHourlyTimelineItems(events);
+    const items = buildHourlyTimelineItems(events, 0);
 
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
@@ -114,6 +129,28 @@ describe("buildHourlyTimelineItems", () => {
       activeSeconds: 2400,
       lifecycleSeconds: 900
     });
+  });
+
+  it("splits cross-hour events into local-hour buckets", () => {
+    const items = buildHourlyTimelineItems(
+      [
+        {
+          id: "cross-hour",
+          app: "Code.exe",
+          title: "cross-hour.ts",
+          kind: "active_window",
+          startedAt: "2026-05-24T01:50:00.000Z",
+          endedAt: "2026-05-24T02:10:00.000Z"
+        }
+      ],
+      480
+    );
+
+    expect(items.map((item) => item.id)).toEqual([
+      "hour-2026-05-24T09",
+      "hour-2026-05-24T10"
+    ]);
+    expect(items.map((item) => item.activeSeconds)).toEqual([600, 600]);
   });
 });
 

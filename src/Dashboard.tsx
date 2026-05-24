@@ -9,7 +9,8 @@ import {
   formatDuration,
   type DensityMode,
   type LayerVisibility,
-  type PrivacyMode
+  type PrivacyMode,
+  type UiSourceMode
 } from "./lib/uiModel";
 
 type DashboardProps = {
@@ -18,6 +19,7 @@ type DashboardProps = {
   layers: LayerVisibility;
   densityMode: DensityMode;
   privacyMode: PrivacyMode;
+  inputSourceMode: UiSourceMode;
 };
 
 export function Dashboard({
@@ -25,7 +27,8 @@ export function Dashboard({
   segments,
   layers,
   densityMode,
-  privacyMode
+  privacyMode,
+  inputSourceMode
 }: DashboardProps) {
   const summary = useMemo(
     () => buildDashboardSummary(events, segments),
@@ -99,6 +102,14 @@ export function Dashboard({
             <div>
               <dt>Input Apps</dt>
               <dd>{summary.input.activeAppCount}</dd>
+            </div>
+            <div>
+              <dt>Input Source</dt>
+              <dd>{layers.input ? inputSourceMode : "Hidden"}</dd>
+            </div>
+            <div>
+              <dt>Screenshots</dt>
+              <dd>{layers.screenshots ? "Visible" : "Hidden"}</dd>
             </div>
           </dl>
         </div>

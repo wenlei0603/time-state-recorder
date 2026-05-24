@@ -13,10 +13,12 @@ import { Dashboard } from "./Dashboard";
 import { InputActivity } from "./InputActivity";
 import { TimelineView } from "./TimelineView";
 import { feature1SampleEvents } from "./data/feature1Sample";
-import { feature2SampleSegments } from "./data/feature2Sample";
+import { feature2SampleSegments, feature2SampleSummary } from "./data/feature2Sample";
 import { fetchTimeEvents } from "./lib/api";
+import { fetchInputSummary, fetchTextSegments } from "./lib/input";
 import {
   defaultLayerVisibility,
+  toVisibleDashboardEvents,
   type DensityMode,
   type LayerKey,
   type LayerVisibility,
@@ -29,12 +31,17 @@ import "./styles.css";
 
 type CollectorStatus = "sample" | "loading" | "connected" | "offline";
 type ViewMode = "dashboard" | "timeline" | "daily" | "input";
+type InputDataStatus = UiSourceMode;
 
 export function App() {
   const [events, setEvents] = useState<TimeEvent[]>(feature1SampleEvents);
   const [segments, setSegments] = useState<TextSegment[]>(feature2SampleSegments);
+  const [inputSummary, setInputSummary] = useState(feature2SampleSummary);
   const [collectorStatus, setCollectorStatus] = useState<CollectorStatus>("sample");
   const [collectorError, setCollectorError] = useState<string | null>(null);
+  const [inputStatus, setInputStatus] = useState<InputDataStatus>("sample");
+  const [inputLoading, setInputLoading] = useState(false);
+  const [inputError, setInputError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
   const [sourceMode, setSourceMode] = useState<UiSourceMode>("sample");
   const [privacyMode, setPrivacyMode] = useState<PrivacyMode>("redacted");
@@ -42,6 +49,10 @@ export function App() {
   const [granularity, setGranularity] = useState<TimelineGranularity>("event");
   const [layers, setLayers] = useState<LayerVisibility>(defaultLayerVisibility);
 
+  const visibleDashboardEvents = useMemo(
+    () => toVisibleDashboardEvents(events, layers),
+    [events, layers]
+  );
   const visibleDashboardSegments = useMemo(
     () => (layers.input ? segments : []),
     [layers.input, segments]
@@ -54,26 +65,62 @@ export function App() {
   function loadSample() {
     setEvents(feature1SampleEvents);
     setSegments(feature2SampleSegments);
+    setInputSummary(feature2SampleSummary);
     setSourceMode("sample");
+    setInputStatus("sample");
+    setInputLoading(false);
     setCollectorStatus("sample");
     setCollectorError(null);
+    setInputError(null);
   }
 
   async function refreshCollector() {
     setCollectorStatus("loading");
+    setInputLoading(true);
     setCollectorError(null);
+    setInputError(null);
     try {
-      const nextEvents = await fetchTimeEvents();
-      setEvents(nextEvents);
-      setSourceMode("live");
-      setCollectorStatus("connected");
+      const day = currentLocalDate();
+      const [eventsResult, summaryResult, segmentsResult] = await Promise.allSettled([
+        fetchTimeEvents(),
+        fetchInputSummary(day),
+        fetchTextSegments(day)
+      ]);
+
+      if (eventsResult.status === "fulfilled") {
+        setEvents(eventsResult.value);
+        setSourceMode("live");
+        setCollectorStatus("connected");
+      } else {
+        setCollectorStatus("offline");
+        setCollectorError(errorMessage(eventsResult.reason));
+      }
+
+      if (
+        summaryResult.status === "fulfilled" &&
+        segmentsResult.status === "fulfilled"
+      ) {
+        setInputSummary(summaryResult.value);
+        setSegments(segmentsResult.value);
+        setInputStatus("live");
+      } else {
+        const reason =
+          summaryResult.status === "rejected"
+            ? summaryResult.reason
+            : segmentsResult.status === "rejected"
+              ? segmentsResult.reason
+              : "unknown input error";
+        setInputError(errorMessage(reason));
+      }
     } catch (error) {
       setCollectorStatus("offline");
-      setCollectorError(error instanceof Error ? error.message : String(error));
+      setCollectorError(errorMessage(error));
+    } finally {
+      setInputLoading(false);
     }
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = currentLocalDate();
 
   return (
     <main className="shell">
@@ -199,11 +246,25 @@ export function App() {
           Live collector unavailable. Keeping current data visible: {collectorError}
         </p>
       )}
+      {inputError && (
+        <p className="sampleNotice" role="status">
+          Input layer unavailable. Keeping {inputStatus} input data visible: {inputError}
+        </p>
+      )}
 
       {viewMode === "daily" ? (
         <DailyTracking date={today} />
       ) : viewMode === "input" ? (
-        <InputActivity privacyMode={privacyMode} />
+        <InputActivity
+          privacyMode={privacyMode}
+          summary={inputSummary}
+          segments={segments}
+          sourceMode={inputStatus}
+          loading={inputLoading}
+          error={inputError}
+          onLoadSample={loadSample}
+          onLoadLive={() => void refreshCollector()}
+        />
       ) : viewMode === "timeline" ? (
         <TimelineView
           events={events}
@@ -214,11 +275,12 @@ export function App() {
       ) : (
         <>
           <Dashboard
-            events={events}
+            events={visibleDashboardEvents}
             segments={visibleDashboardSegments}
             layers={layers}
             densityMode={densityMode}
             privacyMode={privacyMode}
+            inputSourceMode={inputStatus}
           />
           <section className="workspace dashboardMonitor">
             <CollectorMonitor />
@@ -234,6 +296,18 @@ export function App() {
       [layer]: !current[layer]
     }));
   }
+}
+
+function currentLocalDate(): string {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function statusLabel(status: CollectorStatus): string {

@@ -27,6 +27,15 @@ function healthResponse() {
   };
 }
 
+function jsonResponse(body: unknown) {
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    json: async () => body,
+  };
+}
+
 describe("App", () => {
   beforeEach(() => {
     vi.stubGlobal(
@@ -119,5 +128,70 @@ describe("App", () => {
 
     expect(screen.getByText(/Raw text hidden in redacted mode/i)).toBeInTheDocument();
     expect(screen.queryByText(/fn main/i)).not.toBeInTheDocument();
+  });
+
+  it("uses globally loaded live input segments in Input Activity", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        if (input === "/api/time-events") {
+          return jsonResponse({
+            events: [
+              {
+                id: "live-window",
+                app: "Code",
+                title: "Live window",
+                startedAt: "2026-05-24T10:00:00Z",
+                endedAt: "2026-05-24T10:05:00Z",
+                durationSeconds: 300
+              }
+            ]
+          });
+        }
+        if (input.startsWith("/api/input-summary")) {
+          return jsonResponse({
+            date: "2026-05-24",
+            totalEvents: 20,
+            keydownCount: 10,
+            keyupCount: 10,
+            segmentCount: 1,
+            totalChars: 8,
+            lastActivity: "2026-05-24T10:05:00Z",
+            topApps: [{ processName: "LiveApp", charCount: 8 }]
+          });
+        }
+        if (input.startsWith("/api/text-segments")) {
+          return jsonResponse({
+            segments: [
+              {
+                id: "live-segment",
+                startedAt: "2026-05-24T10:00:00Z",
+                endedAt: "2026-05-24T10:01:00Z",
+                textContent: "live text",
+                keyCount: 8,
+                backspaceCount: 1,
+                deleteCount: 0,
+                foregroundHwnd: 1,
+                foregroundPid: 2,
+                processName: "LiveApp",
+                windowTitle: "Live Input Window"
+              }
+            ]
+          });
+        }
+        if (input === "/api/health") {
+          return healthResponse();
+        }
+        throw new Error(`Unexpected request: ${input}`);
+      })
+    );
+
+    render(<App />);
+
+    expect(await screen.findByText("Live window")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /input activity/i }));
+
+    expect(await screen.findByText("Live Input Window")).toBeInTheDocument();
+    expect(screen.queryByText(/Showing sample data/i)).not.toBeInTheDocument();
   });
 });

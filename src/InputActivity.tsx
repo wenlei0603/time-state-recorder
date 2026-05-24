@@ -1,19 +1,24 @@
 import { BarChart3, Clock, Keyboard, Maximize2, TableProperties } from "lucide-react";
-import { Fragment, useMemo, useState } from "react";
-import { feature2SampleSegments, feature2SampleSummary } from "./data/feature2Sample";
-import { fetchInputSummary, fetchTextSegments } from "./lib/input";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   listSegmentApps,
   summarizeInputInsights,
-  type PrivacyMode
+  type PrivacyMode,
+  type UiSourceMode
 } from "./lib/uiModel";
 import type { InputSummary, TextSegment } from "./types";
 
-type DataSource = "sample" | "live";
 type AppFilter = "all" | string;
 
 type InputActivityProps = {
   privacyMode?: PrivacyMode;
+  summary: InputSummary;
+  segments: TextSegment[];
+  sourceMode: UiSourceMode;
+  loading: boolean;
+  error: string | null;
+  onLoadSample: () => void;
+  onLoadLive: () => void;
 };
 
 function formatTime(value: string): string {
@@ -22,12 +27,16 @@ function formatTime(value: string): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export function InputActivity({ privacyMode = "redacted" }: InputActivityProps) {
-  const [summary, setSummary] = useState<InputSummary>(feature2SampleSummary);
-  const [segments, setSegments] = useState<TextSegment[]>(feature2SampleSegments);
-  const [source, setSource] = useState<DataSource>("sample");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function InputActivity({
+  privacyMode = "redacted",
+  summary,
+  segments,
+  sourceMode,
+  loading,
+  error,
+  onLoadSample,
+  onLoadLive
+}: InputActivityProps) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [appFilter, setAppFilter] = useState<AppFilter>("all");
 
@@ -48,45 +57,31 @@ export function InputActivity({ privacyMode = "redacted" }: InputActivityProps) 
     [visibleSegments]
   );
 
-  async function loadLive() {
-    setLoading(true);
-    setError(null);
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const [sum, segs] = await Promise.all([
-        fetchInputSummary(today),
-        fetchTextSegments(today),
-      ]);
-      setSummary(sum);
-      setSegments(segs);
-      setSource("live");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    if (appFilter !== "all" && !appOptions.includes(appFilter)) {
+      setAppFilter("all");
+      setExpanded(null);
     }
-  }
-
-  function loadSample() {
-    setSummary(feature2SampleSummary);
-    setSegments(feature2SampleSegments);
-    setSource("sample");
-    setAppFilter("all");
-    setError(null);
-  }
+  }, [appFilter, appOptions]);
 
   return (
     <section className="inputActivity">
       <div className="dailyHeader">
         <div>
           <h2>Input Activity</h2>
-          <p className="dailyDate">Keyboard capture via Raw Input</p>
+          <p className="dailyDate">
+            Keyboard capture via Raw Input · {sourceMode === "live" ? "Live" : "Sample"} input data
+          </p>
         </div>
         <div className="actions">
-          <button type="button" onClick={loadSample}>
+          <button type="button" onClick={() => {
+            setAppFilter("all");
+            setExpanded(null);
+            onLoadSample();
+          }}>
             Sample
           </button>
-          <button type="button" onClick={() => void loadLive()} disabled={loading}>
+          <button type="button" onClick={onLoadLive} disabled={loading}>
             <Keyboard aria-hidden="true" size={18} />
             <span>{loading ? "Loading..." : "Live Data"}</span>
           </button>
@@ -122,7 +117,7 @@ export function InputActivity({ privacyMode = "redacted" }: InputActivityProps) 
         </p>
       )}
 
-      {source === "sample" && (
+      {sourceMode === "sample" && (
         <p className="sampleNotice">
           Showing sample data. Click "Live Data" when the collector is running.
         </p>
