@@ -266,6 +266,7 @@ impl Store {
         payload: serde_json::Value,
     ) -> Result<i64> {
         let tx = self.conn.transaction()?;
+        ensure_session_open_tx(&tx, session_id)?;
         let raw_event_id =
             insert_lifecycle_event_tx(&tx, session_id, event_ts, lifecycle_type, reason, payload)?;
         tx.commit()?;
@@ -335,6 +336,7 @@ impl Store {
     ) -> Result<i64> {
         let payload_json = serde_json::to_string(snapshot)?;
         let tx = self.conn.transaction()?;
+        ensure_session_open_tx(&tx, session_id)?;
 
         tx.execute(
             r#"
@@ -471,7 +473,9 @@ impl Store {
     }
 
     pub fn insert_screenshot(&mut self, session_id: &str, meta: &ScreenshotMeta) -> Result<i64> {
-        self.conn.execute(
+        let tx = self.conn.transaction()?;
+        ensure_session_open_tx(&tx, session_id)?;
+        tx.execute(
             r#"
             INSERT INTO screenshot_thumbnails
               (captured_at, file_path, width, height, process_name, window_title, capture_status, session_id)
@@ -488,7 +492,9 @@ impl Store {
                 session_id,
             ],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok(id)
     }
 
     pub fn list_screenshots_by_date(
@@ -914,4 +920,20 @@ fn insert_lifecycle_event_tx(
     )?;
 
     Ok(raw_event_id)
+}
+
+fn ensure_session_open_tx(tx: &Transaction<'_>, session_id: &str) -> Result<()> {
+    let is_open: bool = tx.query_row(
+        r#"
+        SELECT EXISTS(
+          SELECT 1
+          FROM capture_sessions
+          WHERE id = ?1 AND ended_at IS NULL
+        )
+        "#,
+        params![session_id],
+        |row| row.get(0),
+    )?;
+    ensure!(is_open, "session is closed or missing");
+    Ok(())
 }

@@ -181,8 +181,8 @@ pub async fn serve(
     )?;
     let state = default_state(store, blocker_config_path);
 
-    spawn_collector_loop(state.clone(), session_id.clone(), poll_ms);
-    spawn_screenshot_loop(state.clone(), session_id.clone());
+    let window_collector = spawn_collector_loop(state.clone(), session_id.clone(), poll_ms);
+    let screenshot_collector = spawn_screenshot_loop(state.clone(), session_id.clone());
     input::spawn_input_collector(state.store.clone(), state.health.clone());
 
     let app = router_from_state(state.clone());
@@ -196,11 +196,18 @@ pub async fn serve(
         }
     }
 
+    window_collector.abort();
+    screenshot_collector.abort();
+
     serve_result?;
     Ok(())
 }
 
-fn spawn_collector_loop(state: AppState, session_id: String, poll_ms: u64) {
+fn spawn_collector_loop(
+    state: AppState,
+    session_id: String,
+    poll_ms: u64,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         {
             if let Ok(mut h) = state.health.lock() {
@@ -251,10 +258,10 @@ fn spawn_collector_loop(state: AppState, session_id: String, poll_ms: u64) {
 
             time::sleep(Duration::from_millis(poll_ms)).await;
         }
-    });
+    })
 }
 
-fn spawn_screenshot_loop(state: AppState, session_id: String) {
+fn spawn_screenshot_loop(state: AppState, session_id: String) -> tokio::task::JoinHandle<()> {
     let interval = *state.screenshot_interval_secs;
     let idle_threshold = *state.idle_threshold_secs;
     let screenshot_dir = state.screenshot_dir.to_path_buf();
@@ -366,7 +373,7 @@ fn spawn_screenshot_loop(state: AppState, session_id: String) {
                 }
             }
         }
-    });
+    })
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {

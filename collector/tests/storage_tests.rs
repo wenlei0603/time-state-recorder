@@ -204,6 +204,64 @@ fn close_session_records_one_terminal_transition() {
 }
 
 #[test]
+fn rejects_session_scoped_writes_after_session_close() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+
+    store
+        .close_session(&session_id, ts("2026-05-23T10:00:00Z"), "completed")
+        .unwrap();
+
+    assert!(
+        store
+            .insert_window_focus(
+                &session_id,
+                &WindowSnapshot {
+                    captured_at: ts("2026-05-23T10:00:01Z"),
+                    hwnd: 100,
+                    pid: 42,
+                    process_name: "Code.exe".to_string(),
+                    exe_path_hash: None,
+                    window_title: Some("late.rs".to_string()),
+                    capture_status: CaptureStatus::Ok,
+                },
+            )
+            .is_err()
+    );
+
+    assert!(
+        store
+            .insert_screenshot(
+                &session_id,
+                &ScreenshotMeta {
+                    id: 0,
+                    captured_at: ts("2026-05-23T10:00:02Z"),
+                    file_path: "2026-05-23/10-00.jpg".into(),
+                    width: 640,
+                    height: 360,
+                    process_name: Some("Code.exe".into()),
+                    window_title: Some("late.rs".into()),
+                    capture_status: "ok".into(),
+                },
+            )
+            .is_err()
+    );
+
+    assert!(
+        store
+            .insert_lifecycle_event(
+                &session_id,
+                ts("2026-05-23T10:00:03Z"),
+                LifecycleType::WindowsLock,
+                None,
+                serde_json::json!({}),
+            )
+            .is_err()
+    );
+}
+
+#[test]
 fn rejects_unknown_lifecycle_types_from_storage() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("unknown-lifecycle.sqlite3");
