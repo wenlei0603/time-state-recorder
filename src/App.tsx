@@ -203,7 +203,7 @@ export function App() {
       {viewMode === "daily" ? (
         <DailyTracking date={today} />
       ) : viewMode === "input" ? (
-        <InputActivity />
+        <InputActivity privacyMode={privacyMode} />
       ) : viewMode === "timeline" ? (
         <TimelineView
           events={events}

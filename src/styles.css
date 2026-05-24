@@ -1004,6 +1004,49 @@ td:nth-child(2) {
   gap: 16px;
 }
 
+.insightStrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.insightStrip .metric {
+  min-height: 76px;
+  padding: 12px 14px;
+}
+
+.tableTools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tableTools label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #5f6d65;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.tableTools select {
+  min-height: 34px;
+  border: 1px solid #c6d2c9;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17211b;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 700;
+  padding: 0 10px;
+  text-transform: none;
+}
+
 .segmentRow {
   cursor: pointer;
   transition: border-color 0.15s;
@@ -1040,6 +1083,13 @@ td:nth-child(2) {
   word-break: break-word;
   max-height: 320px;
   overflow-y: auto;
+}
+
+.redactedText {
+  border: 1px dashed #c6d2c9;
+  color: #5f6d65;
+  font-family: inherit;
+  font-weight: 700;
 }
 
 .cellMono {

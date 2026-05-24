@@ -110,4 +110,14 @@ describe("App", () => {
     expect(screen.getByText("Window Collector")).toBeInTheDocument();
     expect(screen.getByText("Database")).toBeInTheDocument();
   });
+
+  it("keeps input segment text hidden while privacy mode is redacted", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /input activity/i }));
+    fireEvent.click(screen.getAllByText("main.rs")[0]);
+
+    expect(screen.getByText(/Raw text hidden in redacted mode/i)).toBeInTheDocument();
+    expect(screen.queryByText(/fn main/i)).not.toBeInTheDocument();
+  });
 });
