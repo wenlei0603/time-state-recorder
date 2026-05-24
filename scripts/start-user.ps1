@@ -113,6 +113,7 @@ function Add-LocalToolPaths {
 
 function Get-CollectorExe {
     $candidates = @(
+        "bin\tsr-collector.exe",
         "target\x86_64-pc-windows-gnullvm\release\tsr-collector.exe",
         "target\x86_64-pc-windows-gnullvm\debug\tsr-collector.exe",
         "target\release\tsr-collector.exe",
@@ -126,6 +127,22 @@ function Get-CollectorExe {
         }
     }
     return $null
+}
+
+function Get-BlockerConfigPath {
+    $candidates = @(
+        "blocker_config.json",
+        "collector\blocker_config.json"
+    )
+
+    foreach ($candidate in $candidates) {
+        $path = Join-Path $Root $candidate
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            return $path
+        }
+    }
+
+    return (Join-Path $Root "blocker_config.json")
 }
 
 function Ensure-CollectorExe {
@@ -191,6 +208,9 @@ function Ensure-WebBuild {
     if (-not $npm) {
         throw "dist is missing and npm.cmd was not found. Install Node.js, then run npm install and npm run build."
     }
+    if (-not (Test-Path -LiteralPath (Join-Path $Root "package.json") -PathType Leaf)) {
+        throw "WebUI build is missing from this release package. Re-download the release zip or run from a source checkout."
+    }
 
     Write-LauncherLog "WebUI build not found; running npm run build..."
     Push-Location $Root
@@ -216,7 +236,7 @@ try {
                 "--db", "data/local.sqlite3",
                 "--addr", "127.0.0.1:$ApiPort",
                 "--poll-ms", "1000",
-                "--blocker-config", "blocker_config.json"
+                "--blocker-config", (Get-BlockerConfigPath)
             )
             $collectorProcess = Start-Process -FilePath $collectorExe -ArgumentList $collectorArgs -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $CollectorOut -RedirectStandardError $CollectorErr -PassThru
             Set-Content -LiteralPath $CollectorPidFile -Value $collectorProcess.Id -Encoding ASCII

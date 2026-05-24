@@ -311,7 +311,7 @@ async fn serves_health_with_subsystem_status() {
     let body: serde_json::Value = response.json().await.unwrap();
     assert!(body["status"].as_str().is_some());
     assert!(body["uptimeSeconds"].as_u64().is_some());
-    assert_eq!(body["version"], "0.1.0");
+    assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
     assert!(body["windowCollector"]["status"].as_str().is_some());
     assert!(body["dbStats"]["windowEvents"].as_u64().is_some());
 

@@ -87,6 +87,12 @@ async function serveStatic(requestUrl, response) {
     filePath = path.join(distDir, "index.html");
   }
 
+  if (!(await isFile(filePath))) {
+    response.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    response.end("WebUI build not found. Run npm run build or use the packaged release zip.");
+    return;
+  }
+
   const contentType = mimeTypes.get(path.extname(filePath).toLowerCase()) ?? "application/octet-stream";
   response.writeHead(200, { "content-type": contentType });
   createReadStream(filePath).pipe(response);
