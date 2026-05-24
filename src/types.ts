@@ -2,6 +2,9 @@ export type TimeEvent = {
   id: string;
   app: string;
   title: string;
+  kind?: "active_window" | "lifecycle";
+  status?: string;
+  sessionId?: string;
   startedAt: string;
   endedAt?: string;
   durationSeconds?: number;
@@ -103,6 +106,7 @@ export type SubsystemHealth = {
 
 export type DbStats = {
   windowEvents: number;
+  lifecycleEvents: number;
   inputEvents: number;
   textSegments: number;
   screenshots: number;

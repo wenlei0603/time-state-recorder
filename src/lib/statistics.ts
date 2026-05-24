@@ -33,6 +33,7 @@ export function toDurationSeconds(event: TimeEvent): number {
 
 export function summarizeDurations(events: TimeEvent[]): DurationSummary {
   const values = events
+    .filter(isActiveTimeEvent)
     .map(toDurationSeconds)
     .filter((duration) => duration > 0)
     .sort((a, b) => a - b);
@@ -63,6 +64,10 @@ export function summarizeByApplication(events: TimeEvent[]): ApplicationSummary[
   const grouped = new Map<string, { count: number; total: number }>();
 
   for (const event of events) {
+    if (!isActiveTimeEvent(event)) {
+      continue;
+    }
+
     const duration = toDurationSeconds(event);
     if (duration <= 0) {
       continue;
@@ -94,6 +99,10 @@ export function summarizeByApplication(events: TimeEvent[]): ApplicationSummary[
         b.eventCount - a.eventCount ||
         a.app.localeCompare(b.app)
     );
+}
+
+function isActiveTimeEvent(event: TimeEvent): boolean {
+  return event.kind === undefined || event.kind === "active_window";
 }
 
 function percentile(sortedValues: number[], ratio: number): number {

@@ -15,7 +15,14 @@ function healthResponse() {
       windowCollector: { status: "running", errorCount: 0 },
       inputCollector: { status: "running", errorCount: 0 },
       screenshotCollector: { status: "running", errorCount: 0 },
-      dbStats: { windowEvents: 10, inputEvents: 0, textSegments: 0, screenshots: 5, blockerHits: 0 },
+      dbStats: {
+        windowEvents: 10,
+        lifecycleEvents: 0,
+        inputEvents: 0,
+        textSegments: 0,
+        screenshots: 5,
+        blockerHits: 0,
+      },
     }),
   };
 }

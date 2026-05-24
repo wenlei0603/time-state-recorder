@@ -13,7 +13,9 @@ describe("fetchTimeEvents", () => {
             title: "main.rs",
             startedAt: "2026-05-23T09:00:00.000Z",
             endedAt: "2026-05-23T09:10:00.000Z",
-            durationSeconds: 600
+            durationSeconds: 600,
+            kind: "active_window",
+            sessionId: "session-1"
           }
         ]
       })
@@ -26,10 +28,47 @@ describe("fetchTimeEvents", () => {
         title: "main.rs",
         startedAt: "2026-05-23T09:00:00.000Z",
         endedAt: "2026-05-23T09:10:00.000Z",
-        durationSeconds: 600
+        durationSeconds: 600,
+        kind: "active_window",
+        sessionId: "session-1"
       }
     ]);
     expect(fetcher).toHaveBeenCalledWith("/api/time-events");
+  });
+
+  it("preserves lifecycle metadata from time events", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        events: [
+          {
+            id: "lifecycle-10",
+            app: "System",
+            title: "Locked",
+            kind: "lifecycle",
+            status: "windows_lock",
+            sessionId: "session-1",
+            startedAt: "2026-05-23T09:05:00.000Z",
+            endedAt: "2026-05-23T09:20:00.000Z",
+            durationSeconds: 900
+          }
+        ]
+      })
+    });
+
+    await expect(fetchTimeEvents(fetcher)).resolves.toEqual([
+      {
+        id: "lifecycle-10",
+        app: "System",
+        title: "Locked",
+        kind: "lifecycle",
+        status: "windows_lock",
+        sessionId: "session-1",
+        startedAt: "2026-05-23T09:05:00.000Z",
+        endedAt: "2026-05-23T09:20:00.000Z",
+        durationSeconds: 900
+      }
+    ]);
   });
 
   it("reports collector API failures", async () => {
@@ -44,4 +83,3 @@ describe("fetchTimeEvents", () => {
     );
   });
 });
-

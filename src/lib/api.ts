@@ -23,7 +23,7 @@ function toTimeEvent(value: unknown): TimeEvent {
     throw new Error("Collector API returned an invalid event row");
   }
 
-  return {
+  const event: TimeEvent = {
     id: readString(value, "id"),
     app: readString(value, "app"),
     title: readString(value, "title"),
@@ -31,6 +31,15 @@ function toTimeEvent(value: unknown): TimeEvent {
     endedAt: readOptionalString(value, "endedAt"),
     durationSeconds: readOptionalNumber(value, "durationSeconds")
   };
+  const kind = readOptionalTimeEventKind(value, "kind");
+  const status = readOptionalString(value, "status");
+  const sessionId = readOptionalString(value, "sessionId");
+
+  if (kind !== undefined) event.kind = kind;
+  if (status !== undefined) event.status = status;
+  if (sessionId !== undefined) event.sessionId = sessionId;
+
+  return event;
 }
 
 function readString(record: Record<string, unknown>, key: string): string {
@@ -69,7 +78,20 @@ function readOptionalNumber(
   return value;
 }
 
+function readOptionalTimeEventKind(
+  record: Record<string, unknown>,
+  key: string
+): TimeEvent["kind"] {
+  const value = record[key];
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  if (value !== "active_window" && value !== "lifecycle") {
+    throw new Error(`Collector API row has invalid ${key}`);
+  }
+  return value;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
-

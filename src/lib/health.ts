@@ -52,10 +52,18 @@ function readDbStats(
 ): DbStats {
   const value = record[key];
   if (!isRecord(value)) {
-    return { windowEvents: 0, inputEvents: 0, textSegments: 0, screenshots: 0, blockerHits: 0 };
+    return {
+      windowEvents: 0,
+      lifecycleEvents: 0,
+      inputEvents: 0,
+      textSegments: 0,
+      screenshots: 0,
+      blockerHits: 0,
+    };
   }
   return {
     windowEvents: readNumber(value, "windowEvents", 0),
+    lifecycleEvents: readNumber(value, "lifecycleEvents", 0),
     inputEvents: readNumber(value, "inputEvents", 0),
     textSegments: readNumber(value, "textSegments", 0),
     screenshots: readNumber(value, "screenshots", 0),

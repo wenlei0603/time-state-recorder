@@ -32,6 +32,7 @@ describe("fetchCollectorHealth", () => {
           textSegments: 87,
           screenshots: 128,
           blockerHits: 3,
+          lifecycleEvents: 4,
         },
       }),
     });
@@ -47,6 +48,7 @@ describe("fetchCollectorHealth", () => {
     expect(health.screenshotCollector.lastError).toBe("capture_thumbnail returned None");
     expect(health.dbStats.windowEvents).toBe(452);
     expect(health.dbStats.blockerHits).toBe(3);
+    expect(health.dbStats.lifecycleEvents).toBe(4);
     expect(fetcher).toHaveBeenCalledWith("/api/health");
   });
 
@@ -88,6 +90,7 @@ describe("fetchCollectorHealth", () => {
           textSegments: 0,
           screenshots: 0,
           blockerHits: 0,
+          lifecycleEvents: 0,
         },
       }),
     });

@@ -72,6 +72,10 @@ describe("summarizeDurations", () => {
       standardDeviation: 244.95
     });
   });
+
+  it("excludes lifecycle intervals from active duration summaries", () => {
+    expect(summarizeDurations([...events, lockedInterval()]).total).toBe(1800);
+  });
 });
 
 describe("summarizeByApplication", () => {
@@ -93,4 +97,23 @@ describe("summarizeByApplication", () => {
       }
     ]);
   });
+
+  it("excludes lifecycle intervals from active application summaries", () => {
+    expect(summarizeByApplication([...events, lockedInterval()]).map((row) => row.app)).not.toContain(
+      "System"
+    );
+  });
 });
+
+function lockedInterval(): TimeEvent {
+  return {
+    id: "lifecycle-10",
+    app: "System",
+    title: "Locked",
+    kind: "lifecycle",
+    status: "windows_lock",
+    startedAt: "2026-05-23T09:05:00.000Z",
+    endedAt: "2026-05-23T09:20:00.000Z",
+    durationSeconds: 900
+  };
+}
