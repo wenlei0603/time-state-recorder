@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::models::{
     AppScreenshotCount, BlockerHit, CaptureStatus, LifecycleEvent, LifecycleType, ScreenshotMeta,
-    ScreenshotSummary, StoredWindowEvent, WindowSnapshot,
+    ScreenshotSkippedReasonCount, ScreenshotSummary, StoredWindowEvent, WindowSnapshot,
 };
 
 pub struct Store {
@@ -507,7 +507,7 @@ impl Store {
             r#"
             SELECT id, captured_at, file_path, width, height, process_name, window_title, capture_status
             FROM screenshot_thumbnails
-            WHERE captured_at LIKE ?1
+            WHERE captured_at LIKE ?1 AND capture_status = 'ok'
             ORDER BY captured_at ASC
             LIMIT ?2
             "#,
@@ -539,7 +539,7 @@ impl Store {
         let total: usize = self
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM screenshot_thumbnails WHERE captured_at LIKE ?1",
+                "SELECT COUNT(*) FROM screenshot_thumbnails WHERE captured_at LIKE ?1 AND capture_status = 'ok'",
                 params![&pattern],
                 |row| row.get(0),
             )
@@ -548,7 +548,7 @@ impl Store {
         let hours: usize = self
             .conn
             .query_row(
-                "SELECT COUNT(DISTINCT substr(captured_at, 12, 2)) FROM screenshot_thumbnails WHERE captured_at LIKE ?1",
+                "SELECT COUNT(DISTINCT substr(captured_at, 12, 2)) FROM screenshot_thumbnails WHERE captured_at LIKE ?1 AND capture_status = 'ok'",
                 params![&pattern],
                 |row| row.get(0),
             )
@@ -558,7 +558,7 @@ impl Store {
             r#"
             SELECT process_name, COUNT(*) as cnt
             FROM screenshot_thumbnails
-            WHERE captured_at LIKE ?1 AND process_name IS NOT NULL
+            WHERE captured_at LIKE ?1 AND capture_status = 'ok' AND process_name IS NOT NULL
             GROUP BY process_name
             ORDER BY cnt DESC
             LIMIT 10
@@ -575,11 +575,32 @@ impl Store {
             .filter_map(|r| r.ok())
             .collect();
 
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT capture_status, COUNT(*) as cnt
+            FROM screenshot_thumbnails
+            WHERE captured_at LIKE ?1 AND capture_status <> 'ok'
+            GROUP BY capture_status
+            ORDER BY capture_status ASC
+            "#,
+        )?;
+
+        let skipped_reasons: Vec<ScreenshotSkippedReasonCount> = stmt
+            .query_map(params![&pattern], |row| {
+                Ok(ScreenshotSkippedReasonCount {
+                    reason: row.get(0)?,
+                    count: row.get(1)?,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
         Ok(ScreenshotSummary {
             date: date.to_string(),
             total_screenshots: total,
             hours_covered: hours,
             top_apps,
+            skipped_reasons,
         })
     }
 

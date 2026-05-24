@@ -13,7 +13,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::{sync::oneshot, time};
 use tower_http::services::ServeDir;
@@ -24,7 +24,7 @@ use crate::{
     interval::build_time_events_with_lifecycle,
     models::{
         BlockerHit, CollectorHealth, DbStats, LifecycleEvent, LifecycleType, ScreenshotMeta,
-        SubsystemHealth, TimeEvent,
+        SubsystemHealth, TimeEvent, WindowSnapshot,
     },
     screenshot,
     storage::Store,
@@ -121,21 +121,30 @@ fn default_state(
             version: env!("CARGO_PKG_VERSION").into(),
             window_collector: SubsystemHealth {
                 status: "not_started".into(),
+                mode: Some("polling".into()),
                 last_event_at: None,
                 error_count: 0,
                 last_error: None,
+                last_capture_status: None,
+                last_skip_reason: None,
             },
             input_collector: SubsystemHealth {
                 status: "not_started".into(),
+                mode: Some("raw_input".into()),
                 last_event_at: None,
                 error_count: 0,
                 last_error: None,
+                last_capture_status: None,
+                last_skip_reason: None,
             },
             screenshot_collector: SubsystemHealth {
                 status: "not_started".into(),
+                mode: Some("interval_thumbnail".into()),
                 last_event_at: None,
                 error_count: 0,
                 last_error: None,
+                last_capture_status: None,
+                last_skip_reason: None,
             },
             db_stats: DbStats {
                 window_events: 0,
@@ -215,6 +224,29 @@ pub async fn serve(
     Ok(())
 }
 
+fn record_window_capture_success(
+    state: &AppState,
+    capture_status: &str,
+    last_event_at: Option<DateTime<Utc>>,
+) {
+    if let Ok(mut h) = state.health.lock() {
+        h.window_collector.last_capture_status = Some(capture_status.to_string());
+        h.window_collector.error_count = 0;
+        h.window_collector.last_error = None;
+        if let Some(last_event_at) = last_event_at {
+            h.window_collector.last_event_at = Some(last_event_at);
+        }
+    }
+}
+
+fn should_record_capture_unavailable(last_error: &mut Option<String>, error: &str) -> bool {
+    if last_error.as_deref() == Some(error) {
+        return false;
+    }
+    *last_error = Some(error.to_string());
+    true
+}
+
 fn spawn_collector_loop(
     state: AppState,
     session_id: String,
@@ -227,20 +259,23 @@ fn spawn_collector_loop(
             }
         }
         let mut last_identity: Option<(i64, u32, Option<String>)> = None;
+        let mut last_capture_unavailable_error: Option<String> = None;
         loop {
             match sample_foreground_window() {
                 Ok(snapshot) => {
+                    last_capture_unavailable_error = None;
+                    record_window_capture_success(&state, snapshot.capture_status.as_str(), None);
                     let identity = (snapshot.hwnd, snapshot.pid, snapshot.window_title.clone());
                     if last_identity.as_ref() != Some(&identity) {
                         if let Ok(mut store) = state.store.lock() {
                             match store.insert_window_focus(&session_id, &snapshot) {
                                 Ok(_) => {
                                     last_identity = Some(identity);
-                                    if let Ok(mut h) = state.health.lock() {
-                                        h.window_collector.last_event_at = Some(Utc::now());
-                                        h.window_collector.error_count = 0;
-                                        h.window_collector.last_error = None;
-                                    }
+                                    record_window_capture_success(
+                                        &state,
+                                        snapshot.capture_status.as_str(),
+                                        Some(Utc::now()),
+                                    );
                                 }
                                 Err(err) => {
                                     eprintln!("window event write failed: {err:#}");
@@ -261,9 +296,27 @@ fn spawn_collector_loop(
                 }
                 Err(err) => {
                     eprintln!("window sample failed: {err:#}");
+                    let error = format!("{err:#}");
+                    if should_record_capture_unavailable(
+                        &mut last_capture_unavailable_error,
+                        &error,
+                    ) {
+                        if let Ok(mut store) = state.store.lock() {
+                            if let Err(write_err) = store.insert_lifecycle_event(
+                                &session_id,
+                                Utc::now(),
+                                LifecycleType::CaptureUnavailable,
+                                Some("window_sample_failed"),
+                                serde_json::json!({ "error": error.clone() }),
+                            ) {
+                                eprintln!("window sample lifecycle write failed: {write_err:#}");
+                            }
+                        }
+                    }
                     if let Ok(mut h) = state.health.lock() {
                         h.window_collector.error_count += 1;
-                        h.window_collector.last_error = Some(format!("{err:#}"));
+                        h.window_collector.last_error = Some(error);
+                        h.window_collector.last_capture_status = Some("capture_unavailable".into());
                     }
                 }
             }
@@ -271,6 +324,64 @@ fn spawn_collector_loop(
             time::sleep(Duration::from_millis(poll_ms)).await;
         }
     })
+}
+
+fn screenshot_skip_metadata(
+    reason: &str,
+    snapshot: Option<&WindowSnapshot>,
+) -> (Option<String>, Option<String>) {
+    if reason == "blocked" {
+        return (None, None);
+    }
+
+    (
+        snapshot.map(|s| s.process_name.clone()),
+        snapshot.and_then(|s| s.window_title.clone()),
+    )
+}
+
+fn record_screenshot_skip(
+    state: &AppState,
+    session_id: &str,
+    reason: &str,
+    snapshot: Option<&WindowSnapshot>,
+) {
+    let now = Utc::now();
+    let (process_name, window_title) = screenshot_skip_metadata(reason, snapshot);
+    let metadata_error = match state.store.lock() {
+        Ok(mut store) => store
+            .insert_screenshot(
+                session_id,
+                &ScreenshotMeta {
+                    id: 0,
+                    captured_at: now,
+                    file_path: String::new(),
+                    width: 0,
+                    height: 0,
+                    process_name,
+                    window_title,
+                    capture_status: reason.to_string(),
+                },
+            )
+            .err()
+            .map(|err| {
+                eprintln!("screenshot skip metadata write failed: {err:#}");
+                format!("{err:#}")
+            }),
+        Err(_) => {
+            eprintln!("screenshot skip metadata write failed: store lock poisoned");
+            Some("store lock poisoned".into())
+        }
+    };
+
+    if let Ok(mut h) = state.health.lock() {
+        h.screenshot_collector.last_event_at = Some(now);
+        h.screenshot_collector.last_skip_reason = Some(reason.to_string());
+        if let Some(error) = metadata_error {
+            h.screenshot_collector.error_count += 1;
+            h.screenshot_collector.last_error = Some(error);
+        }
+    }
 }
 
 fn spawn_screenshot_loop(state: AppState, session_id: String) -> tokio::task::JoinHandle<()> {
@@ -288,12 +399,16 @@ fn spawn_screenshot_loop(state: AppState, session_id: String) -> tokio::task::Jo
             time::sleep(Duration::from_secs(interval)).await;
 
             if screenshot::idle_seconds() > idle_threshold as f64 {
+                record_screenshot_skip(&state, &session_id, "idle", None);
                 continue;
             }
 
             let snapshot = match sample_foreground_window() {
                 Ok(s) => s,
-                Err(_) => continue,
+                Err(_) => {
+                    record_screenshot_skip(&state, &session_id, "capture_unavailable", None);
+                    continue;
+                }
             };
 
             if state.blocker_engine.is_blocked("screenshot", &snapshot) {
@@ -314,6 +429,7 @@ fn spawn_screenshot_loop(state: AppState, session_id: String) -> tokio::task::Jo
                         });
                     }
                 }
+                record_screenshot_skip(&state, &session_id, "blocked", Some(&snapshot));
                 continue;
             }
 
@@ -325,6 +441,7 @@ fn spawn_screenshot_loop(state: AppState, session_id: String) -> tokio::task::Jo
                         h.screenshot_collector.last_error =
                             Some("capture_thumbnail returned None".into());
                     }
+                    record_screenshot_skip(&state, &session_id, "capture_failed", Some(&snapshot));
                     continue;
                 }
             };
@@ -339,6 +456,7 @@ fn spawn_screenshot_loop(state: AppState, session_id: String) -> tokio::task::Jo
                     h.screenshot_collector.error_count += 1;
                     h.screenshot_collector.last_error = Some(format!("{e:#}"));
                 }
+                record_screenshot_skip(&state, &session_id, "write_failed", Some(&snapshot));
                 continue;
             }
             let filepath = dir.join(&filename);
@@ -349,39 +467,52 @@ fn spawn_screenshot_loop(state: AppState, session_id: String) -> tokio::task::Jo
                     h.screenshot_collector.error_count += 1;
                     h.screenshot_collector.last_error = Some(format!("{e:#}"));
                 }
+                record_screenshot_skip(&state, &session_id, "write_failed", Some(&snapshot));
                 continue;
             }
 
             let relative_path = format!("{}/{}", date_dir, filename);
 
-            if let Ok(mut store) = state.store.lock() {
-                match store.insert_screenshot(
-                    &session_id,
-                    &ScreenshotMeta {
-                        id: 0,
-                        captured_at: now,
-                        file_path: relative_path,
-                        width: w,
-                        height: h,
-                        process_name: Some(snapshot.process_name),
-                        window_title: snapshot.window_title,
-                        capture_status: "ok".to_string(),
-                    },
-                ) {
-                    Ok(_) => {
-                        if let Ok(mut h) = state.health.lock() {
-                            h.screenshot_collector.last_event_at = Some(Utc::now());
-                            h.screenshot_collector.error_count = 0;
-                            h.screenshot_collector.last_error = None;
-                        }
+            let metadata_write_result = match state.store.lock() {
+                Ok(mut store) => store
+                    .insert_screenshot(
+                        &session_id,
+                        &ScreenshotMeta {
+                            id: 0,
+                            captured_at: now,
+                            file_path: relative_path,
+                            width: w,
+                            height: h,
+                            process_name: Some(snapshot.process_name.clone()),
+                            window_title: snapshot.window_title.clone(),
+                            capture_status: "ok".to_string(),
+                        },
+                    )
+                    .map(|_| ())
+                    .map_err(|err| format!("{err:#}")),
+                Err(_) => Err("store lock poisoned".into()),
+            };
+
+            match metadata_write_result {
+                Ok(_) => {
+                    if let Ok(mut h) = state.health.lock() {
+                        h.screenshot_collector.last_event_at = Some(Utc::now());
+                        h.screenshot_collector.error_count = 0;
+                        h.screenshot_collector.last_error = None;
                     }
-                    Err(err) => {
-                        eprintln!("screenshot metadata write failed: {err:#}");
-                        if let Ok(mut h) = state.health.lock() {
-                            h.screenshot_collector.error_count += 1;
-                            h.screenshot_collector.last_error = Some(format!("{err:#}"));
-                        }
+                }
+                Err(error) => {
+                    eprintln!("screenshot metadata write failed: {error}");
+                    if let Ok(mut h) = state.health.lock() {
+                        h.screenshot_collector.error_count += 1;
+                        h.screenshot_collector.last_error = Some(error);
                     }
+                    record_screenshot_skip(
+                        &state,
+                        &session_id,
+                        "metadata_write_failed",
+                        Some(&snapshot),
+                    );
                 }
             }
         }
@@ -649,5 +780,72 @@ async fn shutdown_signal(mut shutdown_rx: oneshot::Receiver<()>) {
             }
         }
         _ = &mut shutdown_rx => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_capture_success_updates_health_after_prior_error() {
+        let store = Store::open_memory().unwrap();
+        store.init().unwrap();
+        let state = default_state(store, None, None);
+        {
+            let mut health = state.health.lock().unwrap();
+            health.window_collector.error_count = 1;
+            health.window_collector.last_error = Some("prior failure".into());
+            health.window_collector.last_capture_status = Some("capture_unavailable".into());
+        }
+
+        record_window_capture_success(&state, "ok", None);
+
+        let health = state.health.lock().unwrap();
+        assert_eq!(
+            health.window_collector.last_capture_status.as_deref(),
+            Some("ok")
+        );
+        assert_eq!(health.window_collector.error_count, 0);
+        assert_eq!(health.window_collector.last_error, None);
+        assert_eq!(health.window_collector.last_event_at, None);
+    }
+
+    #[test]
+    fn screenshot_skip_metadata_omits_blocked_window_details() {
+        let snapshot = WindowSnapshot {
+            captured_at: Utc::now(),
+            hwnd: 100,
+            pid: 42,
+            process_name: "Secret.exe".into(),
+            exe_path_hash: None,
+            window_title: Some("Sensitive window".into()),
+            capture_status: crate::models::CaptureStatus::Ok,
+        };
+
+        let (process_name, window_title) = screenshot_skip_metadata("blocked", Some(&snapshot));
+
+        assert_eq!(process_name, None);
+        assert_eq!(window_title, None);
+    }
+
+    #[test]
+    fn capture_unavailable_lifecycle_is_recorded_only_for_new_errors() {
+        let mut last_error = None;
+
+        assert!(should_record_capture_unavailable(
+            &mut last_error,
+            "first error"
+        ));
+        assert_eq!(last_error.as_deref(), Some("first error"));
+        assert!(!should_record_capture_unavailable(
+            &mut last_error,
+            "first error"
+        ));
+        assert!(should_record_capture_unavailable(
+            &mut last_error,
+            "second error"
+        ));
+        assert_eq!(last_error.as_deref(), Some("second error"));
     }
 }

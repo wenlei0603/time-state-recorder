@@ -298,6 +298,101 @@ fn rejects_unknown_lifecycle_types_from_storage() {
     assert!(store.list_lifecycle_events(10).is_err());
 }
 
+#[test]
+fn screenshot_summary_counts_skipped_reasons() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+
+    for (minute, status) in [
+        ("00", "ok"),
+        ("01", "idle"),
+        ("02", "blocked"),
+        ("03", "capture_unavailable"),
+    ] {
+        store
+            .insert_screenshot(
+                &session_id,
+                &ScreenshotMeta {
+                    id: 0,
+                    captured_at: ts(&format!("2026-05-24T09:{minute}:00Z")),
+                    file_path: format!("2026-05-24/09-{minute}.jpg"),
+                    width: 640,
+                    height: 360,
+                    process_name: Some("Code.exe".into()),
+                    window_title: Some("main.rs".into()),
+                    capture_status: status.into(),
+                },
+            )
+            .unwrap();
+    }
+
+    let summary = store.get_screenshot_summary("2026-05-24").unwrap();
+
+    assert_eq!(summary.total_screenshots, 1);
+    assert_eq!(summary.skipped_reasons.len(), 3);
+    assert_eq!(summary.skipped_reasons[0].reason, "blocked");
+    assert_eq!(summary.skipped_reasons[0].count, 1);
+    assert_eq!(summary.skipped_reasons[1].reason, "capture_unavailable");
+    assert_eq!(summary.skipped_reasons[2].reason, "idle");
+}
+
+#[test]
+fn screenshot_reads_and_success_summary_ignore_skip_rows() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+
+    for (captured_at, file_path, process_name, window_title, capture_status) in [
+        (
+            "2026-05-24T09:00:00Z",
+            "2026-05-24/09-00.jpg",
+            Some("Code.exe"),
+            Some("main.rs"),
+            "ok",
+        ),
+        ("2026-05-24T10:00:00Z", "", None, None, "idle"),
+        (
+            "2026-05-24T11:00:00Z",
+            "",
+            Some("Secret.exe"),
+            Some("Sensitive window"),
+            "blocked",
+        ),
+    ] {
+        store
+            .insert_screenshot(
+                &session_id,
+                &ScreenshotMeta {
+                    id: 0,
+                    captured_at: ts(captured_at),
+                    file_path: file_path.into(),
+                    width: if capture_status == "ok" { 640 } else { 0 },
+                    height: if capture_status == "ok" { 360 } else { 0 },
+                    process_name: process_name.map(String::from),
+                    window_title: window_title.map(String::from),
+                    capture_status: capture_status.into(),
+                },
+            )
+            .unwrap();
+    }
+
+    let screenshots = store.list_screenshots_by_date("2026-05-24", 10).unwrap();
+    assert_eq!(screenshots.len(), 1);
+    assert_eq!(screenshots[0].capture_status, "ok");
+
+    let summary = store.get_screenshot_summary("2026-05-24").unwrap();
+    assert_eq!(summary.total_screenshots, 1);
+    assert_eq!(summary.hours_covered, 1);
+    assert_eq!(summary.top_apps.len(), 1);
+    assert_eq!(summary.top_apps[0].process_name, "Code.exe");
+    assert_eq!(summary.skipped_reasons.len(), 2);
+    assert_eq!(summary.skipped_reasons[0].reason, "blocked");
+    assert_eq!(summary.skipped_reasons[0].count, 1);
+    assert_eq!(summary.skipped_reasons[1].reason, "idle");
+    assert_eq!(summary.skipped_reasons[1].count, 1);
+}
+
 fn ts(value: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(value)
         .unwrap()

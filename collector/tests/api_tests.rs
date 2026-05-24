@@ -4,7 +4,7 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use tsr_collector::{
     api,
-    models::{CaptureStatus, LifecycleType, WindowSnapshot},
+    models::{CaptureStatus, LifecycleType, ScreenshotMeta, WindowSnapshot},
     storage::Store,
 };
 
@@ -490,6 +490,86 @@ async fn serves_text_segments_as_json() {
     assert_eq!(body["segments"][0]["keyCount"], 10);
     assert_eq!(body["segments"][0]["processName"], "WindowsTerminal");
     assert_eq!(body["segments"][0]["endedAt"], serde_json::Value::Null);
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn serves_health_with_collector_stability_details() {
+    let store = Store::open_memory().unwrap();
+    store.init().unwrap();
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!("http://{addr}/api/health"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["windowCollector"]["mode"], "polling");
+    assert_eq!(
+        body["windowCollector"]["lastCaptureStatus"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        body["screenshotCollector"]["lastSkipReason"],
+        serde_json::Value::Null
+    );
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn serves_screenshots_without_skip_rows() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+
+    for (captured_at, file_path, capture_status) in [
+        ("2026-05-24T09:00:00Z", "2026-05-24/09-00.jpg", "ok"),
+        ("2026-05-24T10:00:00Z", "", "idle"),
+        ("2026-05-24T11:00:00Z", "", "blocked"),
+    ] {
+        store
+            .insert_screenshot(
+                &session_id,
+                &ScreenshotMeta {
+                    id: 0,
+                    captured_at: ts(captured_at),
+                    file_path: file_path.into(),
+                    width: if capture_status == "ok" { 640 } else { 0 },
+                    height: if capture_status == "ok" { 360 } else { 0 },
+                    process_name: Some("Code.exe".into()),
+                    window_title: Some("main.rs".into()),
+                    capture_status: capture_status.into(),
+                },
+            )
+            .unwrap();
+    }
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!("http://{addr}/api/screenshots?date=2026-05-24"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let screenshots = body["screenshots"].as_array().unwrap();
+    assert_eq!(screenshots.len(), 1);
+    assert_eq!(screenshots[0]["captureStatus"], "ok");
+    assert_eq!(screenshots[0]["filePath"], "2026-05-24/09-00.jpg");
 
     server.abort();
 }

@@ -191,6 +191,14 @@ pub struct ScreenshotSummary {
     pub total_screenshots: usize,
     pub hours_covered: usize,
     pub top_apps: Vec<AppScreenshotCount>,
+    pub skipped_reasons: Vec<ScreenshotSkippedReasonCount>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenshotSkippedReasonCount {
+    pub reason: String,
+    pub count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,9 +301,12 @@ pub struct CollectorHealth {
 #[serde(rename_all = "camelCase")]
 pub struct SubsystemHealth {
     pub status: String,
+    pub mode: Option<String>,
     pub last_event_at: Option<DateTime<Utc>>,
     pub error_count: u64,
     pub last_error: Option<String>,
+    pub last_capture_status: Option<String>,
+    pub last_skip_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
