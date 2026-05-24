@@ -90,9 +90,84 @@ pub struct TimeEvent {
     pub id: String,
     pub app: String,
     pub title: String,
+    pub kind: TimeEventKind,
+    pub status: Option<String>,
+    pub session_id: String,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
     pub duration_seconds: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimeEventKind {
+    ActiveWindow,
+    Lifecycle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleType {
+    SessionStart,
+    SessionStop,
+    WindowsLock,
+    WindowsUnlock,
+    PowerSuspend,
+    PowerResume,
+    IdleStart,
+    IdleEnd,
+    CaptureUnavailable,
+    CollectorGap,
+    SessionDisconnect,
+    SessionReconnect,
+}
+
+impl LifecycleType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::SessionStart => "session_start",
+            Self::SessionStop => "session_stop",
+            Self::WindowsLock => "windows_lock",
+            Self::WindowsUnlock => "windows_unlock",
+            Self::PowerSuspend => "power_suspend",
+            Self::PowerResume => "power_resume",
+            Self::IdleStart => "idle_start",
+            Self::IdleEnd => "idle_end",
+            Self::CaptureUnavailable => "capture_unavailable",
+            Self::CollectorGap => "collector_gap",
+            Self::SessionDisconnect => "session_disconnect",
+            Self::SessionReconnect => "session_reconnect",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Self {
+        match value {
+            "session_start" => Self::SessionStart,
+            "session_stop" => Self::SessionStop,
+            "windows_lock" => Self::WindowsLock,
+            "windows_unlock" => Self::WindowsUnlock,
+            "power_suspend" => Self::PowerSuspend,
+            "power_resume" => Self::PowerResume,
+            "idle_start" => Self::IdleStart,
+            "idle_end" => Self::IdleEnd,
+            "collector_gap" => Self::CollectorGap,
+            "session_disconnect" => Self::SessionDisconnect,
+            "session_reconnect" => Self::SessionReconnect,
+            _ => Self::CaptureUnavailable,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LifecycleEvent {
+    pub raw_event_id: i64,
+    pub session_id: String,
+    pub event_ts: DateTime<Utc>,
+    pub lifecycle_type: LifecycleType,
+    pub reason: Option<String>,
+    pub active_session_id: Option<String>,
+    pub payload: serde_json::Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -226,6 +301,7 @@ pub struct SubsystemHealth {
 #[serde(rename_all = "camelCase")]
 pub struct DbStats {
     pub window_events: usize,
+    pub lifecycle_events: usize,
     pub input_events: usize,
     pub text_segments: usize,
     pub screenshots: usize,

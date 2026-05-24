@@ -2,12 +2,12 @@ use std::path::Path;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, params, types::Type};
 use uuid::Uuid;
 
 use crate::models::{
-    AppScreenshotCount, BlockerHit, CaptureStatus, ScreenshotMeta, ScreenshotSummary,
-    StoredWindowEvent, WindowSnapshot,
+    AppScreenshotCount, BlockerHit, CaptureStatus, LifecycleEvent, LifecycleType, ScreenshotMeta,
+    ScreenshotSummary, StoredWindowEvent, WindowSnapshot,
 };
 
 pub struct Store {
@@ -39,6 +39,7 @@ impl Store {
               id TEXT PRIMARY KEY,
               started_at TEXT NOT NULL,
               ended_at TEXT,
+              ended_reason TEXT,
               host_id TEXT NOT NULL,
               app_version TEXT NOT NULL,
               config_hash TEXT NOT NULL
@@ -69,6 +70,17 @@ impl Store {
 
             CREATE INDEX IF NOT EXISTS idx_raw_events_ts ON raw_events(event_ts);
             CREATE INDEX IF NOT EXISTS idx_raw_events_session ON raw_events(session_id);
+
+            CREATE TABLE IF NOT EXISTS lifecycle_events (
+              raw_event_id INTEGER PRIMARY KEY,
+              lifecycle_type TEXT NOT NULL,
+              reason TEXT,
+              active_session_id TEXT,
+              payload_json TEXT NOT NULL,
+              FOREIGN KEY(raw_event_id) REFERENCES raw_events(id),
+              FOREIGN KEY(active_session_id) REFERENCES capture_sessions(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_lifecycle_events_type ON lifecycle_events(lifecycle_type);
 
             CREATE TABLE IF NOT EXISTS blocker_hits (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,6 +139,7 @@ impl Store {
             CREATE INDEX IF NOT EXISTS idx_text_segments_at ON text_segments(started_at);
             "#,
         )?;
+        self.ensure_column("capture_sessions", "ended_reason", "TEXT")?;
         Ok(())
     }
 
@@ -150,6 +163,160 @@ impl Store {
         )?;
 
         Ok(session_id)
+    }
+
+    pub fn close_session(
+        &mut self,
+        session_id: &str,
+        ended_at: DateTime<Utc>,
+        reason: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            r#"
+            UPDATE capture_sessions
+            SET ended_at = ?2, ended_reason = ?3
+            WHERE id = ?1
+            "#,
+            params![session_id, ended_at.to_rfc3339(), reason],
+        )?;
+
+        self.insert_lifecycle_event(
+            session_id,
+            ended_at,
+            LifecycleType::SessionStop,
+            Some(reason),
+            serde_json::json!({ "reason": reason }),
+        )?;
+        Ok(())
+    }
+
+    pub fn close_stale_sessions(
+        &mut self,
+        ended_at: DateTime<Utc>,
+        reason: &str,
+    ) -> Result<Vec<String>> {
+        let session_ids = {
+            let mut stmt = self.conn.prepare(
+                r#"
+                SELECT id
+                FROM capture_sessions
+                WHERE ended_at IS NULL
+                ORDER BY started_at ASC, id ASC
+                "#,
+            )?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+
+            let mut ids = Vec::new();
+            for row in rows {
+                ids.push(row?);
+            }
+            ids
+        };
+
+        for session_id in &session_ids {
+            self.conn.execute(
+                r#"
+                UPDATE capture_sessions
+                SET ended_at = ?2, ended_reason = ?3
+                WHERE id = ?1
+                "#,
+                params![session_id, ended_at.to_rfc3339(), reason],
+            )?;
+            self.insert_lifecycle_event(
+                session_id,
+                ended_at,
+                LifecycleType::CollectorGap,
+                Some(reason),
+                serde_json::json!({ "reason": reason }),
+            )?;
+        }
+
+        Ok(session_ids)
+    }
+
+    pub fn insert_lifecycle_event(
+        &mut self,
+        session_id: &str,
+        event_ts: DateTime<Utc>,
+        lifecycle_type: LifecycleType,
+        reason: Option<&str>,
+        payload: serde_json::Value,
+    ) -> Result<i64> {
+        let payload_json = serde_json::to_string(&payload)?;
+        let tx = self.conn.transaction()?;
+
+        tx.execute(
+            r#"
+            INSERT INTO raw_events
+              (session_id, event_ts, event_type, source, target_window_id, payload_json)
+            VALUES (?1, ?2, 'lifecycle', 'lifecycle_collector', NULL, ?3)
+            "#,
+            params![session_id, event_ts.to_rfc3339(), payload_json],
+        )?;
+        let raw_event_id = tx.last_insert_rowid();
+
+        tx.execute(
+            r#"
+            INSERT INTO lifecycle_events
+              (raw_event_id, lifecycle_type, reason, active_session_id, payload_json)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            "#,
+            params![
+                raw_event_id,
+                lifecycle_type.as_str(),
+                reason,
+                session_id,
+                payload_json
+            ],
+        )?;
+        tx.commit()?;
+
+        Ok(raw_event_id)
+    }
+
+    pub fn list_lifecycle_events(&self, limit: usize) -> Result<Vec<LifecycleEvent>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT *
+            FROM (
+              SELECT
+                r.id AS raw_event_id,
+                r.session_id,
+                r.event_ts,
+                l.lifecycle_type,
+                l.reason,
+                l.active_session_id,
+                l.payload_json
+              FROM raw_events r
+              JOIN lifecycle_events l ON l.raw_event_id = r.id
+              WHERE r.event_type = 'lifecycle'
+              ORDER BY r.event_ts DESC, r.id DESC
+              LIMIT ?1
+            )
+            ORDER BY event_ts ASC, raw_event_id ASC
+            "#,
+        )?;
+
+        let rows = statement.query_map([limit as i64], |row| {
+            let event_ts: String = row.get(2)?;
+            let lifecycle_type: String = row.get(3)?;
+            let payload_json: String = row.get(6)?;
+            Ok(LifecycleEvent {
+                raw_event_id: row.get(0)?,
+                session_id: row.get(1)?,
+                event_ts: parse_ts(&event_ts)?,
+                lifecycle_type: LifecycleType::from_db(&lifecycle_type),
+                reason: row.get(4)?,
+                active_session_id: row.get(5)?,
+                payload: parse_json(&payload_json)?,
+            })
+        })?;
+
+        let mut events = Vec::new();
+        for row in rows {
+            events.push(row?);
+        }
+        Ok(events)
     }
 
     pub fn insert_window_focus(
@@ -627,6 +794,9 @@ impl Store {
         let window_events: usize =
             self.conn
                 .query_row("SELECT COUNT(*) FROM window_events", [], |r| r.get(0))?;
+        let lifecycle_events: usize =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM lifecycle_events", [], |r| r.get(0))?;
         let input_events: usize =
             self.conn
                 .query_row("SELECT COUNT(*) FROM input_events", [], |r| r.get(0))?;
@@ -644,11 +814,29 @@ impl Store {
 
         Ok(crate::models::DbStats {
             window_events,
+            lifecycle_events,
             input_events,
             text_segments,
             screenshots,
             blocker_hits,
         })
+    }
+
+    fn ensure_column(&self, table: &str, column: &str, column_type: &str) -> Result<()> {
+        let mut stmt = self.conn.prepare(&format!("PRAGMA table_info({table})"))?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+
+        for row in rows {
+            if row? == column {
+                return Ok(());
+            }
+        }
+
+        self.conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {column_type}"),
+            [],
+        )?;
+        Ok(())
     }
 }
 
@@ -674,4 +862,9 @@ pub(crate) fn parse_ts(value: &str) -> rusqlite::Result<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .map(|dt| dt.with_timezone(&Utc))
         .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))
+}
+
+fn parse_json(value: &str) -> rusqlite::Result<serde_json::Value> {
+    serde_json::from_str(value)
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))
 }

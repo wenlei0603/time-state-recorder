@@ -21,8 +21,11 @@ use tower_http::services::ServeDir;
 use crate::{
     blocker::BlockerEngine,
     input,
-    interval::build_time_events,
-    models::{BlockerHit, CollectorHealth, DbStats, ScreenshotMeta, SubsystemHealth, TimeEvent},
+    interval::build_time_events_with_lifecycle,
+    models::{
+        BlockerHit, CollectorHealth, DbStats, LifecycleEvent, LifecycleType, ScreenshotMeta,
+        SubsystemHealth, TimeEvent,
+    },
     screenshot,
     storage::Store,
     window::sample_foreground_window,
@@ -53,6 +56,12 @@ struct DateQuery {
 #[serde(rename_all = "camelCase")]
 struct TimeEventsResponse {
     events: Vec<TimeEvent>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LifecycleEventsResponse {
+    events: Vec<LifecycleEvent>,
 }
 
 #[derive(Debug, Serialize)]
@@ -125,6 +134,7 @@ fn default_state(store: Store, blocker_config_path: Option<PathBuf>) -> AppState
             },
             db_stats: DbStats {
                 window_events: 0,
+                lifecycle_events: 0,
                 input_events: 0,
                 text_segments: 0,
                 screenshots: 0,
@@ -139,6 +149,7 @@ fn router_from_state(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/window-events", get(window_events))
+        .route("/api/lifecycle-events", get(lifecycle_events))
         .route("/api/time-events", get(time_events))
         .route("/api/blockers", get(blockers))
         .route("/api/screenshots", get(screenshots))
@@ -151,13 +162,22 @@ fn router_from_state(state: AppState) -> Router {
 }
 
 pub async fn serve(
-    store: Store,
+    mut store: Store,
     addr: SocketAddr,
     poll_ms: u64,
     blocker_config_path: Option<PathBuf>,
 ) -> Result<()> {
     anyhow::ensure!(poll_ms >= 100, "poll_ms must be at least 100");
+    let now = Utc::now();
+    store.close_stale_sessions(now, "abnormal_stop")?;
     let session_id = store.create_session(env!("CARGO_PKG_VERSION"), "default")?;
+    store.insert_lifecycle_event(
+        &session_id,
+        now,
+        LifecycleType::SessionStart,
+        None,
+        serde_json::json!({ "appVersion": env!("CARGO_PKG_VERSION") }),
+    )?;
     let state = default_state(store, blocker_config_path);
 
     spawn_collector_loop(state.clone(), session_id.clone(), poll_ms);
@@ -365,6 +385,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
             Ok(stats) => stats,
             Err(_) => DbStats {
                 window_events: 0,
+                lifecycle_events: 0,
                 input_events: 0,
                 text_segments: 0,
                 screenshots: 0,
@@ -373,6 +394,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         },
         Err(_) => DbStats {
             window_events: 0,
+            lifecycle_events: 0,
             input_events: 0,
             text_segments: 0,
             screenshots: 0,
@@ -415,11 +437,33 @@ async fn time_events(
         Err(_) => return internal_error("store lock poisoned"),
     };
 
-    match store.list_window_events(limit) {
-        Ok(window_events) => Json(TimeEventsResponse {
-            events: build_time_events(&window_events),
-        })
-        .into_response(),
+    let window_events = match store.list_window_events(limit) {
+        Ok(events) => events,
+        Err(err) => return internal_error(err),
+    };
+    let lifecycle_events = match store.list_lifecycle_events(limit) {
+        Ok(events) => events,
+        Err(err) => return internal_error(err),
+    };
+
+    Json(TimeEventsResponse {
+        events: build_time_events_with_lifecycle(&window_events, &lifecycle_events),
+    })
+    .into_response()
+}
+
+async fn lifecycle_events(
+    State(state): State<AppState>,
+    Query(query): Query<LimitQuery>,
+) -> impl IntoResponse {
+    let limit = query.limit.unwrap_or(500).min(5_000);
+    let store = match state.store.lock() {
+        Ok(store) => store,
+        Err(_) => return internal_error("store lock poisoned"),
+    };
+
+    match store.list_lifecycle_events(limit) {
+        Ok(events) => Json(LifecycleEventsResponse { events }).into_response(),
         Err(err) => internal_error(err),
     }
 }

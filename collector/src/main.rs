@@ -3,7 +3,7 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tokio::time;
-use tsr_collector::{api, storage::Store, window::sample_foreground_window};
+use tsr_collector::{api, models::LifecycleType, storage::Store, window::sample_foreground_window};
 
 #[derive(Debug, Parser)]
 #[command(name = "tsr-collector")]
@@ -51,11 +51,20 @@ async fn main() -> Result<()> {
             poll_ms,
         } => {
             ensure_poll_ms(poll_ms)?;
-            let store = Store::open(db)?;
+            let mut store = Store::open(db)?;
             store.init()?;
+            let now = chrono::Utc::now();
+            store.close_stale_sessions(now, "abnormal_stop")?;
             let session_id = store.create_session(env!("CARGO_PKG_VERSION"), "default")?;
-            let mut store = store;
+            store.insert_lifecycle_event(
+                &session_id,
+                now,
+                LifecycleType::SessionStart,
+                None,
+                serde_json::json!({ "appVersion": env!("CARGO_PKG_VERSION") }),
+            )?;
             record_for(&mut store, &session_id, seconds, poll_ms).await?;
+            store.close_session(&session_id, chrono::Utc::now(), "completed")?;
         }
         Command::Serve {
             db,
