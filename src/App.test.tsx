@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
@@ -39,18 +39,33 @@ describe("App", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows total active duration in the descriptive statistics cards", () => {
-    render(<App />);
-
-    expect(screen.getByText("Total")).toBeInTheDocument();
-    expect(screen.getByText("87m")).toBeInTheDocument();
-  });
-
-  it("exposes collector data button as a keyboard-focusable control", () => {
+  it("renders dashboard as the default view", () => {
     render(<App />);
 
     expect(
-      screen.getByRole("button", { name: /collector data/i })
+      screen.getByRole("heading", { name: /dashboard/i })
+    ).toBeInTheDocument();
+    expect(screen.getByText(/active time/i)).toBeInTheDocument();
+  });
+
+  it("exposes Toggl-style source and privacy toggles", () => {
+    render(<App />);
+
+    expect(screen.getByRole("button", { name: /^sample$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^live$/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^redacted$/i })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^raw$/i })).toBeInTheDocument();
+  });
+
+  it("opens the timeline view from the tab bar", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /timeline/i }));
+
+    expect(
+      screen.getByRole("heading", { name: /timeline/i })
     ).toBeInTheDocument();
   });
 

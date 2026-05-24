@@ -200,6 +200,9 @@ export function formatDuration(value: number): string {
     return `${hours}h ${minutes.toString().padStart(2, "0")}m`;
   }
   if (minutes > 0) {
+    if (seconds === 0) {
+      return `${minutes}m`;
+    }
     return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
   }
   return `${seconds}s`;
