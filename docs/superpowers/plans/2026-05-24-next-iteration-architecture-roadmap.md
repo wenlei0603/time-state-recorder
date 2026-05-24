@@ -29,6 +29,47 @@ Use small commits with one architectural layer per commit. Suggested prefixes:
 
 Do not mix schema migrations, collector logic, API DTOs, and UI changes in one commit unless a migration task explicitly requires it.
 
+## Cloud Git Workflow
+
+Development happens on remote-tracked feature branches, not directly on `main`.
+
+- Use `codex/<feature-or-milestone>` branch names unless a human requests another naming scheme.
+- Keep one branch focused on one milestone or tightly related implementation slice.
+- Push the branch to `origin` early with `git push -u origin <branch>`, then push after each meaningful commit group.
+- Keep commits small and reviewable: schema/migration, collector, analyzer, API, UI, tests, and docs should usually be separate commits.
+- Do not stage unrelated local files. If the worktree is mixed, stage exact paths only.
+- Prefer draft PRs while implementation is incomplete.
+- Rebase or merge from the remote default branch only at clean checkpoints, never in the middle of unresolved review fixes.
+- Every PR description should link the relevant design/implementation plan and list verification commands that actually ran.
+
+## Three-Round Core Review Gate
+
+After each core component is completed, run three review rounds before moving to the next core component. A "core component" means a boundary that other work depends on, such as schema migrations, lifecycle collection, analyzer intervals, API v2 query, layered input, Notion export, or the metric registry.
+
+Round 1: Architecture and Contract Review
+
+- Compare the implementation against the design and implementation plan.
+- Focus on module boundaries, data flow, raw-vs-derived separation, API DTO stability, privacy boundaries, and whether any implementation silently changes the architecture.
+- Required outcome: all critical and important architecture deviations are fixed or explicitly documented with rationale.
+
+Round 2: Extensibility and Dependency Review
+
+- Focus on future extension points, schema evolution, Windows-specific assumptions, IANA timezone handling, SQLite read/write separation, optional dependencies, build/toolchain requirements, and failure modes.
+- Required outcome: no hidden environment assumptions, no one-off abstractions blocking later Notion/wearable/WeChat/lifelog adapters, and all new dependencies are justified.
+
+Round 3: Integration and Operations Review
+
+- Focus on tests, manual Windows checks, launcher behavior, graceful shutdown, migration safety, API compatibility, UI states, redaction enforcement, and rollback/recovery.
+- Required outcome: verification evidence is fresh; unresolved risks are documented as follow-up issues before the branch is considered ready.
+
+Review mechanics:
+
+- Use independent subagents for each round when available.
+- Give each reviewer the exact base SHA, head SHA, design/plan path, and files changed.
+- Reviewers should not inherit implementation context; they should inspect the diff and requirements directly.
+- Critical issues block progress. Important issues are fixed before the next component. Minor issues may be batched only if they are not architectural or privacy risks.
+- After fixes, rerun the affected review round instead of assuming the fix is correct.
+
 ## Milestone 0: Architecture Contracts
 
 Purpose: land traceable design docs before feature code.
