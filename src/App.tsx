@@ -14,8 +14,10 @@ import { InputActivity } from "./InputActivity";
 import { TimelineView } from "./TimelineView";
 import { feature1SampleEvents } from "./data/feature1Sample";
 import { feature2SampleSegments, feature2SampleSummary } from "./data/feature2Sample";
+import { feature3SampleScreenshots, feature3SampleSummary } from "./data/feature3Sample";
 import { fetchTimeEvents } from "./lib/api";
 import { fetchInputSummary, fetchTextSegments } from "./lib/input";
+import { fetchScreenshots, fetchScreenshotSummary } from "./lib/screenshots";
 import {
   defaultLayerVisibility,
   toVisibleDashboardEvents,
@@ -26,7 +28,7 @@ import {
   type TimelineGranularity,
   type UiSourceMode
 } from "./lib/uiModel";
-import type { TextSegment, TimeEvent } from "./types";
+import type { ScreenshotMeta, ScreenshotSummary, TextSegment, TimeEvent } from "./types";
 import "./styles.css";
 
 type CollectorStatus = "sample" | "loading" | "connected" | "offline";
@@ -37,11 +39,20 @@ export function App() {
   const [events, setEvents] = useState<TimeEvent[]>(feature1SampleEvents);
   const [segments, setSegments] = useState<TextSegment[]>(feature2SampleSegments);
   const [inputSummary, setInputSummary] = useState(feature2SampleSummary);
+  const [screenshots, setScreenshots] = useState<ScreenshotMeta[]>(
+    feature3SampleScreenshots
+  );
+  const [screenshotSummary, setScreenshotSummary] =
+    useState<ScreenshotSummary>(feature3SampleSummary);
   const [collectorStatus, setCollectorStatus] = useState<CollectorStatus>("sample");
   const [collectorError, setCollectorError] = useState<string | null>(null);
   const [inputStatus, setInputStatus] = useState<InputDataStatus>("sample");
   const [inputLoading, setInputLoading] = useState(false);
   const [inputError, setInputError] = useState<string | null>(null);
+  const [screenshotStatus, setScreenshotStatus] =
+    useState<UiSourceMode>("sample");
+  const [screenshotLoading, setScreenshotLoading] = useState(false);
+  const [screenshotError, setScreenshotError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
   const [sourceMode, setSourceMode] = useState<UiSourceMode>("sample");
   const [privacyMode, setPrivacyMode] = useState<PrivacyMode>("redacted");
@@ -66,25 +77,48 @@ export function App() {
     setEvents(feature1SampleEvents);
     setSegments(feature2SampleSegments);
     setInputSummary(feature2SampleSummary);
+    setScreenshots(feature3SampleScreenshots);
+    setScreenshotSummary(feature3SampleSummary);
     setSourceMode("sample");
     setInputStatus("sample");
+    setScreenshotStatus("sample");
     setInputLoading(false);
+    setScreenshotLoading(false);
     setCollectorStatus("sample");
     setCollectorError(null);
     setInputError(null);
+    setScreenshotError(null);
   }
 
-  async function refreshCollector() {
+  async function refreshCollector(options?: {
+    privacyMode?: PrivacyMode;
+    layers?: LayerVisibility;
+  }) {
+    const effectivePrivacyMode = options?.privacyMode ?? privacyMode;
+    const effectiveLayers = options?.layers ?? layers;
     setCollectorStatus("loading");
     setInputLoading(true);
+    setScreenshotLoading(true);
     setCollectorError(null);
     setInputError(null);
+    setScreenshotError(null);
     try {
       const day = currentLocalDate();
-      const [eventsResult, summaryResult, segmentsResult] = await Promise.allSettled([
+      const shouldLoadRawInput = effectivePrivacyMode === "raw";
+      const shouldLoadScreenshotRows =
+        effectivePrivacyMode === "raw" && effectiveLayers.screenshots;
+      const [
+        eventsResult,
+        summaryResult,
+        segmentsResult,
+        screenshotSummaryResult,
+        screenshotsResult
+      ] = await Promise.allSettled([
         fetchTimeEvents(),
         fetchInputSummary(day),
-        fetchTextSegments(day)
+        shouldLoadRawInput ? fetchTextSegments(day) : Promise.resolve([]),
+        fetchScreenshotSummary(day),
+        shouldLoadScreenshotRows ? fetchScreenshots(day) : Promise.resolve([])
       ]);
 
       if (eventsResult.status === "fulfilled") {
@@ -112,11 +146,29 @@ export function App() {
               : "unknown input error";
         setInputError(errorMessage(reason));
       }
+
+      if (
+        screenshotSummaryResult.status === "fulfilled" &&
+        screenshotsResult.status === "fulfilled"
+      ) {
+        setScreenshotSummary(screenshotSummaryResult.value);
+        setScreenshots(screenshotsResult.value);
+        setScreenshotStatus("live");
+      } else {
+        const reason =
+          screenshotSummaryResult.status === "rejected"
+            ? screenshotSummaryResult.reason
+            : screenshotsResult.status === "rejected"
+              ? screenshotsResult.reason
+              : "unknown screenshot error";
+        setScreenshotError(errorMessage(reason));
+      }
     } catch (error) {
       setCollectorStatus("offline");
       setCollectorError(errorMessage(error));
     } finally {
       setInputLoading(false);
+      setScreenshotLoading(false);
     }
   }
 
@@ -158,7 +210,7 @@ export function App() {
               { value: "redacted", label: "Redacted" },
               { value: "raw", label: "Raw" }
             ]}
-            onChange={setPrivacyMode}
+            onChange={changePrivacyMode}
           />
           <SegmentedControl
             label="Density"
@@ -251,9 +303,26 @@ export function App() {
           Input layer unavailable. Keeping {inputStatus} input data visible: {inputError}
         </p>
       )}
+      {screenshotError && (
+        <p className="sampleNotice" role="status">
+          Screenshot layer unavailable. Keeping {screenshotStatus} screenshot summary visible:{" "}
+          {screenshotError}
+        </p>
+      )}
 
       {viewMode === "daily" ? (
-        <DailyTracking date={today} />
+        <DailyTracking
+          date={today}
+          screenshots={screenshots}
+          summary={screenshotSummary}
+          sourceMode={screenshotStatus}
+          loading={screenshotLoading}
+          error={screenshotError}
+          screenshotsVisible={layers.screenshots}
+          privacyMode={privacyMode}
+          onLoadSample={loadSample}
+          onLoadLive={() => void refreshCollector()}
+        />
       ) : viewMode === "input" ? (
         <InputActivity
           privacyMode={privacyMode}
@@ -291,10 +360,38 @@ export function App() {
   );
 
   function toggleLayer(layer: LayerKey) {
-    setLayers((current) => ({
-      ...current,
-      [layer]: !current[layer]
-    }));
+    setLayers((current) => {
+      const next = {
+        ...current,
+        [layer]: !current[layer]
+      };
+      if (layer === "screenshots" && !next.screenshots) {
+        setScreenshots([]);
+      }
+      if (
+        layer === "screenshots" &&
+        next.screenshots &&
+        sourceMode === "live" &&
+        privacyMode === "raw"
+      ) {
+        void refreshCollector({ layers: next, privacyMode });
+      }
+      return next;
+    });
+  }
+
+  function changePrivacyMode(nextMode: PrivacyMode) {
+    setPrivacyMode(nextMode);
+    if (nextMode === "redacted") {
+      if (sourceMode === "live") {
+        setSegments([]);
+        setScreenshots([]);
+      }
+      return;
+    }
+    if (sourceMode === "live") {
+      void refreshCollector({ privacyMode: nextMode });
+    }
   }
 }
 
