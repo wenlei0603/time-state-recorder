@@ -10,6 +10,7 @@ Existing endpoints remain v1:
 
 - `GET /api/health`
 - `GET /api/window-events`
+- `GET /api/lifecycle-events`
 - `GET /api/time-events`
 - `GET /api/blockers`
 - `GET /api/screenshots`
@@ -21,6 +22,80 @@ Existing endpoints remain v1:
 New endpoints live under `/api/v2`.
 
 The API version is intentionally `/api/v2` because the repository already has unversioned MVP endpoints. The v2 layer is the first stable contract for timeline, query, metrics, evidence, and export use cases. If the project later publishes OpenAPI, the generated file should describe both the unversioned compatibility endpoints and `/api/v2`.
+
+## Implemented Prototype Compatibility Additions
+
+The lifecycle-aware prototype keeps v1 endpoints unversioned and adds the minimum fields needed for the current WebUI and future v2 timeline migration.
+
+### GET /api/lifecycle-events
+
+Returns persisted lifecycle facts in chronological order.
+
+Query params:
+
+- `limit`: optional, default `500`, maximum `5000`.
+
+Response:
+
+```json
+{
+  "events": [
+    {
+      "rawEventId": 2,
+      "sessionId": "9b2f...",
+      "eventTs": "2026-05-23T09:05:00Z",
+      "lifecycleType": "windows_lock",
+      "reason": "manual_lock",
+      "activeSessionId": "9b2f...",
+      "payload": {}
+    }
+  ]
+}
+```
+
+Implemented `lifecycleType` values are `session_start`, `session_stop`, `windows_lock`, `windows_unlock`, `power_suspend`, `power_resume`, `idle_start`, `idle_end`, `capture_unavailable`, `collector_gap`, `session_disconnect`, and `session_reconnect`.
+
+### GET /api/time-events
+
+The compatibility time-events endpoint now includes lifecycle-aware metadata:
+
+```json
+{
+  "events": [
+    {
+      "id": "raw-1",
+      "app": "Code.exe",
+      "title": "main.rs",
+      "kind": "active_window",
+      "status": null,
+      "sessionId": "9b2f...",
+      "startedAt": "2026-05-23T09:00:00Z",
+      "endedAt": "2026-05-23T09:05:00Z",
+      "durationSeconds": 300
+    },
+    {
+      "id": "lifecycle-2",
+      "app": "System",
+      "title": "Locked",
+      "kind": "lifecycle",
+      "status": "windows_lock",
+      "sessionId": "9b2f...",
+      "startedAt": "2026-05-23T09:05:00Z",
+      "endedAt": "2026-05-23T09:20:00Z",
+      "durationSeconds": 900
+    }
+  ]
+}
+```
+
+Rules:
+
+- Active window intervals do not bridge different `sessionId` values.
+- Active window intervals are cut at lifecycle events that make user activity unavailable, including lock, suspend, idle start, capture unavailable, session stop, collector gap, and session disconnect.
+- Paired lifecycle intervals are emitted for lock/unlock, suspend/resume, idle start/end, and disconnect/reconnect.
+- Frontend active-time summaries treat missing `kind` as legacy `active_window` and exclude `kind = "lifecycle"` from active application totals.
+
+Current limitation: the prototype records lifecycle facts through storage/API methods and stale-session closure. Live Windows message capture for `WM_WTSSESSION_CHANGE`, `WM_POWERBROADCAST`, and `WM_ENDSESSION` remains a next milestone.
 
 ## Shared Types
 

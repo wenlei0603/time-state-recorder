@@ -14,6 +14,22 @@
 
 This roadmap follows the user's next-iteration labels. The current repository labels keyboard input as Feature 2 and screenshots as Feature 3. In this roadmap, "Feature 3" refers to the next Input Activity/Chinese IME/product-behavior work.
 
+## Current Prototype Status
+
+Implemented on `codex/0524feature` as the first core slice:
+
+- Lifecycle facts can be persisted and listed through `GET /api/lifecycle-events`.
+- `capture_sessions` can be closed with `ended_reason`; stale open sessions are closed as `abnormal_stop` and emit `collector_gap` lifecycle facts.
+- `GET /api/time-events` derives lifecycle-aware rows with `kind`, `status`, and `sessionId`.
+- Active window intervals no longer bridge different sessions and are cut by lock, suspend, idle start, capture unavailable, session stop, collector gap, and session disconnect facts.
+- The WebUI API parser preserves lifecycle metadata, and active duration/application summaries exclude lifecycle intervals from active-time totals.
+
+Prototype limitations to carry forward:
+
+- Live Windows lifecycle capture is not wired yet; lock/suspend/shutdown facts currently enter through storage/API code paths and stale-session closure.
+- Schema evolution still uses guarded `CREATE TABLE IF NOT EXISTS` plus `ALTER TABLE`; the explicit migration foundation remains the next critical infrastructure task.
+- The current `/api/time-events` lifecycle rows are a compatibility bridge, not the final `/api/v2/timeline` contract.
+
 ## Commit Strategy
 
 Use small commits with one architectural layer per commit. Suggested prefixes:
@@ -131,7 +147,7 @@ cargo test -p tsr-collector -- --nocapture
 
 ## Milestone 1: Lifecycle Foundation
 
-Purpose: make Windows lock, shutdown, suspend, resume, and collector gaps observable.
+Purpose: make Windows lock, shutdown, suspend, resume, and collector gaps observable. The prototype has completed lifecycle models/storage, stale-session closure, lifecycle-aware interval derivation, and compatibility API exposure; the remaining work is live Windows lifecycle capture and launcher-driven graceful shutdown.
 
 Design files to create or modify:
 
@@ -147,11 +163,12 @@ Design files to create or modify:
 
 Commit slices:
 
-1. `feat(lifecycle): add lifecycle event models and storage`
-2. `feat(lifecycle): capture Windows session and power events`
-3. `feat(lifecycle): close abnormal sessions on startup`
-4. `feat(lifecycle): add soft stop path for launcher and graceful session closure`
-5. `test(lifecycle): cover lock suspend resume and restart gaps`
+1. Completed prototype: `feat(lifecycle): add lifecycle event models and storage`
+2. Completed prototype: `feat(lifecycle): close abnormal sessions on startup`
+3. Completed prototype: `feat(lifecycle): derive lifecycle-aware compatibility time events`
+4. Next: `feat(lifecycle): capture Windows session and power events`
+5. Next: `feat(lifecycle): add soft stop path for launcher and graceful session closure`
+6. Next: `test(lifecycle): cover real lock suspend resume and restart gaps on Windows`
 
 Design notes:
 
@@ -177,7 +194,7 @@ Manual Windows checks:
 
 ## Milestone 2: Analyzer-Owned Timeline Intervals
 
-Purpose: move statistics from ad hoc frontend interval inference to deterministic derived intervals.
+Purpose: move statistics from ad hoc frontend interval inference to deterministic derived intervals. The prototype now performs lifecycle-aware derivation on demand for `/api/time-events`; the durable analyzer-owned interval store and rebuildable rollups remain in this milestone.
 
 Design files to create or modify:
 
@@ -190,10 +207,11 @@ Design files to create or modify:
 
 Commit slices:
 
-1. `feat(query): add timeline interval schema and repository`
-2. `feat(query): derive active idle locked suspended offline intervals`
-3. `feat(query): derive screenshot coverage counts`
-4. `test(query): cover lifecycle-aware interval construction`
+1. Completed prototype: `test(query): cover lifecycle-aware interval construction`
+2. Next: `feat(query): add timeline interval schema and repository`
+3. Next: `feat(query): derive active idle locked suspended offline intervals as rebuildable rollups`
+4. Next: `feat(query): derive screenshot coverage counts`
+5. Next: `test(query): cover rebuild, timezone, and stale-session interval construction`
 
 Design notes:
 
@@ -211,7 +229,7 @@ cargo test -p tsr-collector -- --nocapture
 
 ## Milestone 3: API v2 Query Layer
 
-Purpose: expose stable timeline, summary, evidence, query, and export preview contracts.
+Purpose: expose stable timeline, summary, evidence, query, and export preview contracts. The prototype extended v1 compatibility endpoints only; v2 still needs typed DTOs, error shape, redaction policy, and timezone-aware range handling.
 
 Design files to create or modify:
 
