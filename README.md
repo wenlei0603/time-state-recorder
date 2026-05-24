@@ -125,7 +125,21 @@ Common build failures:
 - `x86_64-w64-mingw32-clang` not found: install LLVM-MinGW MSVCRT and refresh `PATH`.
 - Missing `target/.../tsr-collector.exe`: rebuild with `cargo build -p tsr-collector`; `cargo clean` removes the debug executable.
 
-## Local Run
+## One-Click Windows Start
+
+For day-to-day use, double-click:
+
+- `Start Time State Recorder.bat`
+
+The launcher starts the collector on `127.0.0.1:4317`, serves the built WebUI on `127.0.0.1:5173`, waits until both are ready, then opens the browser. If the collector binary or WebUI build is missing, it attempts to build them first. Runtime logs are written under `logs/`.
+
+To stop the app processes, double-click:
+
+- `Stop Time State Recorder.bat`
+
+The launcher uses a lightweight Node static server (`scripts/web-server.mjs`) for the WebUI and proxies `/api` and `/screenshots` to the collector. It does not use the Vite dev server for the user-facing start path.
+
+## Manual Local Run
 
 Start the collector API:
 
@@ -134,18 +148,17 @@ cargo build -p tsr-collector
 cargo run -p tsr-collector -- serve --db data/local.sqlite3 --addr 127.0.0.1:4317
 ```
 
-Start the WebUI:
+Build and serve the WebUI:
 
 ```powershell
-npm run dev -- --host 127.0.0.1 --port 5173
+npm run build
+npm run serve:app
 ```
 
 Open:
 
 - WebUI: `http://127.0.0.1:5173`
 - Collector health: `http://127.0.0.1:4317/api/health`
-
-The first Vite request after a cold start can take 20-30 seconds while dependencies are transformed. Later requests should be fast.
 
 ## API Endpoints
 

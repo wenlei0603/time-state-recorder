@@ -4,6 +4,7 @@ coverage/
 .vite/
 /output/
 /.tools/
+/.launcher/
 /target/
 /collector/target/
 /data/
