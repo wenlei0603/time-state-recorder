@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod api;
 pub mod blocker;
 pub mod input;

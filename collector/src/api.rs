@@ -13,18 +13,19 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::{sync::oneshot, time};
 use tower_http::services::ServeDir;
 
 use crate::{
+    activity::{ActivityBucketQuery, build_activity_buckets},
     blocker::BlockerEngine,
     input,
     interval::build_time_events_with_lifecycle,
     models::{
-        BlockerHit, CollectorHealth, DbStats, LifecycleEvent, LifecycleType, ScreenshotMeta,
-        SubsystemHealth, TimeEvent, WindowSnapshot,
+        ActivityBucket, BlockerHit, CollectorHealth, DbStats, LifecycleEvent, LifecycleType,
+        ScreenshotMeta, SubsystemHealth, TimeEvent, WindowSnapshot,
     },
     screenshot,
     storage::Store,
@@ -53,10 +54,26 @@ struct DateQuery {
     limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivityBucketsQuery {
+    date: Option<String>,
+    bucket_seconds: Option<i64>,
+    limit: Option<usize>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TimeEventsResponse {
     events: Vec<TimeEvent>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivityBucketsResponse {
+    date: String,
+    bucket_seconds: i64,
+    buckets: Vec<ActivityBucket>,
 }
 
 #[derive(Debug, Serialize)]
@@ -166,6 +183,7 @@ fn router_from_state(state: AppState) -> Router {
         .route("/api/window-events", get(window_events))
         .route("/api/lifecycle-events", get(lifecycle_events))
         .route("/api/time-events", get(time_events))
+        .route("/api/activity-buckets", get(activity_buckets))
         .route("/api/blockers", get(blockers))
         .route("/api/screenshots", get(screenshots))
         .route("/api/screenshot-summary", get(screenshot_summary))
@@ -623,6 +641,55 @@ async fn time_events(
     Json(TimeEventsResponse { events }).into_response()
 }
 
+async fn activity_buckets(
+    State(state): State<AppState>,
+    Query(query): Query<ActivityBucketsQuery>,
+) -> impl IntoResponse {
+    let date = query
+        .date
+        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+    if NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() {
+        return bad_request("date must use YYYY-MM-DD");
+    }
+    let bucket_seconds = query.bucket_seconds.unwrap_or(180);
+    if !(60..=3600).contains(&bucket_seconds) {
+        return bad_request("bucketSeconds must be between 60 and 3600");
+    }
+
+    let limit = query.limit.unwrap_or(10_000).min(50_000);
+    let activity_query = ActivityBucketQuery {
+        date: date.clone(),
+        bucket_seconds,
+    };
+    let store = state.store.clone();
+    let buckets = match tokio::task::spawn_blocking(move || -> Result<Vec<ActivityBucket>> {
+        let (window_events, lifecycle_events) = {
+            let store = store
+                .lock()
+                .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
+            let window_events = store.list_window_events(limit)?;
+            let lifecycle_events = store.list_lifecycle_events(limit)?;
+            (window_events, lifecycle_events)
+        };
+        let events = build_time_events_with_lifecycle(&window_events, &lifecycle_events);
+
+        Ok(build_activity_buckets(&events, activity_query))
+    })
+    .await
+    {
+        Ok(Ok(buckets)) => buckets,
+        Ok(Err(err)) => return internal_error(err),
+        Err(err) => return internal_error(err),
+    };
+
+    Json(ActivityBucketsResponse {
+        date,
+        bucket_seconds,
+        buckets,
+    })
+    .into_response()
+}
+
 async fn lifecycle_events(
     State(state): State<AppState>,
     Query(query): Query<LimitQuery>,
@@ -770,6 +837,10 @@ async fn shutdown(State(state): State<AppState>) -> impl IntoResponse {
 
 fn internal_error(message: impl std::fmt::Display) -> axum::response::Response {
     (StatusCode::INTERNAL_SERVER_ERROR, message.to_string()).into_response()
+}
+
+fn bad_request(message: impl std::fmt::Display) -> axum::response::Response {
+    (StatusCode::BAD_REQUEST, message.to_string()).into_response()
 }
 
 async fn shutdown_signal(mut shutdown_rx: oneshot::Receiver<()>) {

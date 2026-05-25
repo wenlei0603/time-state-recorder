@@ -105,6 +105,69 @@ pub enum TimeEventKind {
     Lifecycle,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityBucket {
+    pub id: String,
+    pub start_at: DateTime<Utc>,
+    pub end_at: DateTime<Utc>,
+    pub bucket_seconds: i64,
+    pub dominant_app: String,
+    pub dominant_title: String,
+    pub normalized_title: String,
+    pub dominant_duration_seconds: i64,
+    pub switch_count: usize,
+    pub project_id: Option<String>,
+    pub project_name: Option<String>,
+    pub activity_category: ActivityCategory,
+    pub attention_state: AttentionState,
+    pub confidence: f64,
+    pub evidence: Vec<BucketEvidence>,
+    pub visual_summary_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BucketEvidence {
+    pub event_id: String,
+    pub app: String,
+    pub title: String,
+    pub normalized_title: String,
+    pub kind: TimeEventKind,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
+    pub duration_seconds: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityCategory {
+    ProjectWork,
+    Research,
+    Writing,
+    Coding,
+    Communication,
+    Meeting,
+    Admin,
+    Learning,
+    Planning,
+    Loafing,
+    Personal,
+    Idle,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttentionState {
+    DeepFocus,
+    Steady,
+    LightSwitching,
+    Fragmented,
+    Away,
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LifecycleType {

@@ -207,6 +207,85 @@ async fn time_events_limit_applies_after_merging_lifecycle_rows() {
 }
 
 #[tokio::test]
+async fn serves_activity_buckets_for_date() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+    insert(
+        &mut store,
+        &session_id,
+        "2026-05-23T09:00:00Z",
+        100,
+        "Code",
+        "main.rs",
+    );
+    insert(
+        &mut store,
+        &session_id,
+        "2026-05-23T09:02:00Z",
+        200,
+        "chrome.exe",
+        "GitHub - Pull Request - Google Chrome",
+    );
+    insert(
+        &mut store,
+        &session_id,
+        "2026-05-23T09:04:00Z",
+        300,
+        "Code",
+        "lib.rs",
+    );
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!(
+        "http://{addr}/api/activity-buckets?date=2026-05-23&bucketSeconds=180"
+    ))
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["date"], "2026-05-23");
+    assert_eq!(body["bucketSeconds"], 180);
+    let buckets = body["buckets"].as_array().unwrap();
+    assert!(buckets.len() >= 2);
+    assert_eq!(buckets[0]["dominantApp"], "Code");
+    assert_eq!(buckets[0]["normalizedTitle"], "main.rs");
+    assert_eq!(buckets[0]["bucketSeconds"], 180);
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn rejects_invalid_activity_bucket_date() {
+    let store = Store::open_memory().unwrap();
+    store.init().unwrap();
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!(
+        "http://{addr}/api/activity-buckets?date=not-a-date"
+    ))
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    server.abort();
+}
+
+#[tokio::test]
 async fn serve_bind_failure_does_not_close_open_sessions() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("bind-failure.sqlite3");
