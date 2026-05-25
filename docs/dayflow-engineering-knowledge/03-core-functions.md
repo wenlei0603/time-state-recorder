@@ -305,6 +305,5 @@ Data source:
 | Privacy modes in UI | Implemented frontend gate | Needs backend policy enforcement for robust privacy |
 | Blocker rules | Implemented for screenshots | Text blocker gap must be closed before claiming full privacy |
 | Dayflow query/chat | Not implemented | Future core reproduction area |
-| Evidence drawer | Not implemented | Future core reproduction area |
+| Evidence drawer | Partially implemented in Today Flow Board | Raw screenshot thumbnails and event evidence exist; deeper source drilldown is still future work |
 | Weekly review/export | Not implemented | Future workflow layer |
-

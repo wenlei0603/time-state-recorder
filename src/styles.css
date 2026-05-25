@@ -1007,6 +1007,53 @@ td:nth-child(2) {
   white-space: nowrap;
 }
 
+.todayScreenshotStrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.todayScreenshotCard {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  border: 1px solid #e2e6e1;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.todayScreenshotCard img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 6px;
+  background: #eef2ef;
+  object-fit: cover;
+}
+
+.todayScreenshotCard figcaption {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.todayScreenshotCard figcaption span {
+  color: #5f6d65;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.todayScreenshotCard figcaption strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #29352e;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .confidencePill {
   display: inline-flex;
   align-items: center;

@@ -8,6 +8,7 @@
 2. [[02-information-flow]] - event flows from Windows signals to SQLite, API, and WebUI.
 3. [[03-core-functions]] - core product capabilities and where they live in code.
 4. [[04-reproduction-boundaries]] - current Dayflow parity, gaps, risks, and next reproduction checkpoints.
+5. [[05-prototype-runbook]] - how to run and manually verify the current Today Flow prototype.
 
 ## Current System In One Sentence
 
@@ -47,6 +48,7 @@ flowchart TB
 - Goal: merge Dayflow's "time flow + evidence drawer" product grammar into the Windows-first recorder.
 - Lower layer: keep Rust/Axum/SQLite and foreground polling, but expose collector observability for window capture status, screenshot skip reasons, and deduped capture-unavailable lifecycle facts.
 - Upper layer: React WebUI now defaults to `TodayFlowBoard`, composed from `/api/time-events`, input summary, screenshot summary, and optional collector health.
+- Prototype closure: Raw Today view can now load overlapping screenshot rows into the evidence drawer, while redacted Today still avoids raw screenshot/text row fetches.
 - Privacy: redacted mode hides evidence titles and avoids raw text/screenshot row fetches unless a raw evidence view actually needs them; stale collector refreshes are generation-gated.
 - Residual risk: foreground tracking is still polling-based, blocker audit rows remain a privacy surface, and full Windows event hooks/LLM summaries/API v2 are not implemented.
 

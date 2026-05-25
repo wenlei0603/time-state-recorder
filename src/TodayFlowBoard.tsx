@@ -16,6 +16,7 @@ import type {
   FlowEvidence,
   InputSummary,
   PrivacyMode,
+  ScreenshotMeta,
   ScreenshotSummary,
   TimeEvent,
 } from "./types";
@@ -23,18 +24,22 @@ import type {
 type TodayFlowBoardProps = {
   events: TimeEvent[];
   screenshotSummary?: ScreenshotSummary;
+  screenshots?: ScreenshotMeta[];
   inputSummary?: InputSummary;
   health?: CollectorHealth;
   privacyMode: PrivacyMode;
+  screenshotsVisible: boolean;
   sourceLabel: string;
 };
 
 export function TodayFlowBoard({
   events,
   screenshotSummary,
+  screenshots = [],
   inputSummary,
   health,
   privacyMode,
+  screenshotsVisible,
   sourceLabel,
 }: TodayFlowBoardProps) {
   const [selectedBucketId, setSelectedBucketId] = useState<string | null>(null);
@@ -53,6 +58,9 @@ export function TodayFlowBoard({
     model.buckets.find((bucket) => bucket.id === selectedBucketId) ??
     model.buckets[0];
   const selectedEvidence = selectedBucket?.evidence ?? [];
+  const selectedScreenshots = selectedBucket
+    ? screenshots.filter((shot) => overlapsBucket(shot, selectedBucket))
+    : [];
 
   return (
     <section className="flowBoard" aria-label="Today Flow Board">
@@ -144,11 +152,66 @@ export function TodayFlowBoard({
               {selectedEvidence.map((item) => (
                 <EvidenceRow evidence={item} key={item.id} />
               ))}
+              <ScreenshotEvidence
+                privacyMode={privacyMode}
+                screenshots={selectedScreenshots}
+                screenshotsVisible={screenshotsVisible}
+              />
             </div>
           )}
         </section>
       </div>
     </section>
+  );
+}
+
+function ScreenshotEvidence({
+  privacyMode,
+  screenshots,
+  screenshotsVisible,
+}: {
+  privacyMode: PrivacyMode;
+  screenshots: ScreenshotMeta[];
+  screenshotsVisible: boolean;
+}) {
+  if (!screenshotsVisible) {
+    return (
+      <p className="flowHint">
+        Screenshots layer is disabled for this evidence drawer.
+      </p>
+    );
+  }
+
+  if (privacyMode !== "raw") {
+    return (
+      <p className="flowHint">
+        Screenshot preview hidden in redacted mode.
+      </p>
+    );
+  }
+
+  if (screenshots.length === 0) {
+    return <p className="flowHint">No screenshot rows overlap this bucket.</p>;
+  }
+
+  return (
+    <div className="todayScreenshotStrip" aria-label="Screenshot evidence">
+      {screenshots.slice(0, 4).map((shot) => (
+        <figure className="todayScreenshotCard" key={shot.id}>
+          <img
+            src={`/screenshots/${shot.filePath}`}
+            alt={`Evidence screenshot at ${formatTime(shot.capturedAt)}`}
+            width={shot.width}
+            height={shot.height}
+            loading="lazy"
+          />
+          <figcaption>
+            <span>{formatTime(shot.capturedAt)}</span>
+            <strong>{shot.processName ?? "Unknown"}</strong>
+          </figcaption>
+        </figure>
+      ))}
+    </div>
   );
 }
 
@@ -213,6 +276,29 @@ function confidenceLabel(confidence: FlowConfidence): string {
 
 function formatRange(start: string, end?: string): string {
   return `${formatTime(start)} - ${end ? formatTime(end) : "now"}`;
+}
+
+function overlapsBucket(
+  shot: ScreenshotMeta,
+  bucket: { startedAt: string; endedAt?: string },
+): boolean {
+  const capturedAt = Date.parse(shot.capturedAt);
+  const startedAt = Date.parse(bucket.startedAt);
+
+  if (!Number.isFinite(capturedAt) || !Number.isFinite(startedAt)) {
+    return false;
+  }
+
+  if (!bucket.endedAt) {
+    return capturedAt >= startedAt;
+  }
+
+  const endedAt = Date.parse(bucket.endedAt);
+  if (!Number.isFinite(endedAt)) {
+    return false;
+  }
+
+  return capturedAt >= startedAt && capturedAt <= endedAt;
 }
 
 function formatTime(value: string): string {

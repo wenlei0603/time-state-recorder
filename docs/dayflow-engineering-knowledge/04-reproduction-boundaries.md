@@ -12,6 +12,7 @@ The current repository already reproduces several Dayflow-style primitives:
 - evidence drawer over derived time-flow buckets;
 - sample data fallback when collector is unavailable;
 - redacted/raw UI switch for sensitive evidence.
+- raw screenshot thumbnails inside the Today Flow evidence drawer.
 
 The current implementation is best treated as a Dayflow-inspired local recorder prototype, not a complete Dayflow reproduction.
 
@@ -92,7 +93,7 @@ The WebUI avoids fetching/rendering raw text and screenshot rows in redacted mod
 - JPEG screenshots on disk;
 - raw window titles where available.
 
-For real Dayflow reproduction with privacy guarantees, backend policy enforcement must move closer to storage/API/evidence retrieval.
+For real Dayflow reproduction with privacy guarantees, backend policy enforcement must move closer to storage/API/evidence retrieval. The current prototype keeps the frontend rule explicit: Today and Daily request screenshot rows only when privacy mode is raw and the screenshots layer is enabled; Input requests text segments only in raw mode.
 
 ### Input Capture Is Not Text-Edit Capture
 

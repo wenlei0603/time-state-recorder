@@ -143,7 +143,7 @@ export function App() {
         effectivePrivacyMode === "raw" && effectiveViewMode === "input";
       const shouldLoadScreenshotRows =
         effectivePrivacyMode === "raw" &&
-        effectiveViewMode === "daily" &&
+        (effectiveViewMode === "daily" || effectiveViewMode === "today") &&
         effectiveLayers.screenshots;
       const [
         eventsResult,
@@ -190,7 +190,8 @@ export function App() {
       const screenshotRowsStillAllowed =
         shouldLoadScreenshotRows &&
         latestContext.privacyMode === "raw" &&
-        latestContext.viewMode === "daily" &&
+        (latestContext.viewMode === "daily" ||
+          latestContext.viewMode === "today") &&
         latestContext.layers.screenshots &&
         latestContext.date === effectiveDate;
 
@@ -416,9 +417,11 @@ export function App() {
         <TodayFlowBoard
           events={events}
           screenshotSummary={screenshotSummary}
+          screenshots={screenshots}
           inputSummary={inputSummary}
           health={health}
           privacyMode={privacyMode}
+          screenshotsVisible={layers.screenshots}
           sourceLabel={sourceMode === "live" ? "Live collector" : "Sample workspace"}
         />
       ) : viewMode === "daily" ? (
@@ -486,12 +489,13 @@ export function App() {
         next.screenshots &&
         sourceMode === "live" &&
         privacyMode === "raw" &&
-        latestRefreshContext.current.viewMode === "daily"
+        (latestRefreshContext.current.viewMode === "daily" ||
+          latestRefreshContext.current.viewMode === "today")
       ) {
         void refreshCollector({
           layers: next,
           privacyMode,
-          viewMode: "daily",
+          viewMode: latestRefreshContext.current.viewMode,
           date: queryDate
         });
       }
@@ -566,7 +570,10 @@ const layerOptions: { key: LayerKey; label: string }[] = [
 ];
 
 function viewNeedsRawRows(viewMode: ViewMode, layers: LayerVisibility): boolean {
-  return viewMode === "input" || (viewMode === "daily" && layers.screenshots);
+  return (
+    viewMode === "input" ||
+    ((viewMode === "daily" || viewMode === "today") && layers.screenshots)
+  );
 }
 
 function SegmentedControl<T extends string>({

@@ -289,7 +289,27 @@ describe("App", () => {
     expect(await screen.findAllByText("Sensitive client roadmap")).not.toHaveLength(0);
   });
 
-  it("does not request raw row endpoints when raw is selected on Today", async () => {
+  it("does not request raw evidence rows while Today stays redacted", async () => {
+    const fetcher = vi.fn(liveDataResponse);
+    vi.stubGlobal("fetch", fetcher);
+
+    render(<App />);
+
+    expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
+
+    expect(
+      fetcher.mock.calls.some(([input]) =>
+        String(input).startsWith("/api/text-segments")
+      )
+    ).toBe(false);
+    expect(
+      fetcher.mock.calls.some(([input]) =>
+        String(input).startsWith("/api/screenshots?")
+      )
+    ).toBe(false);
+  });
+
+  it("loads screenshot evidence but not text segments when raw is selected on Today", async () => {
     const fetcher = vi.fn(liveDataResponse);
     vi.stubGlobal("fetch", fetcher);
 
@@ -304,11 +324,43 @@ describe("App", () => {
         String(input).startsWith("/api/text-segments")
       )
     ).toBe(false);
+    await waitFor(() =>
+      expect(
+        fetcher.mock.calls.some(([input]) =>
+          String(input).startsWith("/api/screenshots?")
+        )
+      ).toBe(true)
+    );
+  });
+
+  it("renders raw screenshot thumbnails in the Today evidence drawer", async () => {
+    vi.stubGlobal("fetch", vi.fn(liveDataResponse));
+
+    render(<App />);
+
+    expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
+
     expect(
-      fetcher.mock.calls.some(([input]) =>
-        String(input).startsWith("/api/screenshots?")
-      )
-    ).toBe(false);
+      await screen.findByAltText(/Evidence screenshot at/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Screenshot preview hidden in redacted mode/i)
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps screenshot evidence attached to an open Today bucket beyond fifteen minutes", async () => {
+    vi.stubGlobal("fetch", vi.fn(openBucketLiveDataResponse));
+
+    render(<App />);
+
+    expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
+
+    expect(
+      await screen.findByAltText(/Evidence screenshot at/i)
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("OpenApp")).not.toHaveLength(0);
   });
 
   it("keeps newer raw input rows when an older non-row refresh resolves later", async () => {
@@ -517,6 +569,48 @@ async function twoBucketLiveDataResponse(input: string) {
           startedAt: "2026-05-24T10:05:00Z",
           endedAt: "2026-05-24T10:09:00Z",
           durationSeconds: 240
+        }
+      ]
+    });
+  }
+  return liveDataResponse(input);
+}
+
+async function openBucketLiveDataResponse(input: string) {
+  if (input === "/api/time-events") {
+    return jsonResponse({
+      events: [
+        {
+          id: "open-window",
+          app: "OpenApp",
+          title: "Current long-running task",
+          startedAt: "2026-05-24T10:00:00Z",
+          durationSeconds: 2400
+        }
+      ]
+    });
+  }
+  if (input.startsWith("/api/screenshot-summary")) {
+    return jsonResponse({
+      date: "2026-05-24",
+      totalScreenshots: 1,
+      hoursCovered: 1,
+      topApps: [{ processName: "OpenApp", count: 1 }],
+      skippedReasons: []
+    });
+  }
+  if (input.startsWith("/api/screenshots")) {
+    return jsonResponse({
+      screenshots: [
+        {
+          id: 20,
+          capturedAt: "2026-05-24T10:30:00Z",
+          filePath: "2026-05-24/10-30.jpg",
+          width: 640,
+          height: 360,
+          processName: "OpenApp",
+          windowTitle: "Current long-running task",
+          captureStatus: "ok"
         }
       ]
     });

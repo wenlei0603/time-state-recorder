@@ -257,7 +257,7 @@ flowchart TB
     LIVE --> HEALTH["fetchCollectorHealth()"]
     LIVE --> RAW_CHECK{"raw evidence view active?"}
     RAW_CHECK -->|Input + raw| TEXT["fetchTextSegments(day)"]
-    RAW_CHECK -->|Daily + raw + screenshots layer| SHOTS["fetchScreenshots(day)"]
+    RAW_CHECK -->|Today/Daily + raw + screenshots layer| SHOTS["fetchScreenshots(day)"]
     RAW_CHECK -->|Today/Dashboard/Timeline/redacted| HIDE["do not load raw rows"]
     TIME --> FLOW["buildTodayFlowModel()"]
     INPUT_SUM --> FLOW
@@ -278,9 +278,10 @@ Implemented behavior:
 - Time events are the primary timeline source.
 - `TodayFlowBoard` is the default view.
 - The board derives buckets and evidence labels in `src/lib/flowModel.ts`.
-- It receives summaries and health only; raw screenshot rows and raw text segments stay scoped to Daily/Input views.
+- It receives summaries and health by default; raw screenshot rows are loaded only for Today/Daily when raw mode and the screenshots layer are both active.
 - Redacted mode replaces evidence titles with `Hidden in redacted mode`.
-- Raw mode can reveal evidence titles, but raw rows are only fetched when the active view needs them.
+- Raw Today mode can reveal evidence titles and render overlapping screenshot thumbnails in the evidence drawer, but text segments remain scoped to Input Activity.
+- Raw rows are only fetched when the active view needs them.
 - `refreshCollector()` uses a generation guard so older async responses cannot overwrite newer privacy/source/view state.
 - Input summary and screenshot summary can be live even when raw evidence is hidden.
 - Text segments and screenshot rows are privacy-gated.

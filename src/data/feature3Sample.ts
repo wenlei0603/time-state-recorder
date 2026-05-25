@@ -4,7 +4,7 @@ export const feature3SampleScreenshots: ScreenshotMeta[] = [
   {
     id: 1,
     capturedAt: "2026-05-23T08:30:00Z",
-    filePath: "2026-05-23/08-30.jpg",
+    filePath: "2026-05-23/18-29.jpg",
     width: 640,
     height: 360,
     processName: "Code",
@@ -14,7 +14,7 @@ export const feature3SampleScreenshots: ScreenshotMeta[] = [
   {
     id: 2,
     capturedAt: "2026-05-23T08:31:00Z",
-    filePath: "2026-05-23/08-31.jpg",
+    filePath: "2026-05-23/18-30.jpg",
     width: 640,
     height: 360,
     processName: "Code",
@@ -24,7 +24,7 @@ export const feature3SampleScreenshots: ScreenshotMeta[] = [
   {
     id: 3,
     capturedAt: "2026-05-23T08:32:00Z",
-    filePath: "2026-05-23/08-32.jpg",
+    filePath: "2026-05-23/18-31.jpg",
     width: 640,
     height: 360,
     processName: "chrome",
@@ -34,7 +34,7 @@ export const feature3SampleScreenshots: ScreenshotMeta[] = [
   {
     id: 4,
     capturedAt: "2026-05-23T09:00:00Z",
-    filePath: "2026-05-23/09-00.jpg",
+    filePath: "2026-05-23/18-32.jpg",
     width: 640,
     height: 360,
     processName: "WindowsTerminal",
@@ -44,7 +44,7 @@ export const feature3SampleScreenshots: ScreenshotMeta[] = [
   {
     id: 5,
     capturedAt: "2026-05-23T09:15:00Z",
-    filePath: "2026-05-23/09-15.jpg",
+    filePath: "2026-05-23/18-35.jpg",
     width: 640,
     height: 360,
     processName: "Obsidian",
@@ -54,7 +54,7 @@ export const feature3SampleScreenshots: ScreenshotMeta[] = [
   {
     id: 6,
     capturedAt: "2026-05-23T10:00:00Z",
-    filePath: "2026-05-23/10-00.jpg",
+    filePath: "2026-05-23/18-36.jpg",
     width: 640,
     height: 360,
     processName: "Code",
@@ -64,7 +64,7 @@ export const feature3SampleScreenshots: ScreenshotMeta[] = [
   {
     id: 7,
     capturedAt: "2026-05-23T10:30:00Z",
-    filePath: "2026-05-23/10-30.jpg",
+    filePath: "2026-05-23/18-37.jpg",
     width: 640,
     height: 360,
     processName: "chrome",
@@ -74,7 +74,7 @@ export const feature3SampleScreenshots: ScreenshotMeta[] = [
   {
     id: 8,
     capturedAt: "2026-05-23T11:00:00Z",
-    filePath: "2026-05-23/11-00.jpg",
+    filePath: "2026-05-23/18-38.jpg",
     width: 640,
     height: 360,
     processName: "Code",
