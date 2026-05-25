@@ -48,8 +48,20 @@ describe("App", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders dashboard as the default view", () => {
+  it("renders Today Flow Board as the default view", () => {
     render(<App />);
+
+    expect(
+      screen.getByRole("heading", { name: /today flow board/i })
+    ).toBeInTheDocument();
+    expect(screen.getByText(/time flow/i)).toBeInTheDocument();
+    expect(screen.getByText(/evidence drawer/i)).toBeInTheDocument();
+  });
+
+  it("opens the dashboard view from the tab bar", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /dashboard/i }));
 
     expect(
       screen.getByRole("heading", { name: /dashboard/i })
@@ -101,6 +113,7 @@ describe("App", () => {
     );
 
     render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /dashboard/i }));
 
     expect(await screen.findByText("Planner")).toBeInTheDocument();
     expect(screen.getAllByText("5m").length).toBeGreaterThan(0);
@@ -113,6 +126,7 @@ describe("App", () => {
     );
 
     render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /dashboard/i }));
 
     expect(await screen.findByText("Collector Monitor")).toBeInTheDocument();
     expect(screen.getByText("Subsystems")).toBeInTheDocument();
@@ -136,11 +150,31 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Live window")).toBeInTheDocument();
+    expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
 
     expect(
       fetcher.mock.calls.some(([input]) => String(input).startsWith("/api/text-segments"))
     ).toBe(false);
+  });
+
+  it("keeps raw live titles hidden on the default redacted flow board", async () => {
+    vi.stubGlobal("fetch", vi.fn(liveDataResponse));
+
+    render(<App />);
+
+    expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
+    expect(screen.queryByText("Sensitive client roadmap")).not.toBeInTheDocument();
+  });
+
+  it("shows raw live evidence titles on the flow board after switching privacy mode", async () => {
+    vi.stubGlobal("fetch", vi.fn(liveDataResponse));
+
+    render(<App />);
+
+    expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
+
+    expect(await screen.findAllByText("Sensitive client roadmap")).not.toHaveLength(0);
   });
 
   it("queries live collector data for the selected date", async () => {
@@ -153,7 +187,7 @@ describe("App", () => {
     fireEvent.change(queryInput, { target: { value: "2026-05-24" } });
     fireEvent.click(screen.getByRole("button", { name: /query/i }));
 
-    expect(await screen.findByText("Live window")).toBeInTheDocument();
+    expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
     expect(
       fetcher.mock.calls.some(
         ([input]) => input === "/api/screenshot-summary?date=2026-05-24"
@@ -171,7 +205,7 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("Live window")).toBeInTheDocument();
+    expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
     fireEvent.click(screen.getByRole("button", { name: /input activity/i }));
 
@@ -197,7 +231,7 @@ async function liveDataResponse(input: string) {
         {
           id: "live-window",
           app: "Code",
-          title: "Live window",
+          title: "Sensitive client roadmap",
           startedAt: "2026-05-24T10:00:00Z",
           endedAt: "2026-05-24T10:05:00Z",
           durationSeconds: 300
@@ -241,7 +275,8 @@ async function liveDataResponse(input: string) {
       date: "2026-05-24",
       totalScreenshots: 1,
       hoursCovered: 1,
-      topApps: [{ processName: "Code", count: 1 }]
+      topApps: [{ processName: "Code", count: 1 }],
+      skippedReasons: [{ reason: "privacy_blocked", count: 2 }]
     });
   }
   if (input.startsWith("/api/screenshots")) {

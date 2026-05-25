@@ -830,6 +830,204 @@ td:nth-child(2) {
   padding: 8px 10px;
 }
 
+/* Today Flow Board */
+
+.flowBoard {
+  display: grid;
+  width: min(100%, 1180px);
+  gap: 16px;
+}
+
+.flowBoardHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.flowBoardHeader h2 {
+  font-size: 1.25rem;
+}
+
+.flowBoardHeader p {
+  margin: 4px 0 0;
+  color: #5f6d65;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.flowSummary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.flowMetric {
+  display: grid;
+  min-height: 118px;
+  align-content: start;
+  gap: 8px;
+  border: 1px solid #d9dfd8;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 12px 28px rgba(23, 33, 27, 0.06);
+  padding: 14px;
+}
+
+.flowMetric > span:not(.metricIcon),
+.flowMetric small,
+.flowBucket small,
+.evidencePreview small {
+  color: #5f6d65;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.flowMetric > span:not(.metricIcon) {
+  text-transform: uppercase;
+}
+
+.flowMetric strong {
+  color: #17211b;
+  font-size: 1.24rem;
+}
+
+.flowMetric small,
+.evidencePreview small {
+  line-height: 1.35;
+}
+
+.flowBoardGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.flowLanePanel,
+.evidenceDrawer {
+  border: 1px solid #d9dfd8;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 12px 28px rgba(23, 33, 27, 0.06);
+  padding: 18px;
+}
+
+.flowLane {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.flowBucket {
+  display: grid;
+  min-height: 118px;
+  align-content: start;
+  justify-content: stretch;
+  gap: 6px;
+  border-left-width: 4px;
+  text-align: left;
+  padding: 12px;
+}
+
+.flowBucket.high {
+  border-left-color: #356b63;
+}
+
+.flowBucket.partial {
+  border-left-color: #577ec4;
+}
+
+.flowBucket.uncertain {
+  border-left-color: #b8891e;
+}
+
+.flowBucket strong,
+.flowBucket span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flowBucketTime {
+  color: #5f6d65;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.evidenceDrawer {
+  display: grid;
+  gap: 12px;
+}
+
+.evidenceFacts {
+  display: grid;
+  gap: 10px;
+}
+
+.evidencePreview {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid #e2e6e1;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px 12px;
+}
+
+.flowBoardHeader .evidencePreview {
+  min-width: min(320px, 100%);
+}
+
+.evidencePreview svg {
+  color: #356b63;
+}
+
+.evidencePreview div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.evidencePreview strong,
+.evidencePreview span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.confidencePill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.confidencePill.high {
+  background: #d9ecdf;
+  color: #1f6b3b;
+}
+
+.confidencePill.partial {
+  background: #e5ebf7;
+  color: #315a9f;
+}
+
+.confidencePill.uncertain {
+  background: #fef3cf;
+  color: #8a6d10;
+}
+
 /* Daily Tracking */
 
 .dailyTracking {
@@ -1187,5 +1385,26 @@ td:nth-child(2) {
   .summaryBar {
     flex-direction: column;
     gap: 8px;
+  }
+
+  .flowBoardHeader,
+  .flowBoardGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .flowBoardHeader {
+    display: grid;
+  }
+
+  .flowSummary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .evidencePreview {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .confidencePill {
+    width: fit-content;
   }
 }

@@ -1,4 +1,5 @@
 import {
+  Activity,
   BarChart3,
   Camera,
   Gauge,
@@ -13,11 +14,13 @@ import { DailyTracking } from "./DailyTracking";
 import { Dashboard } from "./Dashboard";
 import { InputActivity } from "./InputActivity";
 import { TimelineView } from "./TimelineView";
+import { TodayFlowBoard } from "./TodayFlowBoard";
 import { feature1SampleEvents } from "./data/feature1Sample";
 import { feature2SampleSegments, feature2SampleSummary } from "./data/feature2Sample";
 import { feature3SampleScreenshots, feature3SampleSummary } from "./data/feature3Sample";
 import { fetchTimeEvents } from "./lib/api";
 import { currentCollectorDate } from "./lib/dateQuery";
+import { fetchCollectorHealth } from "./lib/health";
 import { fetchInputSummary, fetchTextSegments } from "./lib/input";
 import { fetchScreenshots, fetchScreenshotSummary } from "./lib/screenshots";
 import {
@@ -30,11 +33,17 @@ import {
   type TimelineGranularity,
   type UiSourceMode
 } from "./lib/uiModel";
-import type { ScreenshotMeta, ScreenshotSummary, TextSegment, TimeEvent } from "./types";
+import type {
+  CollectorHealth,
+  ScreenshotMeta,
+  ScreenshotSummary,
+  TextSegment,
+  TimeEvent
+} from "./types";
 import "./styles.css";
 
 type CollectorStatus = "sample" | "loading" | "connected" | "offline";
-type ViewMode = "dashboard" | "timeline" | "daily" | "input";
+type ViewMode = "today" | "dashboard" | "timeline" | "daily" | "input";
 type InputDataStatus = UiSourceMode;
 
 export function App() {
@@ -46,6 +55,7 @@ export function App() {
   );
   const [screenshotSummary, setScreenshotSummary] =
     useState<ScreenshotSummary>(feature3SampleSummary);
+  const [health, setHealth] = useState<CollectorHealth | undefined>(undefined);
   const [collectorStatus, setCollectorStatus] = useState<CollectorStatus>("sample");
   const [collectorError, setCollectorError] = useState<string | null>(null);
   const [inputStatus, setInputStatus] = useState<InputDataStatus>("sample");
@@ -55,7 +65,7 @@ export function App() {
     useState<UiSourceMode>("sample");
   const [screenshotLoading, setScreenshotLoading] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
+  const [viewMode, setViewMode] = useState<ViewMode>("today");
   const [sourceMode, setSourceMode] = useState<UiSourceMode>("sample");
   const [privacyMode, setPrivacyMode] = useState<PrivacyMode>("redacted");
   const [densityMode, setDensityMode] = useState<DensityMode>("comfortable");
@@ -82,6 +92,7 @@ export function App() {
     setInputSummary(feature2SampleSummary);
     setScreenshots(feature3SampleScreenshots);
     setScreenshotSummary(feature3SampleSummary);
+    setHealth(undefined);
     setSourceMode("sample");
     setInputStatus("sample");
     setScreenshotStatus("sample");
@@ -116,13 +127,15 @@ export function App() {
         summaryResult,
         segmentsResult,
         screenshotSummaryResult,
-        screenshotsResult
+        screenshotsResult,
+        healthResult
       ] = await Promise.allSettled([
         fetchTimeEvents(),
         fetchInputSummary(effectiveDate),
         shouldLoadRawInput ? fetchTextSegments(effectiveDate) : Promise.resolve([]),
         fetchScreenshotSummary(effectiveDate),
-        shouldLoadScreenshotRows ? fetchScreenshots(effectiveDate) : Promise.resolve([])
+        shouldLoadScreenshotRows ? fetchScreenshots(effectiveDate) : Promise.resolve([]),
+        fetchCollectorHealth()
       ]);
 
       if (eventsResult.status === "fulfilled") {
@@ -132,6 +145,12 @@ export function App() {
       } else {
         setCollectorStatus("offline");
         setCollectorError(errorMessage(eventsResult.reason));
+      }
+
+      if (healthResult.status === "fulfilled") {
+        setHealth(healthResult.value);
+      } else {
+        setHealth(undefined);
       }
 
       if (
@@ -256,6 +275,14 @@ export function App() {
       <nav className="tabBar" aria-label="View mode">
         <button
           type="button"
+          className={`tab ${viewMode === "today" ? "active" : ""}`}
+          onClick={() => setViewMode("today")}
+        >
+          <Activity aria-hidden="true" size={16} />
+          <span>Today</span>
+        </button>
+        <button
+          type="button"
           className={`tab ${viewMode === "dashboard" ? "active" : ""}`}
           onClick={() => setViewMode("dashboard")}
         >
@@ -330,7 +357,16 @@ export function App() {
         </p>
       )}
 
-      {viewMode === "daily" ? (
+      {viewMode === "today" ? (
+        <TodayFlowBoard
+          events={events}
+          screenshotSummary={screenshotSummary}
+          inputSummary={inputSummary}
+          health={health}
+          privacyMode={privacyMode}
+          sourceLabel={sourceMode === "live" ? "Live collector" : "Sample workspace"}
+        />
+      ) : viewMode === "daily" ? (
         <DailyTracking
           date={queryDate}
           screenshots={screenshots}
