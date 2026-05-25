@@ -1,0 +1,1291 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Activity Insights PRD 中文交互 Slides</title>
+  <style>
+    :root {
+      color: #17211b;
+      background: #f4f6f2;
+      font-family: Inter, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      line-height: 1.5;
+      --ink: #17211b;
+      --muted: #66736b;
+      --surface: #ffffff;
+      --line: #d7ded7;
+      --green: #2f635c;
+      --blue: #315a9f;
+      --amber: #9a641d;
+      --red: #9b3d3d;
+      --violet: #6651a8;
+      --shadow: 0 18px 38px rgba(23, 33, 27, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        linear-gradient(180deg, rgba(244, 246, 242, 0.96), rgba(239, 243, 245, 0.94)),
+        #f4f6f2;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      min-height: 38px;
+      border: 1px solid #c8d2cc;
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--ink);
+      cursor: pointer;
+      font-weight: 800;
+      padding: 0 12px;
+    }
+
+    button:hover,
+    button:focus-visible {
+      border-color: var(--green);
+      outline: none;
+    }
+
+    .deck {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+      border-right: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.78);
+      padding: 22px 16px;
+    }
+
+    .brand {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 18px;
+    }
+
+    .eyebrow {
+      color: var(--green);
+      font-size: 0.74rem;
+      font-weight: 900;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    .brand h1 {
+      margin: 0;
+      color: #10241c;
+      font-size: 1.18rem;
+      line-height: 1.22;
+    }
+
+    .brand p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .navList {
+      display: grid;
+      gap: 6px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .navButton {
+      width: 100%;
+      justify-content: flex-start;
+      min-height: 42px;
+      border: 0;
+      background: transparent;
+      color: #4d5a53;
+      text-align: left;
+      padding: 0 10px;
+    }
+
+    .navButton.active {
+      background: #e7efe9;
+      color: #163c34;
+    }
+
+    .navIndex {
+      display: inline-flex;
+      width: 24px;
+      height: 24px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      background: #e1e8e2;
+      color: #315044;
+      font-size: 0.75rem;
+      margin-right: 8px;
+    }
+
+    .navButton.active .navIndex {
+      background: var(--green);
+      color: #fff;
+    }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .controls button {
+      flex: 1;
+    }
+
+    .progressWrap {
+      height: 8px;
+      border-radius: 999px;
+      background: #dde5df;
+      margin-top: 16px;
+      overflow: hidden;
+    }
+
+    .progress {
+      width: 0;
+      height: 100%;
+      background: var(--green);
+      transition: width 0.2s ease;
+    }
+
+    main {
+      padding: 28px;
+    }
+
+    .slide {
+      display: none;
+      max-width: 1120px;
+      min-height: calc(100vh - 56px);
+      margin: 0 auto;
+      align-content: center;
+    }
+
+    .slide.active {
+      display: grid;
+      gap: 20px;
+    }
+
+    .slideHeader {
+      display: grid;
+      gap: 8px;
+    }
+
+    .slideHeader h2 {
+      max-width: 920px;
+      margin: 0;
+      color: #0f241b;
+      font-size: clamp(2rem, 4.4vw, 4.1rem);
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+
+    .slideHeader p {
+      max-width: 820px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+
+    .grid2,
+    .grid3,
+    .grid4 {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .grid3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .card,
+    .heroPanel,
+    .mockApp,
+    .flowPanel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: var(--shadow);
+    }
+
+    .card {
+      display: grid;
+      gap: 8px;
+      padding: 18px;
+    }
+
+    .card h3,
+    .flowNode strong {
+      margin: 0;
+      color: #10241c;
+      font-size: 1rem;
+    }
+
+    .card p,
+    .card li,
+    .flowNode span {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .card ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .heroPanel {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+      gap: 18px;
+      align-items: stretch;
+      padding: 20px;
+    }
+
+    .metricStrip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      border: 1px solid #dce4dd;
+      border-radius: 8px;
+      background: #f9fbfa;
+      padding: 14px;
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 8px;
+      font-size: 1.45rem;
+    }
+
+    .timelineMini {
+      display: grid;
+      gap: 8px;
+    }
+
+    .bar {
+      display: grid;
+      grid-template-columns: 74px minmax(0, 1fr) 70px;
+      gap: 10px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    .track {
+      height: 18px;
+      border-radius: 999px;
+      background: #e3e9e4;
+      overflow: hidden;
+    }
+
+    .fill {
+      height: 100%;
+      border-radius: 999px;
+    }
+
+    .fill.green { background: var(--green); }
+    .fill.blue { background: var(--blue); }
+    .fill.amber { background: var(--amber); }
+    .fill.red { background: var(--red); }
+    .fill.violet { background: var(--violet); }
+
+    .pillRow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      border-radius: 999px;
+      background: #edf2ee;
+      color: #315044;
+      font-size: 0.82rem;
+      font-weight: 900;
+      padding: 0 10px;
+    }
+
+    .pill.blue { background: #e5ebf7; color: #315a9f; }
+    .pill.amber { background: #f4eadc; color: #865717; }
+    .pill.red { background: #f4e4e4; color: #8c3333; }
+    .pill.violet { background: #ebe7f7; color: #59479b; }
+
+    .flowPanel {
+      display: grid;
+      gap: 12px;
+      padding: 18px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .flowNode {
+      display: grid;
+      gap: 6px;
+      min-height: 116px;
+      border: 1px solid #dbe3dd;
+      border-radius: 8px;
+      background: #fbfcfb;
+      padding: 14px;
+    }
+
+    .connector {
+      align-self: center;
+      height: 2px;
+      background: #b9c8bd;
+    }
+
+    .bucketSim {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 0.82fr);
+      gap: 14px;
+    }
+
+    .simRows {
+      display: grid;
+      gap: 8px;
+    }
+
+    .simRow {
+      display: grid;
+      grid-template-columns: 74px minmax(0, 1fr) 78px;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid #dbe3dd;
+      border-radius: 8px;
+      background: #fff;
+      padding: 10px;
+    }
+
+    .simRow button {
+      min-height: 30px;
+      padding: 0 10px;
+    }
+
+    .simRow.active {
+      border-color: var(--green);
+      background: #f0f7f2;
+    }
+
+    .simTrack {
+      display: flex;
+      height: 24px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e3e9e4;
+    }
+
+    .seg {
+      height: 100%;
+    }
+
+    .seg.work { background: var(--green); }
+    .seg.research { background: var(--blue); }
+    .seg.chat { background: var(--amber); }
+    .seg.loafing { background: var(--red); }
+
+    .resultBox {
+      display: grid;
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 18px;
+    }
+
+    .resultBox h3 {
+      margin: 0;
+      font-size: 1.25rem;
+    }
+
+    .resultLine {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid #eef2ef;
+      padding-bottom: 8px;
+      color: var(--muted);
+    }
+
+    .resultLine strong {
+      color: var(--ink);
+    }
+
+    .mockApp {
+      overflow: hidden;
+    }
+
+    .mockTop {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--line);
+      padding: 14px 16px;
+    }
+
+    .mockTop strong {
+      font-size: 1rem;
+    }
+
+    .mockBody {
+      display: grid;
+      grid-template-columns: 1fr 310px;
+      gap: 14px;
+      padding: 16px;
+    }
+
+    .insightText {
+      display: grid;
+      gap: 10px;
+      border: 1px solid #dfe6e1;
+      border-radius: 8px;
+      background: #f9fbfa;
+      padding: 16px;
+    }
+
+    .insightText p {
+      margin: 0;
+      font-size: 1.02rem;
+    }
+
+    .focusBlock {
+      display: grid;
+      grid-template-columns: 96px minmax(0, 1fr) 92px;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid #dfe6e1;
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+    }
+
+    .focusBlock span {
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .screenMock {
+      border: 1px solid #cfd8d2;
+      border-radius: 8px;
+      background: #f6f8f7;
+      padding: 12px;
+    }
+
+    .screenBar {
+      display: flex;
+      gap: 5px;
+      margin-bottom: 10px;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #a9b9ae;
+    }
+
+    .screenGrid {
+      display: grid;
+      grid-template-columns: 1fr 0.72fr;
+      gap: 8px;
+    }
+
+    .screenPane {
+      min-height: 104px;
+      border-radius: 6px;
+      background: #e6ece8;
+      padding: 10px;
+    }
+
+    .screenLine {
+      height: 8px;
+      border-radius: 999px;
+      background: #b9c8bd;
+      margin-bottom: 8px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    .legend span {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      background: var(--green);
+    }
+
+    .swatch.blue { background: var(--blue); }
+    .swatch.amber { background: var(--amber); }
+    .swatch.red { background: var(--red); }
+    .swatch.violet { background: var(--violet); }
+
+    .decisionGrid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .decision {
+      border: 1px solid #dbe3dd;
+      border-radius: 8px;
+      background: #fff;
+      padding: 14px;
+    }
+
+    .decision strong {
+      display: block;
+      margin-bottom: 8px;
+    }
+
+    .decision span {
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    .footerNote {
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+
+    .codeBlock {
+      overflow: auto;
+      border: 1px solid #d7ded7;
+      border-radius: 8px;
+      background: #10241c;
+      color: #e9f2ed;
+      font-family: "Cascadia Code", Consolas, monospace;
+      font-size: 0.86rem;
+      line-height: 1.55;
+      padding: 16px;
+      white-space: pre;
+    }
+
+    .archStack {
+      display: grid;
+      gap: 8px;
+    }
+
+    .archLayer {
+      display: grid;
+      grid-template-columns: 160px minmax(0, 1fr);
+      gap: 12px;
+      align-items: center;
+      border: 1px solid #dbe3dd;
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+    }
+
+    .archLayer strong {
+      color: #10241c;
+    }
+
+    .archLayer span {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    @media (max-width: 980px) {
+      .deck {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .navList {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      main {
+        padding: 18px;
+      }
+
+      .slide {
+        min-height: auto;
+      }
+
+      .heroPanel,
+      .bucketSim,
+      .mockBody,
+      .archLayer,
+      .grid2,
+      .grid3,
+      .grid4,
+      .decisionGrid {
+        grid-template-columns: 1fr;
+      }
+
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .connector {
+        display: none;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .navList {
+        grid-template-columns: 1fr;
+      }
+
+      .slideHeader h2 {
+        font-size: 2rem;
+      }
+
+      .metricStrip {
+        grid-template-columns: 1fr;
+      }
+
+      .bar,
+      .focusBlock,
+      .simRow {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="deck">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="eyebrow">Time State Recorder v1.2 PRD</span>
+        <h1>工作洞察与视觉摘要</h1>
+        <p>把技术事件流翻译成人能复盘的工作叙事。</p>
+      </div>
+      <ol class="navList" id="navList"></ol>
+      <div class="controls">
+        <button type="button" id="prevBtn">上一页</button>
+        <button type="button" id="nextBtn">下一页</button>
+      </div>
+      <div class="progressWrap" aria-label="阅读进度">
+        <div class="progress" id="progress"></div>
+      </div>
+    </aside>
+
+    <main>
+      <section class="slide active" data-title="一句话">
+        <div class="slideHeader">
+          <span class="eyebrow">01 / Product Intent</span>
+          <h2>从“记录窗口切换”变成“理解一天在做什么”</h2>
+          <p>原始事件继续保留，但默认呈现改成 3 分钟活动桶、项目分类、注意力状态和视觉摘要。</p>
+        </div>
+        <div class="heroPanel">
+          <div class="card">
+            <h3>产品要回答的问题</h3>
+            <ul>
+              <li>我今天主要推进了哪些项目？</li>
+              <li>哪些时间是稳定专注，哪些时间被切碎？</li>
+              <li>浏览器里到底是在查资料、写代码，还是分心？</li>
+              <li>有什么截图证据支持这些结论？</li>
+            </ul>
+            <div class="pillRow">
+              <span class="pill">本地优先</span>
+              <span class="pill blue">证据可追溯</span>
+              <span class="pill amber">默认 3 分钟</span>
+              <span class="pill violet">长期统计</span>
+            </div>
+          </div>
+          <div class="screenMock" aria-label="Activity Review mock screen">
+            <div class="screenBar">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+            </div>
+            <div class="screenGrid">
+              <div class="screenPane">
+                <div class="screenLine" style="width: 86%"></div>
+                <div class="screenLine" style="width: 62%"></div>
+                <div class="screenLine" style="width: 74%"></div>
+                <div class="screenLine" style="width: 45%"></div>
+              </div>
+              <div class="screenPane">
+                <div class="screenLine" style="width: 70%"></div>
+                <div class="screenLine" style="width: 92%"></div>
+                <div class="screenLine" style="width: 54%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="为什么要改">
+        <div class="slideHeader">
+          <span class="eyebrow">02 / Current Problem</span>
+          <h2>现在的 Timeline 太像日志，不像复盘工具</h2>
+          <p>每次窗口切换都展示出来，对调试有用，对理解自己一天的工作状态不够友好。</p>
+        </div>
+        <div class="grid3">
+          <article class="card">
+            <h3>事件太碎</h3>
+            <p>浏览器、微信、Word 来回切换会产生很多短事件，人需要自己拼出上下文。</p>
+          </article>
+          <article class="card">
+            <h3>缺少语义</h3>
+            <p>系统知道你在 Chrome，但不知道这是查资料、写 PRD、看视频，还是临时分心。</p>
+          </article>
+          <article class="card">
+            <h3>截图未被理解</h3>
+            <p>缩略图可以看，但没有被转成可搜索、可统计、可归类的文字摘要。</p>
+          </article>
+        </div>
+        <div class="timelineMini card">
+          <h3>目标：把碎事件压缩成可读叙事</h3>
+          <div class="bar"><span>09:12</span><div class="track"><div class="fill green" style="width: 88%"></div></div><strong>写代码</strong></div>
+          <div class="bar"><span>10:03</span><div class="track"><div class="fill blue" style="width: 62%"></div></div><strong>查资料</strong></div>
+          <div class="bar"><span>10:18</span><div class="track"><div class="fill amber" style="width: 44%"></div></div><strong>沟通</strong></div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="数据流">
+        <div class="slideHeader">
+          <span class="eyebrow">03 / Data Flow</span>
+          <h2>核心链路：原始事件到人类洞察</h2>
+          <p>不要降低采集精度。先保留原始事件，再在查询层聚合，这样未来可以重新解释历史数据。</p>
+        </div>
+        <div class="flowPanel">
+          <div class="flow">
+            <div class="flowNode">
+              <strong>窗口事件</strong>
+              <span>每秒采样，窗口身份变化时写入。</span>
+            </div>
+            <div class="flowNode">
+              <strong>3 分钟桶</strong>
+              <span>把碎事件聚合成固定时间片。</span>
+            </div>
+            <div class="flowNode">
+              <strong>分类层</strong>
+              <span>项目、活动类型、注意力状态。</span>
+            </div>
+            <div class="flowNode">
+              <strong>视觉摘要</strong>
+              <span>每 5 分钟截图，模型写摘要。</span>
+            </div>
+            <div class="flowNode">
+              <strong>洞察视图</strong>
+              <span>聚焦块、切换率、长期趋势。</span>
+            </div>
+          </div>
+          <p class="footerNote">关键原则：采集保持细，展示变粗，解释变人类。</p>
+        </div>
+      </section>
+
+      <section class="slide" data-title="3 分钟桶">
+        <div class="slideHeader">
+          <span class="eyebrow">04 / Interactive Bucket</span>
+          <h2>3 分钟 Activity Bucket 如何读懂一段时间</h2>
+          <p>点击下面的时间片，观察主活动、分类和注意力状态如何变化。</p>
+        </div>
+        <div class="bucketSim">
+          <div class="simRows" id="simRows"></div>
+          <div class="resultBox" aria-live="polite">
+            <h3 id="simTitle">09:00-09:03</h3>
+            <div class="resultLine"><span>主活动</span><strong id="simDominant">Time State Recorder</strong></div>
+            <div class="resultLine"><span>活动分类</span><strong id="simCategory">Coding / Project Work</strong></div>
+            <div class="resultLine"><span>切换次数</span><strong id="simSwitches">1</strong></div>
+            <div class="resultLine"><span>注意力状态</span><strong id="simAttention">Deep Focus</strong></div>
+            <p id="simInsight">这一段几乎都在同一项目里，适合合并进连续 Focus Block。</p>
+          </div>
+        </div>
+        <div class="legend">
+          <span><i class="swatch"></i>项目工作</span>
+          <span><i class="swatch blue"></i>研究</span>
+          <span><i class="swatch amber"></i>沟通</span>
+          <span><i class="swatch red"></i>Loafing / Non-work</span>
+        </div>
+      </section>
+
+      <section class="slide" data-title="分类系统">
+        <div class="slideHeader">
+          <span class="eyebrow">05 / Category Model</span>
+          <h2>不要只有一个标签，要分成三个维度</h2>
+          <p>“项目是什么”、“活动类型是什么”、“注意力状态怎样”是三个问题，混在一起会导致长期统计不可用。</p>
+        </div>
+        <div class="grid3">
+          <article class="card">
+            <h3>Project</h3>
+            <p>回答：这段时间属于哪个项目？</p>
+            <div class="pillRow">
+              <span class="pill">PhD Paper</span>
+              <span class="pill">TSR</span>
+              <span class="pill">Teaching</span>
+              <span class="pill">Unknown</span>
+            </div>
+          </article>
+          <article class="card">
+            <h3>Activity</h3>
+            <p>回答：这是什么类型的活动？</p>
+            <div class="pillRow">
+              <span class="pill blue">Research</span>
+              <span class="pill">Coding</span>
+              <span class="pill amber">Communication</span>
+              <span class="pill red">Loafing</span>
+            </div>
+          </article>
+          <article class="card">
+            <h3>Attention</h3>
+            <p>回答：这段时间是否被切碎？</p>
+            <div class="pillRow">
+              <span class="pill">Deep Focus</span>
+              <span class="pill blue">Steady</span>
+              <span class="pill amber">Light Switching</span>
+              <span class="pill red">Fragmented</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Loafing 逻辑">
+        <div class="slideHeader">
+          <span class="eyebrow">06 / Loafing & Rules</span>
+          <h2>Loafing 不应由系统武断判断</h2>
+          <p>默认应该是可解释、可修正、可由用户定义的分类。否则系统会变成监控工具，而不是自我洞察工具。</p>
+        </div>
+        <div class="grid2">
+          <article class="card">
+            <h3>第一版推荐逻辑</h3>
+            <ul>
+              <li>用户规则明确命中，才标为 loafing。</li>
+              <li>模型可以给出候选，但需要低置信度或等待确认。</li>
+              <li>同一个网站可能既是研究，也可能是分心，要看项目和截图上下文。</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>更适合统计的表达</h3>
+            <ul>
+              <li>Non-work browsing</li>
+              <li>Personal</li>
+              <li>Unknown</li>
+              <li>User-confirmed loafing</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="slide" data-title="切换频率">
+        <div class="slideHeader">
+          <span class="eyebrow">07 / Switching Insight</span>
+          <h2>切换频率是洞察，不是责备</h2>
+          <p>3 分钟桶里的 switchCount 可以转成注意力状态，帮助发现什么时候被打断、什么时候进入稳定节奏。</p>
+        </div>
+        <div class="grid4">
+          <article class="card">
+            <h3>Deep Focus</h3>
+            <p>切换少于等于 1 次，主活动占比 85% 以上。</p>
+          </article>
+          <article class="card">
+            <h3>Steady</h3>
+            <p>切换少于等于 2 次，主活动占比 65% 以上。</p>
+          </article>
+          <article class="card">
+            <h3>Light Switching</h3>
+            <p>有切换，但仍能看出主线任务。</p>
+          </article>
+          <article class="card">
+            <h3>Fragmented</h3>
+            <p>切换很多，没有清晰主活动，适合回看原因。</p>
+          </article>
+        </div>
+        <div class="metricStrip">
+          <div class="metric"><span>高切换桶</span><strong>7</strong></div>
+          <div class="metric"><span>最碎时间段</span><strong>14:00</strong></div>
+          <div class="metric"><span>受影响项目</span><strong>PhD Paper</strong></div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="浏览器标签页">
+        <div class="slideHeader">
+          <span class="eyebrow">08 / Browser Tabs</span>
+          <h2>第一版用窗口标题区分标签页</h2>
+          <p>Windows 前台窗口 API 拿不到 URL，但能拿到浏览器窗口标题。先做标题归一化，后续再考虑扩展。</p>
+        </div>
+        <div class="grid2">
+          <article class="card">
+            <h3>原始标题</h3>
+            <p>GitHub - Pull Request - Google Chrome</p>
+            <p>Time State Recorder 和另外 2 个页面 - 个人 - Microsoft Edge</p>
+          </article>
+          <article class="card">
+            <h3>归一化后</h3>
+            <p>GitHub - Pull Request</p>
+            <p>Time State Recorder</p>
+          </article>
+        </div>
+        <p class="footerNote">限制：没有浏览器扩展时，不承诺准确 URL。PRD 把 URL 捕获放在未来工作。</p>
+      </section>
+
+      <section class="slide" data-title="视觉摘要">
+        <div class="slideHeader">
+          <span class="eyebrow">09 / Visual Summary</span>
+          <h2>每 5 分钟高分辨率截图，让视觉模型写摘要</h2>
+          <p>缩略图用于快速定位，高分辨率截图用于模型理解上下文。默认仍然保护隐私。</p>
+        </div>
+        <div class="heroPanel">
+          <div class="flowPanel">
+            <div class="flow" style="grid-template-columns: repeat(4, minmax(0, 1fr));">
+              <div class="flowNode"><strong>5 分钟截图</strong><span>保留可读文字和窗口结构。</span></div>
+              <div class="flowNode"><strong>Blocker 过滤</strong><span>敏感窗口不保存、不分析。</span></div>
+              <div class="flowNode"><strong>模型摘要</strong><span>描述工作上下文、项目线索、风险。</span></div>
+              <div class="flowNode"><strong>证据入库</strong><span>可搜索、可统计、可回看。</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <h3>摘要不是 OCR 全文</h3>
+            <p>默认只写“正在编辑 Rust API 和测试”，不复制私密正文。Raw 模式和本地模型可以放宽。</p>
+            <div class="pillRow">
+              <span class="pill">summaryText</span>
+              <span class="pill blue">projectHints</span>
+              <span class="pill amber">riskFlags</span>
+              <span class="pill violet">confidence</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Activity Review">
+        <div class="slideHeader">
+          <span class="eyebrow">10 / Frontend Shape</span>
+          <h2>主视图应该像工作复盘，不像数据库浏览器</h2>
+          <p>默认展示洞察、分类和 Focus Blocks。事件列表退到展开证据里。</p>
+        </div>
+        <div class="mockApp">
+          <div class="mockTop">
+            <strong>Activity Review</strong>
+            <div class="pillRow">
+              <span class="pill">3 min</span>
+              <span class="pill">Redacted</span>
+              <span class="pill blue">Live</span>
+            </div>
+          </div>
+          <div class="mockBody">
+            <div class="insightText">
+              <p><strong>今天上午主要在推进 Time State Recorder。</strong></p>
+              <p>最长连续专注 48 分钟，出现在 09:12-10:00。</p>
+              <p>14:00 后上下文切换明显上升，主要在 Chrome、WeChat、Notion 之间。</p>
+              <div class="focusBlock"><span>09:12-10:03</span><strong>TSR / Coding</strong><span>Deep Focus</span></div>
+              <div class="focusBlock"><span>10:03-10:18</span><strong>Browser / Research</strong><span>Steady</span></div>
+              <div class="focusBlock"><span>10:18-10:27</span><strong>WeChat</strong><span>Fragmented</span></div>
+            </div>
+            <div class="card">
+              <h3>分类统计</h3>
+              <div class="bar"><span>项目工作</span><div class="track"><div class="fill green" style="width: 78%"></div></div><strong>4h20m</strong></div>
+              <div class="bar"><span>沟通</span><div class="track"><div class="fill amber" style="width: 28%"></div></div><strong>52m</strong></div>
+              <div class="bar"><span>碎片化</span><div class="track"><div class="fill red" style="width: 18%"></div></div><strong>31m</strong></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="长期统计">
+        <div class="slideHeader">
+          <span class="eyebrow">11 / Long-Term Analytics</span>
+          <h2>这套结构的价值在长期统计</h2>
+          <p>只看当天是复盘。跨天、跨周、跨项目分析，才会形成真正的自我洞察。</p>
+        </div>
+        <div class="grid3">
+          <article class="card"><h3>项目时间</h3><p>按天、周、月看每个项目投入，减少主观估计。</p></article>
+          <article class="card"><h3>深度专注</h3><p>统计 deep focus 小时数，以及它出现在哪些项目和时间段。</p></article>
+          <article class="card"><h3>碎片化趋势</h3><p>看切换率如何变化，找出最容易被打断的时段。</p></article>
+          <article class="card"><h3>沟通负载</h3><p>观察 WeChat、邮件、会议占比是否挤压项目工作。</p></article>
+          <article class="card"><h3>浏览器主题</h3><p>用标题和视觉摘要聚类浏览器活动。</p></article>
+          <article class="card"><h3>Loafing 趋势</h3><p>只统计用户确认或规则明确的非工作活动。</p></article>
+        </div>
+      </section>
+
+      <section class="slide" data-title="系统分层">
+        <div class="slideHeader">
+          <span class="eyebrow">12 / Technical Architecture</span>
+          <h2>技术架构要把采集、派生、分析、呈现分开</h2>
+          <p>软件工程上的核心原则：原始证据不可丢，派生结果可重算，模型能力可替换，隐私策略在边界统一执行。</p>
+        </div>
+        <div class="archStack">
+          <div class="archLayer"><strong>Capture Layer</strong><span>只采集事实：窗口、输入、生命周期、缩略图、高分辨率截图。不判断项目或 loafing。</span></div>
+          <div class="archLayer"><strong>Raw Evidence Store</strong><span>SQLite 和图片文件保存不可变证据，负责 session、时间、文件路径和外键关系。</span></div>
+          <div class="archLayer"><strong>Derivation Engine</strong><span>纯函数优先：TimeEvent、3 分钟 bucket、浏览器标题归一化、Focus Block、switching metrics。</span></div>
+          <div class="archLayer"><strong>Insight Engine</strong><span>把 bucket 解释成项目、活动类型、注意力状态和日级总结，可结合规则、人工修正、视觉摘要。</span></div>
+          <div class="archLayer"><strong>Visual Pipeline</strong><span>高分截图经过 blocker 后入队，模型 provider 异步分析，失败不影响主采集。</span></div>
+          <div class="archLayer"><strong>Local API + UI</strong><span>API 返回稳定 DTO，前端 Activity Review 展示洞察，原始事件作为可展开证据。</span></div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="数据生命周期">
+        <div class="slideHeader">
+          <span class="eyebrow">13 / Data Lifecycle</span>
+          <h2>数据生命周期：先保存事实，再生成解释</h2>
+          <p>不要让模型输出成为唯一真相。所有洞察都应该能从原始证据和规则重新生成。</p>
+        </div>
+        <div class="flowPanel">
+          <div class="flow">
+            <div class="flowNode"><strong>1. 采集</strong><span>window focus、input、lifecycle、screenshots。</span></div>
+            <div class="flowNode"><strong>2. 入库</strong><span>SQLite 存 metadata，图片存文件系统。</span></div>
+            <div class="flowNode"><strong>3. 派生</strong><span>构造 intervals、3 分钟桶、切换次数。</span></div>
+            <div class="flowNode"><strong>4. 丰富</strong><span>项目规则、活动分类、注意力状态、视觉摘要。</span></div>
+            <div class="flowNode"><strong>5. 呈现</strong><span>Focus Blocks、分类卡、切换洞察、长期统计。</span></div>
+          </div>
+        </div>
+        <div class="grid3">
+          <article class="card"><h3>可重算</h3><p>修改分类规则后，可以重新生成历史 bucket 和 summary。</p></article>
+          <article class="card"><h3>可审计</h3><p>每个洞察都能展开到窗口标题、截图摘要、原始事件证据。</p></article>
+          <article class="card"><h3>可降级</h3><p>视觉模型不可用时，窗口/输入/截图 metadata 仍然能支撑基础洞察。</p></article>
+        </div>
+      </section>
+
+      <section class="slide" data-title="模块边界">
+        <div class="slideHeader">
+          <span class="eyebrow">14 / Module Boundaries</span>
+          <h2>模块边界：避免继续把业务逻辑塞进 api.rs 和 storage.rs</h2>
+          <p>新增能力应按端口和适配器组织：领域模型和派生逻辑可测试，数据库和模型供应商只是适配器。</p>
+        </div>
+        <div class="grid2">
+          <pre class="codeBlock">collector/src/
+  capture/
+    window.rs
+    input.rs
+    screenshot_thumb.rs
+    screenshot_hires.rs
+  domain/
+    activity_bucket.rs
+    category.rs
+    attention.rs
+    visual_summary.rs
+  derive/
+    bucketizer.rs
+    focus_blocks.rs
+    browser_title.rs
+  insight/
+    category_rules.rs
+    day_summary.rs
+  visual/
+    provider.rs
+    jobs.rs
+  storage/
+    migrations.rs
+    repositories.rs
+  api/
+    routes.rs
+    dto.rs</pre>
+          <div class="card">
+            <h3>最佳实践要求</h3>
+            <ul>
+              <li>DB row、domain model、API DTO 分开。</li>
+              <li>新增表必须有 schema migration。</li>
+              <li>视觉模型通过 provider interface 调用。</li>
+              <li>HTTP route 不直接写模型供应商代码。</li>
+              <li>bucket/category/focus block 用纯函数单测覆盖。</li>
+              <li>隐私策略在采集、分析、返回三个边界执行。</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="MVP 顺序">
+        <div class="slideHeader">
+          <span class="eyebrow">15 / Build Order</span>
+          <h2>MVP 应该分阶段做，不要一次吞掉全部</h2>
+          <p>先把 3 分钟活动桶和 Activity Review 做稳，再接入高分辨率截图和视觉模型。</p>
+        </div>
+        <div class="decisionGrid">
+          <div class="decision"><strong>1. 后端桶</strong><span>/api/activity-buckets，默认 180 秒。</span></div>
+          <div class="decision"><strong>2. 洞察前端</strong><span>分类卡、Focus Blocks、切换洞察。</span></div>
+          <div class="decision"><strong>3. 高分截图</strong><span>5 分钟一张，配置开关保护隐私。</span></div>
+          <div class="decision"><strong>4. 模型接口</strong><span>provider abstraction，不绑定厂商。</span></div>
+          <div class="decision"><strong>5. 单张分析</strong><span>先手动分析，再做批量队列。</span></div>
+        </div>
+        <div class="card">
+          <h3>一句话记忆</h3>
+          <p>原始数据是证据，3 分钟桶是语义，视觉摘要是解释，长期统计是价值。</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll(".slide"));
+    const navList = document.getElementById("navList");
+    const progress = document.getElementById("progress");
+    let current = 0;
+
+    const buckets = [
+      {
+        time: "09:00-09:03",
+        title: "Time State Recorder",
+        category: "Coding / Project Work",
+        switches: "1",
+        attention: "Deep Focus",
+        insight: "这一段几乎都在同一项目里，适合合并进连续 Focus Block。",
+        segments: [
+          { cls: "work", width: 92 },
+          { cls: "research", width: 8 }
+        ]
+      },
+      {
+        time: "10:03-10:06",
+        title: "Google Scholar",
+        category: "Research",
+        switches: "2",
+        attention: "Steady",
+        insight: "主线是研究，但有轻微切换，仍然能解释为同一工作目标。",
+        segments: [
+          { cls: "research", width: 70 },
+          { cls: "work", width: 18 },
+          { cls: "chat", width: 12 }
+        ]
+      },
+      {
+        time: "14:00-14:03",
+        title: "Chrome / WeChat / Notion",
+        category: "Mixed",
+        switches: "7",
+        attention: "Fragmented",
+        insight: "没有明确主活动，前端应提示这一段是高切换时间，而不是简单归为某个软件。",
+        segments: [
+          { cls: "research", width: 28 },
+          { cls: "chat", width: 24 },
+          { cls: "work", width: 22 },
+          { cls: "loafing", width: 26 }
+        ]
+      },
+      {
+        time: "21:12-21:15",
+        title: "Video / Social",
+        category: "User-confirmed Loafing",
+        switches: "3",
+        attention: "Light Switching",
+        insight: "只有当用户规则或确认存在时，才稳定标记为 loafing，避免系统武断判断。",
+        segments: [
+          { cls: "loafing", width: 78 },
+          { cls: "chat", width: 22 }
+        ]
+      }
+    ];
+
+    function buildNav() {
+      slides.forEach((slide, index) => {
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "navButton";
+        button.innerHTML = `<span class="navIndex">${String(index + 1).padStart(2, "0")}</span>${slide.dataset.title}`;
+        button.addEventListener("click", () => showSlide(index));
+        item.appendChild(button);
+        navList.appendChild(item);
+      });
+    }
+
+    function showSlide(index) {
+      current = Math.max(0, Math.min(index, slides.length - 1));
+      slides.forEach((slide, slideIndex) => {
+        slide.classList.toggle("active", slideIndex === current);
+      });
+      Array.from(document.querySelectorAll(".navButton")).forEach((button, buttonIndex) => {
+        button.classList.toggle("active", buttonIndex === current);
+      });
+      progress.style.width = `${((current + 1) / slides.length) * 100}%`;
+      document.getElementById("prevBtn").disabled = current === 0;
+      document.getElementById("nextBtn").disabled = current === slides.length - 1;
+    }
+
+    function buildSimulator() {
+      const root = document.getElementById("simRows");
+      buckets.forEach((bucket, index) => {
+        const row = document.createElement("div");
+        row.className = "simRow";
+        row.innerHTML = `
+          <strong>${bucket.time}</strong>
+          <div class="simTrack">
+            ${bucket.segments.map((segment) => `<span class="seg ${segment.cls}" style="width: ${segment.width}%"></span>`).join("")}
+          </div>
+          <button type="button">查看</button>
+        `;
+        row.querySelector("button").addEventListener("click", () => showBucket(index));
+        root.appendChild(row);
+      });
+      showBucket(0);
+    }
+
+    function showBucket(index) {
+      const bucket = buckets[index];
+      document.getElementById("simTitle").textContent = bucket.time;
+      document.getElementById("simDominant").textContent = bucket.title;
+      document.getElementById("simCategory").textContent = bucket.category;
+      document.getElementById("simSwitches").textContent = bucket.switches;
+      document.getElementById("simAttention").textContent = bucket.attention;
+      document.getElementById("simInsight").textContent = bucket.insight;
+      Array.from(document.querySelectorAll(".simRow")).forEach((row, rowIndex) => {
+        row.classList.toggle("active", rowIndex === index);
+      });
+    }
+
+    document.getElementById("prevBtn").addEventListener("click", () => showSlide(current - 1));
+    document.getElementById("nextBtn").addEventListener("click", () => showSlide(current + 1));
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowRight") showSlide(current + 1);
+      if (event.key === "ArrowLeft") showSlide(current - 1);
+    });
+
+    buildNav();
+    buildSimulator();
+    showSlide(0);
+  </script>
+</body>
+</html>
