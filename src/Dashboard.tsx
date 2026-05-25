@@ -7,6 +7,7 @@ import {
   buildTimelineItems,
   filterTimelineEvents,
   formatDuration,
+  visibleTimelineTitle,
   type DensityMode,
   type LayerVisibility,
   type PrivacyMode,
@@ -127,7 +128,7 @@ export function Dashboard({
                 <article className={`timelineCard ${item.kind}`} key={item.id}>
                   <div>
                     <strong>{item.app}</strong>
-                    <span>{item.title}</span>
+                    <span>{visibleTimelineTitle(item, privacyMode)}</span>
                   </div>
                   <time>{formatDuration(item.durationSeconds)}</time>
                 </article>

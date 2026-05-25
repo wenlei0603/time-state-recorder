@@ -6,8 +6,10 @@ import {
   buildTimelineItems,
   filterTimelineEvents,
   formatDuration,
+  visibleTimelineTitle,
   type DensityMode,
   type LayerVisibility,
+  type PrivacyMode,
   type TimelineGranularity
 } from "./lib/uiModel";
 
@@ -15,6 +17,7 @@ type TimelineViewProps = {
   events: TimeEvent[];
   layers: LayerVisibility;
   densityMode: DensityMode;
+  privacyMode: PrivacyMode;
   granularity: TimelineGranularity;
 };
 
@@ -22,6 +25,7 @@ export function TimelineView({
   events,
   layers,
   densityMode,
+  privacyMode,
   granularity
 }: TimelineViewProps) {
   const visibleEvents = useMemo(
@@ -62,7 +66,7 @@ export function TimelineView({
                 )}
                 <div>
                   <strong>{item.app}</strong>
-                  <span>{item.title}</span>
+                  <span>{visibleTimelineTitle(item, privacyMode)}</span>
                 </div>
               </div>
               <div className="timelineCardMeta">

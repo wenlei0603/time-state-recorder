@@ -115,8 +115,27 @@ describe("App", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: /dashboard/i }));
 
-    expect(await screen.findByText("Planner")).toBeInTheDocument();
+    expect(await screen.findAllByText("Arc")).not.toHaveLength(0);
+    expect(screen.queryByText("Planner")).not.toBeInTheDocument();
     expect(screen.getAllByText("5m").length).toBeGreaterThan(0);
+  });
+
+  it("keeps live dashboard and timeline titles redacted until raw mode is enabled", async () => {
+    vi.stubGlobal("fetch", vi.fn(liveDataResponse));
+
+    render(<App />);
+
+    expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: /dashboard/i }));
+    expect(screen.getAllByText("Code")).not.toHaveLength(0);
+    expect(screen.queryByText("Sensitive client roadmap")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /timeline/i }));
+    expect(screen.getAllByText("Code")).not.toHaveLength(0);
+    expect(screen.queryByText("Sensitive client roadmap")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
+    expect(await screen.findAllByText("Sensitive client roadmap")).not.toHaveLength(0);
   });
 
   it("renders CollectorMonitor when connected to health API", async () => {

@@ -123,6 +123,16 @@ export function buildTimelineItems(events: TimeEvent[]): TimelineItem[] {
     });
 }
 
+export function visibleTimelineTitle(
+  item: TimelineItem,
+  privacyMode: PrivacyMode
+): string {
+  if (privacyMode !== "raw" && item.kind === "active_window") {
+    return "Hidden in redacted mode";
+  }
+  return item.title;
+}
+
 export function buildHourlyTimelineItems(
   events: TimeEvent[],
   timeZoneOffsetMinutes = -new Date().getTimezoneOffset()

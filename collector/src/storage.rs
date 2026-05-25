@@ -839,11 +839,11 @@ impl Store {
         let text_segments: usize =
             self.conn
                 .query_row("SELECT COUNT(*) FROM text_segments", [], |r| r.get(0))?;
-        let screenshots: usize =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM screenshot_thumbnails", [], |r| {
-                    r.get(0)
-                })?;
+        let screenshots: usize = self.conn.query_row(
+            "SELECT COUNT(*) FROM screenshot_thumbnails WHERE capture_status = 'ok'",
+            [],
+            |r| r.get(0),
+        )?;
         let blocker_hits: usize =
             self.conn
                 .query_row("SELECT COUNT(*) FROM blocker_hits", [], |r| r.get(0))?;

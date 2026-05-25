@@ -391,6 +391,9 @@ fn screenshot_reads_and_success_summary_ignore_skip_rows() {
     assert_eq!(summary.skipped_reasons[0].count, 1);
     assert_eq!(summary.skipped_reasons[1].reason, "idle");
     assert_eq!(summary.skipped_reasons[1].count, 1);
+
+    let stats = store.get_db_stats().unwrap();
+    assert_eq!(stats.screenshots, 1);
 }
 
 fn ts(value: &str) -> DateTime<Utc> {

@@ -450,6 +450,7 @@ export function App() {
           events={events}
           layers={layers}
           densityMode={densityMode}
+          privacyMode={privacyMode}
           granularity={granularity}
         />
       ) : (

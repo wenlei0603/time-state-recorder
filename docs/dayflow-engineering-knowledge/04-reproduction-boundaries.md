@@ -81,8 +81,8 @@ Current v1 caveats:
 - `/api/window-events` returns a raw array, not `{ events: [...] }`.
 - `/api/time-events`, `/api/input-events`, and `/api/text-segments` return wrapped objects.
 - Date filters use string-prefix UTC date matching in storage.
-- The frontend computes today's date in local browser time.
-- This can drift for Asia/Shanghai natural-day queries.
+- The frontend query date helper currently uses `toISOString().slice(0, 10)`, so it is UTC-aligned.
+- This can drift from the user's natural local day around local midnight.
 
 ### Frontend Redaction Is Not Full Backend Privacy
 
@@ -116,7 +116,7 @@ This is the largest gap for Chinese-first Dayflow reproduction.
 | --- | --- | --- |
 | Polling misses rapid focus changes | `GetForegroundWindow` polling loop | Dayflow-style timeline may undercount short app switches |
 | Blocker audit privacy surface | `blocker_hits.actual_value` stores matched values | Blocked skip metadata is redacted, but audit rows can still contain sensitive titles |
-| Timezone drift | v1 date queries use `LIKE 'YYYY-MM-DD%'` | Local daily review can mismatch UTC-stored timestamps |
+| Timezone drift | v1 date queries use `LIKE 'YYYY-MM-DD%'` and the frontend helper is UTC-aligned | Local daily review can mismatch the user's natural local day |
 | Text privacy exposure | plaintext text segments | Raw local DB contains sensitive typed content |
 | Screenshot privacy exposure | JPEG files on disk | Raw evidence exists outside SQLite policy boundary |
 | Text blocker not enforced | `text_capture` config exists but input path does not call blocker | Cannot claim text privacy blocker coverage |
