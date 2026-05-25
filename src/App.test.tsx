@@ -210,6 +210,46 @@ describe("App", () => {
     expect(screen.queryByText("delayed raw text")).not.toBeInTheDocument();
   });
 
+  it("keeps sample data when a delayed live refresh resolves after switching to sample", async () => {
+    const timeEventsResponse = createDeferred<ReturnType<typeof jsonResponse>>();
+    const fetcher = vi.fn((input: string) => {
+      if (input === "/api/time-events") {
+        return timeEventsResponse.promise;
+      }
+      return liveDataResponse(input);
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^sample$/i }));
+    await act(async () => {
+      timeEventsResponse.resolve(
+        jsonResponse({
+          events: [
+            {
+              id: "stale-live-event",
+              app: "StaleLiveApp",
+              title: "Stale live title",
+              startedAt: "2026-05-24T10:00:00Z",
+              endedAt: "2026-05-24T10:05:00Z",
+              durationSeconds: 300
+            }
+          ]
+        })
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Sample workspace")).toBeInTheDocument();
+    expect(screen.queryByText("Live collector")).not.toBeInTheDocument();
+    expect(screen.queryByText("StaleLiveApp")).not.toBeInTheDocument();
+    expect(screen.queryByText("Stale live title")).not.toBeInTheDocument();
+  });
+
   it("keeps raw live titles hidden on the default redacted flow board", async () => {
     vi.stubGlobal("fetch", vi.fn(liveDataResponse));
 
@@ -250,6 +290,49 @@ describe("App", () => {
         String(input).startsWith("/api/screenshots?")
       )
     ).toBe(false);
+  });
+
+  it("keeps newer raw input rows when an older non-row refresh resolves later", async () => {
+    const olderSummaryResponse = createDeferred<ReturnType<typeof jsonResponse>>();
+    let inputSummaryCalls = 0;
+    const fetcher = vi.fn((input: string) => {
+      if (input.startsWith("/api/input-summary")) {
+        inputSummaryCalls += 1;
+        if (inputSummaryCalls === 2) {
+          return olderSummaryResponse.promise;
+        }
+      }
+      return liveDataResponse(input);
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    render(<App />);
+
+    expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
+    await waitFor(() => expect(inputSummaryCalls).toBe(2));
+    fireEvent.click(screen.getByRole("button", { name: /input activity/i }));
+
+    expect(await screen.findByText("Live Input Window")).toBeInTheDocument();
+    await act(async () => {
+      olderSummaryResponse.resolve(
+        jsonResponse({
+          date: "2026-05-24",
+          totalEvents: 20,
+          keydownCount: 10,
+          keyupCount: 10,
+          segmentCount: 1,
+          totalChars: 8,
+          lastActivity: "2026-05-24T10:05:00Z",
+          topApps: [{ processName: "LiveApp", charCount: 8 }]
+        })
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Live Input Window")).toBeInTheDocument();
   });
 
   it("updates the evidence drawer when a flow bucket is selected", async () => {

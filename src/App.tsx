@@ -84,6 +84,7 @@ export function App() {
     viewMode,
     date: queryDate
   });
+  const collectorRequestGeneration = useRef(0);
   latestRefreshContext.current = { privacyMode, layers, viewMode, date: queryDate };
 
   const visibleDashboardEvents = useMemo(
@@ -100,6 +101,7 @@ export function App() {
   }, []);
 
   function loadSample() {
+    collectorRequestGeneration.current += 1;
     setEvents(feature1SampleEvents);
     setSegments(feature2SampleSegments);
     setInputSummary(feature2SampleSummary);
@@ -123,6 +125,8 @@ export function App() {
     viewMode?: ViewMode;
     date?: string;
   }) {
+    const requestGeneration = collectorRequestGeneration.current + 1;
+    collectorRequestGeneration.current = requestGeneration;
     const currentContext = latestRefreshContext.current;
     const effectivePrivacyMode = options?.privacyMode ?? currentContext.privacyMode;
     const effectiveLayers = options?.layers ?? currentContext.layers;
@@ -156,6 +160,10 @@ export function App() {
         shouldLoadScreenshotRows ? fetchScreenshots(effectiveDate) : Promise.resolve([]),
         fetchCollectorHealth()
       ]);
+
+      if (requestGeneration !== collectorRequestGeneration.current) {
+        return;
+      }
 
       if (eventsResult.status === "fulfilled") {
         setEvents(eventsResult.value);
@@ -226,11 +234,15 @@ export function App() {
         setScreenshotError(errorMessage(reason));
       }
     } catch (error) {
-      setCollectorStatus("offline");
-      setCollectorError(errorMessage(error));
+      if (requestGeneration === collectorRequestGeneration.current) {
+        setCollectorStatus("offline");
+        setCollectorError(errorMessage(error));
+      }
     } finally {
-      setInputLoading(false);
-      setScreenshotLoading(false);
+      if (requestGeneration === collectorRequestGeneration.current) {
+        setInputLoading(false);
+        setScreenshotLoading(false);
+      }
     }
   }
 
