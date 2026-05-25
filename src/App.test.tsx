@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
@@ -157,6 +157,59 @@ describe("App", () => {
     ).toBe(false);
   });
 
+  it("does not apply delayed raw input rows after switching back to redacted", async () => {
+    const segmentsResponse = createDeferred<ReturnType<typeof jsonResponse>>();
+    const fetcher = vi.fn((input: string) => {
+      if (input.startsWith("/api/text-segments")) {
+        return segmentsResponse.promise;
+      }
+      return liveDataResponse(input);
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    render(<App />);
+
+    expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: /input activity/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
+    await waitFor(() =>
+      expect(
+        fetcher.mock.calls.some(([input]) =>
+          String(input).startsWith("/api/text-segments")
+        )
+      ).toBe(true)
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^redacted$/i }));
+    await act(async () => {
+      segmentsResponse.resolve(
+        jsonResponse({
+          segments: [
+            {
+              id: "delayed-raw-segment",
+              startedAt: "2026-05-24T10:02:00Z",
+              endedAt: "2026-05-24T10:03:00Z",
+              textContent: "delayed raw text",
+              keyCount: 12,
+              backspaceCount: 0,
+              deleteCount: 0,
+              foregroundHwnd: 1,
+              foregroundPid: 2,
+              processName: "DelayedApp",
+              windowTitle: "Delayed Raw Window"
+            }
+          ]
+        })
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Delayed Raw Window")).not.toBeInTheDocument();
+    expect(screen.queryByText("delayed raw text")).not.toBeInTheDocument();
+  });
+
   it("keeps raw live titles hidden on the default redacted flow board", async () => {
     vi.stubGlobal("fetch", vi.fn(liveDataResponse));
 
@@ -175,6 +228,48 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
 
     expect(await screen.findAllByText("Sensitive client roadmap")).not.toHaveLength(0);
+  });
+
+  it("does not request raw row endpoints when raw is selected on Today", async () => {
+    const fetcher = vi.fn(liveDataResponse);
+    vi.stubGlobal("fetch", fetcher);
+
+    render(<App />);
+
+    expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
+
+    expect(await screen.findAllByText("Sensitive client roadmap")).not.toHaveLength(0);
+    expect(
+      fetcher.mock.calls.some(([input]) =>
+        String(input).startsWith("/api/text-segments")
+      )
+    ).toBe(false);
+    expect(
+      fetcher.mock.calls.some(([input]) =>
+        String(input).startsWith("/api/screenshots?")
+      )
+    ).toBe(false);
+  });
+
+  it("updates the evidence drawer when a flow bucket is selected", async () => {
+    vi.stubGlobal("fetch", vi.fn(twoBucketLiveDataResponse));
+
+    render(<App />);
+
+    const codeBucket = await screen.findByRole("button", { name: /Code, 5m/i });
+    const browserBucket = await screen.findByRole("button", { name: /Browser, 4m/i });
+    const drawer = screen.getByRole("region", { name: /evidence drawer/i });
+
+    expect(codeBucket).toHaveAttribute("aria-pressed", "true");
+    expect(within(drawer).getByText("Code")).toBeInTheDocument();
+    expect(within(drawer).queryByText("Browser")).not.toBeInTheDocument();
+
+    fireEvent.click(browserBucket);
+
+    expect(browserBucket).toHaveAttribute("aria-pressed", "true");
+    expect(within(drawer).getByText("Browser")).toBeInTheDocument();
+    expect(within(drawer).queryByText("Code")).not.toBeInTheDocument();
   });
 
   it("queries live collector data for the selected date", async () => {
@@ -299,4 +394,41 @@ async function liveDataResponse(input: string) {
     return healthResponse();
   }
   throw new Error(`Unexpected request: ${input}`);
+}
+
+async function twoBucketLiveDataResponse(input: string) {
+  if (input === "/api/time-events") {
+    return jsonResponse({
+      events: [
+        {
+          id: "live-code",
+          app: "Code",
+          title: "Code editor",
+          startedAt: "2026-05-24T10:00:00Z",
+          endedAt: "2026-05-24T10:05:00Z",
+          durationSeconds: 300
+        },
+        {
+          id: "live-browser",
+          app: "Browser",
+          title: "Research notes",
+          startedAt: "2026-05-24T10:05:00Z",
+          endedAt: "2026-05-24T10:09:00Z",
+          durationSeconds: 240
+        }
+      ]
+    });
+  }
+  return liveDataResponse(input);
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+
+  return { promise, resolve, reject };
 }

@@ -942,6 +942,12 @@ td:nth-child(2) {
   border-left-color: #b8891e;
 }
 
+.flowBucket.selected {
+  border-color: #356b63;
+  background: #f3f8f5;
+  box-shadow: inset 0 0 0 1px #356b63;
+}
+
 .flowBucket strong,
 .flowBucket span {
   min-width: 0;

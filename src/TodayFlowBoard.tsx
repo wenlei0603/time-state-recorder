@@ -6,7 +6,7 @@ import {
   Shield,
   Timer,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { buildTodayFlowModel } from "./lib/flowModel";
 import { formatDuration } from "./lib/uiModel";
@@ -37,6 +37,7 @@ export function TodayFlowBoard({
   privacyMode,
   sourceLabel,
 }: TodayFlowBoardProps) {
+  const [selectedBucketId, setSelectedBucketId] = useState<string | null>(null);
   const model = useMemo(
     () =>
       buildTodayFlowModel({
@@ -48,6 +49,10 @@ export function TodayFlowBoard({
     [events, screenshotSummary, inputSummary, privacyMode],
   );
   const evidenceTotal = model.screenshotCount + model.screenshotSkippedCount;
+  const selectedBucket =
+    model.buckets.find((bucket) => bucket.id === selectedBucketId) ??
+    model.buckets[0];
+  const selectedEvidence = selectedBucket?.evidence ?? [];
 
   return (
     <section className="flowBoard" aria-label="Today Flow Board">
@@ -56,7 +61,7 @@ export function TodayFlowBoard({
           <p className="eyebrow">Dayflow review</p>
           <h2>Today Flow Board</h2>
           <p>
-            {sourceLabel} · {privacyMode === "raw" ? "Raw evidence" : "Redacted evidence"}
+            {sourceLabel} - {privacyMode === "raw" ? "Raw evidence" : "Redacted evidence"}
           </p>
         </div>
         <div className="evidencePreview" aria-label="Privacy and collector health">
@@ -85,7 +90,7 @@ export function TodayFlowBoard({
           icon={<Camera aria-hidden="true" size={18} />}
           label="Evidence"
           value={evidenceTotal.toString()}
-          detail={`${model.screenshotCount} captured · ${model.screenshotSkippedCount} skipped`}
+          detail={`${model.screenshotCount} captured - ${model.screenshotSkippedCount} skipped`}
         />
         <FlowMetric
           icon={<Keyboard aria-hidden="true" size={18} />}
@@ -108,9 +113,14 @@ export function TodayFlowBoard({
               {model.buckets.map((bucket) => (
                 <button
                   type="button"
-                  className={`flowBucket ${bucket.confidence}`}
+                  className={`flowBucket ${bucket.confidence} ${
+                    selectedBucket?.id === bucket.id ? "selected" : ""
+                  }`}
                   key={bucket.id}
-                  aria-label={`${bucket.app}, ${formatDuration(bucket.durationSeconds)}`}
+                  aria-controls="today-flow-evidence-drawer"
+                  aria-label={`${bucket.app}, ${formatDuration(bucket.durationSeconds)}, ${bucket.title}`}
+                  aria-pressed={selectedBucket?.id === bucket.id}
+                  onClick={() => setSelectedBucketId(bucket.id)}
                 >
                   <span className="flowBucketTime">{formatTime(bucket.startedAt)}</span>
                   <strong>{bucket.app}</strong>
@@ -130,8 +140,8 @@ export function TodayFlowBoard({
           {model.evidence.length === 0 ? (
             <p className="emptyState">No time events are available yet.</p>
           ) : (
-            <div className="evidenceFacts">
-              {model.evidence.map((item) => (
+            <div className="evidenceFacts" id="today-flow-evidence-drawer">
+              {selectedEvidence.map((item) => (
                 <EvidenceRow evidence={item} key={item.id} />
               ))}
             </div>

@@ -8,7 +8,7 @@ import {
   RefreshCw,
   Search
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CollectorMonitor } from "./CollectorMonitor";
 import { DailyTracking } from "./DailyTracking";
 import { Dashboard } from "./Dashboard";
@@ -45,6 +45,12 @@ import "./styles.css";
 type CollectorStatus = "sample" | "loading" | "connected" | "offline";
 type ViewMode = "today" | "dashboard" | "timeline" | "daily" | "input";
 type InputDataStatus = UiSourceMode;
+type RefreshContext = {
+  privacyMode: PrivacyMode;
+  layers: LayerVisibility;
+  viewMode: ViewMode;
+  date: string;
+};
 
 export function App() {
   const [events, setEvents] = useState<TimeEvent[]>(feature1SampleEvents);
@@ -72,6 +78,13 @@ export function App() {
   const [granularity, setGranularity] = useState<TimelineGranularity>("event");
   const [layers, setLayers] = useState<LayerVisibility>(defaultLayerVisibility);
   const [queryDate, setQueryDate] = useState(() => currentCollectorDate());
+  const latestRefreshContext = useRef<RefreshContext>({
+    privacyMode,
+    layers,
+    viewMode,
+    date: queryDate
+  });
+  latestRefreshContext.current = { privacyMode, layers, viewMode, date: queryDate };
 
   const visibleDashboardEvents = useMemo(
     () => toVisibleDashboardEvents(events, layers),
@@ -107,11 +120,14 @@ export function App() {
   async function refreshCollector(options?: {
     privacyMode?: PrivacyMode;
     layers?: LayerVisibility;
+    viewMode?: ViewMode;
     date?: string;
   }) {
-    const effectivePrivacyMode = options?.privacyMode ?? privacyMode;
-    const effectiveLayers = options?.layers ?? layers;
-    const effectiveDate = options?.date ?? queryDate;
+    const currentContext = latestRefreshContext.current;
+    const effectivePrivacyMode = options?.privacyMode ?? currentContext.privacyMode;
+    const effectiveLayers = options?.layers ?? currentContext.layers;
+    const effectiveViewMode = options?.viewMode ?? currentContext.viewMode;
+    const effectiveDate = options?.date ?? currentContext.date;
     setCollectorStatus("loading");
     setInputLoading(true);
     setScreenshotLoading(true);
@@ -119,9 +135,12 @@ export function App() {
     setInputError(null);
     setScreenshotError(null);
     try {
-      const shouldLoadRawInput = effectivePrivacyMode === "raw";
+      const shouldLoadRawInput =
+        effectivePrivacyMode === "raw" && effectiveViewMode === "input";
       const shouldLoadScreenshotRows =
-        effectivePrivacyMode === "raw" && effectiveLayers.screenshots;
+        effectivePrivacyMode === "raw" &&
+        effectiveViewMode === "daily" &&
+        effectiveLayers.screenshots;
       const [
         eventsResult,
         summaryResult,
@@ -153,13 +172,29 @@ export function App() {
         setHealth(undefined);
       }
 
+      const latestContext = latestRefreshContext.current;
+      const dateStillCurrent = latestContext.date === effectiveDate;
+      const rawInputStillAllowed =
+        shouldLoadRawInput &&
+        latestContext.privacyMode === "raw" &&
+        latestContext.viewMode === "input" &&
+        latestContext.date === effectiveDate;
+      const screenshotRowsStillAllowed =
+        shouldLoadScreenshotRows &&
+        latestContext.privacyMode === "raw" &&
+        latestContext.viewMode === "daily" &&
+        latestContext.layers.screenshots &&
+        latestContext.date === effectiveDate;
+
       if (
         summaryResult.status === "fulfilled" &&
         segmentsResult.status === "fulfilled"
       ) {
-        setInputSummary(summaryResult.value);
-        setSegments(segmentsResult.value);
-        setInputStatus("live");
+        if (dateStillCurrent) {
+          setInputSummary(summaryResult.value);
+          setSegments(rawInputStillAllowed ? segmentsResult.value : []);
+          setInputStatus("live");
+        }
       } else {
         const reason =
           summaryResult.status === "rejected"
@@ -174,9 +209,13 @@ export function App() {
         screenshotSummaryResult.status === "fulfilled" &&
         screenshotsResult.status === "fulfilled"
       ) {
-        setScreenshotSummary(screenshotSummaryResult.value);
-        setScreenshots(screenshotsResult.value);
-        setScreenshotStatus("live");
+        if (dateStillCurrent) {
+          setScreenshotSummary(screenshotSummaryResult.value);
+          setScreenshots(
+            screenshotRowsStillAllowed ? screenshotsResult.value : []
+          );
+          setScreenshotStatus("live");
+        }
       } else {
         const reason =
           screenshotSummaryResult.status === "rejected"
@@ -248,7 +287,11 @@ export function App() {
               aria-label="Query date"
               type="date"
               value={queryDate}
-              onChange={(event) => setQueryDate(event.currentTarget.value)}
+              onChange={(event) => {
+                const nextDate = event.currentTarget.value;
+                setLatestRefreshContext({ date: nextDate });
+                setQueryDate(nextDate);
+              }}
             />
           </label>
           <button
@@ -276,7 +319,7 @@ export function App() {
         <button
           type="button"
           className={`tab ${viewMode === "today" ? "active" : ""}`}
-          onClick={() => setViewMode("today")}
+          onClick={() => changeViewMode("today")}
         >
           <Activity aria-hidden="true" size={16} />
           <span>Today</span>
@@ -284,7 +327,7 @@ export function App() {
         <button
           type="button"
           className={`tab ${viewMode === "dashboard" ? "active" : ""}`}
-          onClick={() => setViewMode("dashboard")}
+          onClick={() => changeViewMode("dashboard")}
         >
           <Gauge aria-hidden="true" size={16} />
           <span>Dashboard</span>
@@ -292,7 +335,7 @@ export function App() {
         <button
           type="button"
           className={`tab ${viewMode === "timeline" ? "active" : ""}`}
-          onClick={() => setViewMode("timeline")}
+          onClick={() => changeViewMode("timeline")}
         >
           <BarChart3 aria-hidden="true" size={16} />
           <span>Timeline</span>
@@ -300,7 +343,7 @@ export function App() {
         <button
           type="button"
           className={`tab ${viewMode === "daily" ? "active" : ""}`}
-          onClick={() => setViewMode("daily")}
+          onClick={() => changeViewMode("daily")}
         >
           <Camera aria-hidden="true" size={16} />
           <span>Daily Tracking</span>
@@ -308,7 +351,7 @@ export function App() {
         <button
           type="button"
           className={`tab ${viewMode === "input" ? "active" : ""}`}
-          onClick={() => setViewMode("input")}
+          onClick={() => changeViewMode("input")}
         >
           <Keyboard aria-hidden="true" size={16} />
           <span>Input Activity</span>
@@ -421,6 +464,7 @@ export function App() {
         ...current,
         [layer]: !current[layer]
       };
+      setLatestRefreshContext({ layers: next });
       if (layer === "screenshots" && !next.screenshots) {
         setScreenshots([]);
       }
@@ -428,26 +472,59 @@ export function App() {
         layer === "screenshots" &&
         next.screenshots &&
         sourceMode === "live" &&
-        privacyMode === "raw"
+        privacyMode === "raw" &&
+        latestRefreshContext.current.viewMode === "daily"
       ) {
-        void refreshCollector({ layers: next, privacyMode, date: queryDate });
+        void refreshCollector({
+          layers: next,
+          privacyMode,
+          viewMode: "daily",
+          date: queryDate
+        });
       }
       return next;
     });
   }
 
+  function changeViewMode(nextMode: ViewMode) {
+    setLatestRefreshContext({ viewMode: nextMode });
+    setViewMode(nextMode);
+    if (sourceMode === "live" && privacyMode === "raw" && viewNeedsRawRows(nextMode, layers)) {
+      void refreshCollector({
+        privacyMode,
+        layers,
+        viewMode: nextMode,
+        date: queryDate
+      });
+    }
+  }
+
   function changePrivacyMode(nextMode: PrivacyMode) {
+    setLatestRefreshContext({ privacyMode: nextMode });
     setPrivacyMode(nextMode);
     if (nextMode === "redacted") {
       if (sourceMode === "live") {
         setSegments([]);
         setScreenshots([]);
       }
+      setInputLoading(false);
+      setScreenshotLoading(false);
       return;
     }
     if (sourceMode === "live") {
-      void refreshCollector({ privacyMode: nextMode, date: queryDate });
+      void refreshCollector({
+        privacyMode: nextMode,
+        viewMode: latestRefreshContext.current.viewMode,
+        date: queryDate
+      });
     }
+  }
+
+  function setLatestRefreshContext(next: Partial<RefreshContext>) {
+    latestRefreshContext.current = {
+      ...latestRefreshContext.current,
+      ...next
+    };
   }
 }
 
@@ -474,6 +551,10 @@ const layerOptions: { key: LayerKey; label: string }[] = [
   { key: "input", label: "Input" },
   { key: "screenshots", label: "Screenshots" }
 ];
+
+function viewNeedsRawRows(viewMode: ViewMode, layers: LayerVisibility): boolean {
+  return viewMode === "input" || (viewMode === "daily" && layers.screenshots);
+}
 
 function SegmentedControl<T extends string>({
   label,
