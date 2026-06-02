@@ -4,9 +4,13 @@ coverage/
 .vite/
 /output/
 /.tools/
+/.worktrees/
 /.launcher/
 /target/
 /collector/target/
 /data/
+/.claude/
+/.playwright-mcp/
+/.superpowers/
 *.local
 *.log
