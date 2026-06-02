@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchTimeEvents } from "./api";
+import { fetchActivityBuckets, fetchTimeEvents } from "./api";
 
 describe("fetchTimeEvents", () => {
   it("loads time events from the collector REST API", async () => {
@@ -83,3 +83,66 @@ describe("fetchTimeEvents", () => {
     );
   });
 });
+
+describe("fetchActivityBuckets", () => {
+  it("fetches activity buckets for a date", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse({
+        date: "2026-05-24",
+        bucketSeconds: 180,
+        buckets: [
+          {
+            id: "bucket-1",
+            startAt: "2026-05-24T10:00:00Z",
+            endAt: "2026-05-24T10:03:00Z",
+            bucketSeconds: 180,
+            dominantApp: "Code",
+            dominantTitle: "main.rs",
+            normalizedTitle: "main.rs",
+            dominantDurationSeconds: 150,
+            switchCount: 1,
+            projectId: null,
+            projectName: null,
+            activityCategory: "coding",
+            attentionState: "deep_focus",
+            confidence: 0.83,
+            evidence: [],
+            visualSummaryId: null
+          }
+        ]
+      })
+    );
+
+    const result = await fetchActivityBuckets("2026-05-24", 180, fetcher);
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/activity-buckets?date=2026-05-24&bucketSeconds=180"
+    );
+    expect(result.date).toBe("2026-05-24");
+    expect(result.bucketSeconds).toBe(180);
+    expect(result.buckets[0].dominantApp).toBe("Code");
+  });
+
+  it("rejects invalid activity bucket rows", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      jsonResponse({
+        date: "2026-05-24",
+        bucketSeconds: 180,
+        buckets: [{ id: "broken" }]
+      })
+    );
+
+    await expect(fetchActivityBuckets("2026-05-24", 180, fetcher)).rejects.toThrow(
+      /invalid activity bucket/i
+    );
+  });
+});
+
+function jsonResponse(body: unknown) {
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    json: async () => body
+  };
+}

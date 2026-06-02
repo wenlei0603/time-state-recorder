@@ -1392,6 +1392,181 @@ td:nth-child(2) {
   color: #5f6d65;
 }
 
+/* Activity Review */
+
+.activityReview {
+  display: grid;
+  gap: 16px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.reviewSubtitle {
+  margin: 6px 0 0;
+  color: #5f6d65;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.activitySummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.activityReviewGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.activityReviewGrid.wide {
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+}
+
+.activityBreakdown,
+.activityBucketList,
+.activityEvidence {
+  padding: 16px;
+}
+
+.activityBreakdown h3,
+.activityBucketList h3,
+.activityEvidence h3 {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+}
+
+.breakdownRow {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.breakdownMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #5f6d65;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.breakdownTrack {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e5eae4;
+}
+
+.breakdownTrack span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #356b63;
+}
+
+.activityBucketList {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.activityBucketButton {
+  display: grid;
+  min-height: 78px;
+  grid-template-columns: 92px minmax(92px, 0.8fr) repeat(2, minmax(100px, 0.7fr)) minmax(140px, 1.3fr);
+  justify-content: stretch;
+  gap: 10px;
+  border-color: #d9dfd8;
+  background: #ffffff;
+  text-align: left;
+}
+
+.activityBucketButton.selected {
+  border-color: #356b63;
+  box-shadow: inset 3px 0 0 #356b63;
+}
+
+.activityBucketButton span,
+.activityBucketButton strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activityBucketButton span {
+  color: #5f6d65;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.activityBucketButton strong {
+  color: #17211b;
+}
+
+.bucketTime {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.selectedActivity {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #f3f6f2;
+}
+
+.selectedActivity span {
+  color: #5f6d65;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.selectedActivity strong {
+  color: #17211b;
+}
+
+.activityEvidenceRows {
+  display: grid;
+  gap: 10px;
+}
+
+.activityEvidenceRows article {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-top: 1px solid #e5eae4;
+}
+
+.activityEvidenceRows span {
+  color: #5f6d65;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.activityEvidenceRows p {
+  margin: 0;
+  color: #5f6d65;
+  font-size: 0.86rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.emptyState {
+  margin: 0;
+  color: #5f6d65;
+  font-weight: 700;
+}
+
 @media (max-width: 620px) {
   .shell {
     width: min(100vw - 20px, 1180px);
@@ -1451,6 +1626,17 @@ td:nth-child(2) {
 
   .flowSummary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sectionHeader,
+  .activityReviewGrid,
+  .activityReviewGrid.wide {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .activityBucketButton {
+    grid-template-columns: 1fr;
   }
 
   .evidencePreview {

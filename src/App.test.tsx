@@ -69,6 +69,31 @@ describe("App", () => {
     expect(screen.getByText(/active time/i)).toBeInTheDocument();
   });
 
+  it("opens the activity review view from the tab bar", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /activity review/i }));
+
+    expect(
+      screen.getByRole("heading", { name: /activity review/i })
+    ).toBeInTheDocument();
+    expect(screen.getByText(/category mix/i)).toBeInTheDocument();
+    expect(screen.getByText(/attention rhythm/i)).toBeInTheDocument();
+  });
+
+  it("keeps activity bucket titles hidden until raw mode is enabled", () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /activity review/i }));
+
+    expect(screen.getAllByText("Hidden in redacted mode").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Activity review PRD")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
+
+    expect(screen.getAllByText("Activity review PRD").length).toBeGreaterThan(0);
+  });
+
   it("exposes Toggl-style source and privacy toggles", () => {
     render(<App />);
 
@@ -447,6 +472,27 @@ describe("App", () => {
         ([input]) => input === "/api/input-summary?date=2026-05-24"
       )
     ).toBe(true);
+    expect(
+      fetcher.mock.calls.some(
+        ([input]) =>
+          input === "/api/activity-buckets?date=2026-05-24&bucketSeconds=180"
+      )
+    ).toBe(true);
+  });
+
+  it("renders live activity buckets after loading collector data", async () => {
+    vi.stubGlobal("fetch", vi.fn(liveDataResponse));
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /activity review/i }));
+
+    expect((await screen.findAllByText("Code")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Coding").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Live Activity Title")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
+
+    expect((await screen.findAllByText("Live Activity Title")).length).toBeGreaterThan(0);
   });
 
   it("loads live input segments after switching to raw privacy mode", async () => {
@@ -484,6 +530,43 @@ async function liveDataResponse(input: string) {
           startedAt: "2026-05-24T10:00:00Z",
           endedAt: "2026-05-24T10:05:00Z",
           durationSeconds: 300
+        }
+      ]
+    });
+  }
+  if (input.startsWith("/api/activity-buckets")) {
+    return jsonResponse({
+      date: "2026-05-24",
+      bucketSeconds: 180,
+      buckets: [
+        {
+          id: "live-activity-bucket",
+          startAt: "2026-05-24T10:00:00Z",
+          endAt: "2026-05-24T10:03:00Z",
+          bucketSeconds: 180,
+          dominantApp: "Code",
+          dominantTitle: "Live Activity Title",
+          normalizedTitle: "Live Activity Title",
+          dominantDurationSeconds: 150,
+          switchCount: 1,
+          projectId: null,
+          projectName: null,
+          activityCategory: "coding",
+          attentionState: "deep_focus",
+          confidence: 0.83,
+          evidence: [
+            {
+              eventId: "live-window",
+              app: "Code",
+              title: "Live Activity Title",
+              normalizedTitle: "Live Activity Title",
+              kind: "active_window",
+              startedAt: "2026-05-24T10:00:00Z",
+              endedAt: "2026-05-24T10:02:30Z",
+              durationSeconds: 150
+            }
+          ],
+          visualSummaryId: null
         }
       ]
     });

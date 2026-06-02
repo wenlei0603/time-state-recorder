@@ -9,16 +9,18 @@ import {
   Search
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ActivityReview } from "./ActivityReview";
 import { CollectorMonitor } from "./CollectorMonitor";
 import { DailyTracking } from "./DailyTracking";
 import { Dashboard } from "./Dashboard";
 import { InputActivity } from "./InputActivity";
 import { TimelineView } from "./TimelineView";
 import { TodayFlowBoard } from "./TodayFlowBoard";
+import { activitySampleBuckets } from "./data/activitySample";
 import { feature1SampleEvents } from "./data/feature1Sample";
 import { feature2SampleSegments, feature2SampleSummary } from "./data/feature2Sample";
 import { feature3SampleScreenshots, feature3SampleSummary } from "./data/feature3Sample";
-import { fetchTimeEvents } from "./lib/api";
+import { fetchActivityBuckets, fetchTimeEvents } from "./lib/api";
 import { currentCollectorDate } from "./lib/dateQuery";
 import { fetchCollectorHealth } from "./lib/health";
 import { fetchInputSummary, fetchTextSegments } from "./lib/input";
@@ -34,6 +36,7 @@ import {
   type UiSourceMode
 } from "./lib/uiModel";
 import type {
+  ActivityBucket,
   CollectorHealth,
   ScreenshotMeta,
   ScreenshotSummary,
@@ -43,7 +46,7 @@ import type {
 import "./styles.css";
 
 type CollectorStatus = "sample" | "loading" | "connected" | "offline";
-type ViewMode = "today" | "dashboard" | "timeline" | "daily" | "input";
+type ViewMode = "today" | "activity" | "dashboard" | "timeline" | "daily" | "input";
 type InputDataStatus = UiSourceMode;
 type RefreshContext = {
   privacyMode: PrivacyMode;
@@ -54,6 +57,8 @@ type RefreshContext = {
 
 export function App() {
   const [events, setEvents] = useState<TimeEvent[]>(feature1SampleEvents);
+  const [activityBuckets, setActivityBuckets] =
+    useState<ActivityBucket[]>(activitySampleBuckets);
   const [segments, setSegments] = useState<TextSegment[]>(feature2SampleSegments);
   const [inputSummary, setInputSummary] = useState(feature2SampleSummary);
   const [screenshots, setScreenshots] = useState<ScreenshotMeta[]>(
@@ -64,6 +69,9 @@ export function App() {
   const [health, setHealth] = useState<CollectorHealth | undefined>(undefined);
   const [collectorStatus, setCollectorStatus] = useState<CollectorStatus>("sample");
   const [collectorError, setCollectorError] = useState<string | null>(null);
+  const [activityStatus, setActivityStatus] = useState<UiSourceMode>("sample");
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityError, setActivityError] = useState<string | null>(null);
   const [inputStatus, setInputStatus] = useState<InputDataStatus>("sample");
   const [inputLoading, setInputLoading] = useState(false);
   const [inputError, setInputError] = useState<string | null>(null);
@@ -103,18 +111,22 @@ export function App() {
   function loadSample() {
     collectorRequestGeneration.current += 1;
     setEvents(feature1SampleEvents);
+    setActivityBuckets(activitySampleBuckets);
     setSegments(feature2SampleSegments);
     setInputSummary(feature2SampleSummary);
     setScreenshots(feature3SampleScreenshots);
     setScreenshotSummary(feature3SampleSummary);
     setHealth(undefined);
     setSourceMode("sample");
+    setActivityStatus("sample");
     setInputStatus("sample");
     setScreenshotStatus("sample");
+    setActivityLoading(false);
     setInputLoading(false);
     setScreenshotLoading(false);
     setCollectorStatus("sample");
     setCollectorError(null);
+    setActivityError(null);
     setInputError(null);
     setScreenshotError(null);
   }
@@ -133,9 +145,11 @@ export function App() {
     const effectiveViewMode = options?.viewMode ?? currentContext.viewMode;
     const effectiveDate = options?.date ?? currentContext.date;
     setCollectorStatus("loading");
+    setActivityLoading(true);
     setInputLoading(true);
     setScreenshotLoading(true);
     setCollectorError(null);
+    setActivityError(null);
     setInputError(null);
     setScreenshotError(null);
     try {
@@ -147,6 +161,7 @@ export function App() {
         effectiveLayers.screenshots;
       const [
         eventsResult,
+        activityResult,
         summaryResult,
         segmentsResult,
         screenshotSummaryResult,
@@ -154,6 +169,7 @@ export function App() {
         healthResult
       ] = await Promise.allSettled([
         fetchTimeEvents(),
+        fetchActivityBuckets(effectiveDate, 180),
         fetchInputSummary(effectiveDate),
         shouldLoadRawInput ? fetchTextSegments(effectiveDate) : Promise.resolve([]),
         fetchScreenshotSummary(effectiveDate),
@@ -194,6 +210,15 @@ export function App() {
           latestContext.viewMode === "today") &&
         latestContext.layers.screenshots &&
         latestContext.date === effectiveDate;
+
+      if (activityResult.status === "fulfilled") {
+        if (dateStillCurrent) {
+          setActivityBuckets(activityResult.value.buckets);
+          setActivityStatus("live");
+        }
+      } else {
+        setActivityError(errorMessage(activityResult.reason));
+      }
 
       if (
         summaryResult.status === "fulfilled" &&
@@ -238,9 +263,11 @@ export function App() {
       if (requestGeneration === collectorRequestGeneration.current) {
         setCollectorStatus("offline");
         setCollectorError(errorMessage(error));
+        setActivityError(errorMessage(error));
       }
     } finally {
       if (requestGeneration === collectorRequestGeneration.current) {
+        setActivityLoading(false);
         setInputLoading(false);
         setScreenshotLoading(false);
       }
@@ -339,6 +366,14 @@ export function App() {
         </button>
         <button
           type="button"
+          className={`tab ${viewMode === "activity" ? "active" : ""}`}
+          onClick={() => changeViewMode("activity")}
+        >
+          <Activity aria-hidden="true" size={16} />
+          <span>Activity Review</span>
+        </button>
+        <button
+          type="button"
           className={`tab ${viewMode === "dashboard" ? "active" : ""}`}
           onClick={() => changeViewMode("dashboard")}
         >
@@ -401,6 +436,12 @@ export function App() {
           Live collector unavailable. Keeping current data visible: {collectorError}
         </p>
       )}
+      {activityError && (
+        <p className="sampleNotice" role="status">
+          Activity layer unavailable. Keeping {activityStatus} activity data visible:{" "}
+          {activityError}
+        </p>
+      )}
       {inputError && (
         <p className="sampleNotice" role="status">
           Input layer unavailable. Keeping {inputStatus} input data visible: {inputError}
@@ -423,6 +464,17 @@ export function App() {
           privacyMode={privacyMode}
           screenshotsVisible={layers.screenshots}
           sourceLabel={sourceMode === "live" ? "Live collector" : "Sample workspace"}
+        />
+      ) : viewMode === "activity" ? (
+        <ActivityReview
+          date={queryDate}
+          buckets={activityBuckets}
+          sourceMode={activityStatus}
+          loading={activityLoading}
+          error={activityError}
+          privacyMode={privacyMode}
+          onLoadSample={loadSample}
+          onLoadLive={() => void refreshCollector()}
         />
       ) : viewMode === "daily" ? (
         <DailyTracking

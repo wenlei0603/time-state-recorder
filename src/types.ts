@@ -10,6 +10,65 @@ export type TimeEvent = {
   durationSeconds?: number;
 };
 
+export type ActivityCategory =
+  | "project_work"
+  | "research"
+  | "writing"
+  | "coding"
+  | "communication"
+  | "meeting"
+  | "admin"
+  | "learning"
+  | "planning"
+  | "loafing"
+  | "personal"
+  | "idle"
+  | "unknown";
+
+export type AttentionState =
+  | "deep_focus"
+  | "steady"
+  | "light_switching"
+  | "fragmented"
+  | "away"
+  | "unknown";
+
+export type BucketEvidence = {
+  eventId: string;
+  app: string;
+  title: string;
+  normalizedTitle: string;
+  kind: "active_window" | "lifecycle";
+  startedAt: string;
+  endedAt: string;
+  durationSeconds: number;
+};
+
+export type ActivityBucket = {
+  id: string;
+  startAt: string;
+  endAt: string;
+  bucketSeconds: number;
+  dominantApp: string;
+  dominantTitle: string;
+  normalizedTitle: string;
+  dominantDurationSeconds: number;
+  switchCount: number;
+  projectId?: string;
+  projectName?: string;
+  activityCategory: ActivityCategory;
+  attentionState: AttentionState;
+  confidence: number;
+  evidence: BucketEvidence[];
+  visualSummaryId?: number;
+};
+
+export type ActivityBucketsResponse = {
+  date: string;
+  bucketSeconds: number;
+  buckets: ActivityBucket[];
+};
+
 export type PrivacyMode = "redacted" | "raw";
 
 export type FlowConfidence = "high" | "partial" | "uncertain";
