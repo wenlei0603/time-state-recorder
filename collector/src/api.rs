@@ -756,21 +756,23 @@ fn spawn_screenshot_loop(
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
-    let h = match state.health.lock() {
-        Ok(h) => h,
+    let health_snapshot = match state.health.lock() {
+        Ok(h) => h.clone(),
         Err(_) => return internal_error("health lock poisoned"),
     };
 
-    let uptime = (Utc::now() - h.started_at).num_seconds().max(0) as u64;
+    let uptime = (Utc::now() - health_snapshot.started_at)
+        .num_seconds()
+        .max(0) as u64;
 
-    let overall = if h.window_collector.status == "error"
-        || h.input_collector.status == "error"
-        || h.screenshot_collector.status == "error"
+    let overall = if health_snapshot.window_collector.status == "error"
+        || health_snapshot.input_collector.status == "error"
+        || health_snapshot.screenshot_collector.status == "error"
     {
         "error"
-    } else if h.window_collector.status == "not_started"
-        || h.input_collector.status == "not_started"
-        || h.screenshot_collector.status == "not_started"
+    } else if health_snapshot.window_collector.status == "not_started"
+        || health_snapshot.input_collector.status == "not_started"
+        || health_snapshot.screenshot_collector.status == "not_started"
     {
         "degraded"
     } else {
@@ -803,7 +805,7 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
         status: overall.into(),
         uptime_seconds: uptime,
         db_stats,
-        ..h.clone()
+        ..health_snapshot
     })
     .into_response()
 }
@@ -1194,6 +1196,41 @@ mod tests {
         assert_eq!(health.window_collector.error_count, 0);
         assert_eq!(health.window_collector.last_error, None);
         assert_eq!(health.window_collector.last_event_at, None);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn health_does_not_hold_health_lock_while_waiting_for_store() {
+        let store = Store::open_memory().unwrap();
+        store.init().unwrap();
+        let state = default_state(store, None, None);
+        let state_for_thread = state.clone();
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+
+        let holder = std::thread::spawn(move || {
+            let _store = state_for_thread.store.lock().unwrap();
+            locked_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        locked_rx.recv().unwrap();
+
+        let state_for_request = state.clone();
+        let health_task =
+            tokio::spawn(async move { health(State(state_for_request)).await.into_response() });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let health_lock_available = state.health.try_lock().is_ok();
+        release_tx.send(()).unwrap();
+        holder.join().unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(1), health_task)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(
+            health_lock_available,
+            "health endpoint must not hold the health lock while waiting for store stats"
+        );
     }
 
     #[test]

@@ -334,6 +334,23 @@ describe("App", () => {
     ).toBe(false);
   });
 
+  it("switches to live when optional screenshot summary loading is still pending", async () => {
+    const fetcher = vi.fn((input: string) => {
+      if (input.startsWith("/api/screenshot-summary")) {
+        return new Promise<never>(() => {});
+      }
+      return liveDataResponse(input);
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    render(<App />);
+
+    await waitFor(
+      () => expect(screen.getByText("Live collector")).toBeInTheDocument(),
+      { timeout: 500 }
+    );
+  });
+
   it("loads screenshot evidence but not text segments when raw is selected on Today", async () => {
     const fetcher = vi.fn(liveDataResponse);
     vi.stubGlobal("fetch", fetcher);

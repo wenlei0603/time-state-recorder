@@ -167,132 +167,169 @@ export function App() {
     setInputError(null);
     setScreenshotError(null);
     setVisualSummaryError(null);
+    const isCurrentRequest = () =>
+      requestGeneration === collectorRequestGeneration.current;
+    const isDateCurrent = () =>
+      latestRefreshContext.current.date === effectiveDate;
+    const shouldLoadRawInput =
+      effectivePrivacyMode === "raw" && effectiveViewMode === "input";
+    const shouldLoadScreenshotRows =
+      effectivePrivacyMode === "raw" &&
+      (effectiveViewMode === "daily" || effectiveViewMode === "today") &&
+      effectiveLayers.screenshots;
+
     try {
-      const shouldLoadRawInput =
-        effectivePrivacyMode === "raw" && effectiveViewMode === "input";
-      const shouldLoadScreenshotRows =
-        effectivePrivacyMode === "raw" &&
-        (effectiveViewMode === "daily" || effectiveViewMode === "today") &&
-        effectiveLayers.screenshots;
-      const [
-        eventsResult,
-        activityResult,
-        summaryResult,
-        segmentsResult,
-        screenshotSummaryResult,
-        screenshotsResult,
-        visualSummariesResult,
-        healthResult
-      ] = await Promise.allSettled([
-        fetchTimeEvents(),
-        fetchActivityBuckets(effectiveDate, 180),
-        fetchInputSummary(effectiveDate),
-        shouldLoadRawInput ? fetchTextSegments(effectiveDate) : Promise.resolve([]),
-        fetchScreenshotSummary(effectiveDate),
-        shouldLoadScreenshotRows ? fetchScreenshots(effectiveDate) : Promise.resolve([]),
-        fetchVisualSummaries(effectiveDate),
-        fetchCollectorHealth()
-      ]);
+      void fetchTimeEvents()
+        .then((eventRows) => {
+          if (!isCurrentRequest()) {
+            return;
+          }
+          setEvents(eventRows);
+          setSourceMode("live");
+          setCollectorStatus("connected");
+        })
+        .catch((error) => {
+          if (!isCurrentRequest()) {
+            return;
+          }
+          setCollectorStatus("offline");
+          setCollectorError(errorMessage(error));
+        });
 
-      if (requestGeneration !== collectorRequestGeneration.current) {
-        return;
-      }
+      void fetchCollectorHealth()
+        .then((collectorHealth) => {
+          if (isCurrentRequest()) {
+            setHealth(collectorHealth);
+          }
+        })
+        .catch(() => {
+          if (isCurrentRequest()) {
+            setHealth(undefined);
+          }
+        });
 
-      if (eventsResult.status === "fulfilled") {
-        setEvents(eventsResult.value);
-        setSourceMode("live");
-        setCollectorStatus("connected");
-      } else {
-        setCollectorStatus("offline");
-        setCollectorError(errorMessage(eventsResult.reason));
-      }
-
-      if (healthResult.status === "fulfilled") {
-        setHealth(healthResult.value);
-      } else {
-        setHealth(undefined);
-      }
-
-      const latestContext = latestRefreshContext.current;
-      const dateStillCurrent = latestContext.date === effectiveDate;
-      const rawInputStillAllowed =
-        shouldLoadRawInput &&
-        latestContext.privacyMode === "raw" &&
-        latestContext.viewMode === "input" &&
-        latestContext.date === effectiveDate;
-      const screenshotRowsStillAllowed =
-        shouldLoadScreenshotRows &&
-        latestContext.privacyMode === "raw" &&
-        (latestContext.viewMode === "daily" ||
-          latestContext.viewMode === "today") &&
-        latestContext.layers.screenshots &&
-        latestContext.date === effectiveDate;
-
-      if (activityResult.status === "fulfilled") {
-        if (dateStillCurrent) {
-          setActivityBuckets(activityResult.value.buckets);
+      void fetchActivityBuckets(effectiveDate, 180)
+        .then((result) => {
+          if (!isCurrentRequest() || !isDateCurrent()) {
+            return;
+          }
+          setActivityBuckets(result.buckets);
           setActivityStatus("live");
-        }
-      } else {
-        setActivityError(errorMessage(activityResult.reason));
-      }
+        })
+        .catch((error) => {
+          if (isCurrentRequest()) {
+            setActivityError(errorMessage(error));
+          }
+        })
+        .finally(() => {
+          if (isCurrentRequest()) {
+            setActivityLoading(false);
+          }
+        });
 
-      if (visualSummariesResult.status === "fulfilled") {
-        if (dateStillCurrent) {
-          setVisualSummaries(visualSummariesResult.value);
-        }
-      } else {
-        setVisualSummaryError(errorMessage(visualSummariesResult.reason));
-      }
+      void Promise.allSettled([
+        fetchInputSummary(effectiveDate),
+        shouldLoadRawInput ? fetchTextSegments(effectiveDate) : Promise.resolve([])
+      ])
+        .then(([summaryResult, segmentsResult]) => {
+          if (!isCurrentRequest()) {
+            return;
+          }
+          const latestContext = latestRefreshContext.current;
+          const rawInputStillAllowed =
+            shouldLoadRawInput &&
+            latestContext.privacyMode === "raw" &&
+            latestContext.viewMode === "input" &&
+            latestContext.date === effectiveDate;
+          if (
+            summaryResult.status === "fulfilled" &&
+            segmentsResult.status === "fulfilled"
+          ) {
+            if (latestContext.date === effectiveDate) {
+              setInputSummary(summaryResult.value);
+              setSegments(rawInputStillAllowed ? segmentsResult.value : []);
+              setInputStatus("live");
+            }
+          } else {
+            const reason =
+              summaryResult.status === "rejected"
+                ? summaryResult.reason
+                : segmentsResult.status === "rejected"
+                  ? segmentsResult.reason
+                  : "unknown input error";
+            setInputError(errorMessage(reason));
+          }
+        })
+        .finally(() => {
+          if (isCurrentRequest()) {
+            setInputLoading(false);
+          }
+        });
 
-      if (
-        summaryResult.status === "fulfilled" &&
-        segmentsResult.status === "fulfilled"
-      ) {
-        if (dateStillCurrent) {
-          setInputSummary(summaryResult.value);
-          setSegments(rawInputStillAllowed ? segmentsResult.value : []);
-          setInputStatus("live");
-        }
-      } else {
-        const reason =
-          summaryResult.status === "rejected"
-            ? summaryResult.reason
-            : segmentsResult.status === "rejected"
-              ? segmentsResult.reason
-              : "unknown input error";
-        setInputError(errorMessage(reason));
-      }
+      void Promise.allSettled([
+        fetchScreenshotSummary(effectiveDate),
+        shouldLoadScreenshotRows
+          ? fetchScreenshots(effectiveDate)
+          : Promise.resolve([])
+      ])
+        .then(([screenshotSummaryResult, screenshotsResult]) => {
+          if (!isCurrentRequest()) {
+            return;
+          }
+          const latestContext = latestRefreshContext.current;
+          const screenshotRowsStillAllowed =
+            shouldLoadScreenshotRows &&
+            latestContext.privacyMode === "raw" &&
+            (latestContext.viewMode === "daily" ||
+              latestContext.viewMode === "today") &&
+            latestContext.layers.screenshots &&
+            latestContext.date === effectiveDate;
+          if (
+            screenshotSummaryResult.status === "fulfilled" &&
+            screenshotsResult.status === "fulfilled"
+          ) {
+            if (latestContext.date === effectiveDate) {
+              setScreenshotSummary(screenshotSummaryResult.value);
+              setScreenshots(
+                screenshotRowsStillAllowed ? screenshotsResult.value : []
+              );
+              setScreenshotStatus("live");
+            }
+          } else {
+            const reason =
+              screenshotSummaryResult.status === "rejected"
+                ? screenshotSummaryResult.reason
+                : screenshotsResult.status === "rejected"
+                  ? screenshotsResult.reason
+                  : "unknown screenshot error";
+            setScreenshotError(errorMessage(reason));
+          }
+        })
+        .finally(() => {
+          if (isCurrentRequest()) {
+            setScreenshotLoading(false);
+          }
+        });
 
-      if (
-        screenshotSummaryResult.status === "fulfilled" &&
-        screenshotsResult.status === "fulfilled"
-      ) {
-        if (dateStillCurrent) {
-          setScreenshotSummary(screenshotSummaryResult.value);
-          setScreenshots(
-            screenshotRowsStillAllowed ? screenshotsResult.value : []
-          );
-          setScreenshotStatus("live");
-        }
-      } else {
-        const reason =
-          screenshotSummaryResult.status === "rejected"
-            ? screenshotSummaryResult.reason
-            : screenshotsResult.status === "rejected"
-              ? screenshotsResult.reason
-              : "unknown screenshot error";
-        setScreenshotError(errorMessage(reason));
-      }
+      void fetchVisualSummaries(effectiveDate)
+        .then((summaries) => {
+          if (isCurrentRequest() && isDateCurrent()) {
+            setVisualSummaries(summaries);
+          }
+        })
+        .catch((error) => {
+          if (isCurrentRequest()) {
+            setVisualSummaryError(errorMessage(error));
+          }
+        });
     } catch (error) {
-      if (requestGeneration === collectorRequestGeneration.current) {
+      if (isCurrentRequest()) {
         setCollectorStatus("offline");
         setCollectorError(errorMessage(error));
         setActivityError(errorMessage(error));
+        setInputError(errorMessage(error));
+        setScreenshotError(errorMessage(error));
         setVisualSummaryError(errorMessage(error));
-      }
-    } finally {
-      if (requestGeneration === collectorRequestGeneration.current) {
         setActivityLoading(false);
         setInputLoading(false);
         setScreenshotLoading(false);
