@@ -157,6 +157,45 @@ pub enum ActivityCategory {
     Unknown,
 }
 
+impl ActivityCategory {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ProjectWork => "project_work",
+            Self::Research => "research",
+            Self::Writing => "writing",
+            Self::Coding => "coding",
+            Self::Communication => "communication",
+            Self::Meeting => "meeting",
+            Self::Admin => "admin",
+            Self::Learning => "learning",
+            Self::Planning => "planning",
+            Self::Loafing => "loafing",
+            Self::Personal => "personal",
+            Self::Idle => "idle",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "project_work" => Some(Self::ProjectWork),
+            "research" => Some(Self::Research),
+            "writing" => Some(Self::Writing),
+            "coding" => Some(Self::Coding),
+            "communication" => Some(Self::Communication),
+            "meeting" => Some(Self::Meeting),
+            "admin" => Some(Self::Admin),
+            "learning" => Some(Self::Learning),
+            "planning" => Some(Self::Planning),
+            "loafing" => Some(Self::Loafing),
+            "personal" => Some(Self::Personal),
+            "idle" => Some(Self::Idle),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AttentionState {
@@ -245,6 +284,26 @@ pub struct ScreenshotMeta {
     pub process_name: Option<String>,
     pub window_title: Option<String>,
     pub capture_status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualSummary {
+    pub id: i64,
+    pub screenshot_id: i64,
+    pub captured_at: DateTime<Utc>,
+    pub model_provider: String,
+    pub model_name: String,
+    pub prompt_version: String,
+    pub summary_text: String,
+    pub activity_category: ActivityCategory,
+    pub project_hints: Vec<String>,
+    pub visible_apps: Vec<String>,
+    pub visible_text_hints: Vec<String>,
+    pub risk_flags: Vec<String>,
+    pub confidence: f64,
+    pub created_at: DateTime<Utc>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

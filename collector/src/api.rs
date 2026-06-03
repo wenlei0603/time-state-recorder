@@ -8,7 +8,7 @@ use std::{
 use anyhow::Result;
 use axum::{
     Json, Router,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -24,8 +24,8 @@ use crate::{
     input,
     interval::build_time_events_with_lifecycle,
     models::{
-        ActivityBucket, BlockerHit, CollectorHealth, DbStats, LifecycleEvent, LifecycleType,
-        ScreenshotMeta, SubsystemHealth, TimeEvent, WindowSnapshot,
+        ActivityBucket, ActivityCategory, BlockerHit, CollectorHealth, DbStats, LifecycleEvent,
+        LifecycleType, ScreenshotMeta, SubsystemHealth, TimeEvent, VisualSummary, WindowSnapshot,
     },
     screenshot,
     storage::Store,
@@ -93,6 +93,18 @@ struct BlockersResponse {
 #[serde(rename_all = "camelCase")]
 struct ScreenshotsResponse {
     screenshots: Vec<ScreenshotMeta>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VisualSummariesResponse {
+    summaries: Vec<VisualSummary>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VisualAnalyzeResponse {
+    summary: VisualSummary,
 }
 
 #[derive(Debug, Serialize)]
@@ -187,6 +199,8 @@ fn router_from_state(state: AppState) -> Router {
         .route("/api/blockers", get(blockers))
         .route("/api/screenshots", get(screenshots))
         .route("/api/screenshot-summary", get(screenshot_summary))
+        .route("/api/visual-summaries", get(visual_summaries))
+        .route("/api/screenshots/{id}/analyze", post(analyze_screenshot))
         .route("/api/input-events", get(input_events))
         .route("/api/input-summary", get(input_summary))
         .route("/api/text-segments", get(text_segments))
@@ -760,6 +774,52 @@ async fn screenshot_summary(
     }
 }
 
+async fn visual_summaries(
+    State(state): State<AppState>,
+    Query(query): Query<DateQuery>,
+) -> impl IntoResponse {
+    let date = query
+        .date
+        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+    if NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() {
+        return bad_request("date must use YYYY-MM-DD");
+    }
+    let limit = query.limit.unwrap_or(500).min(5_000);
+    let store = match state.store.lock() {
+        Ok(store) => store,
+        Err(_) => return internal_error("store lock poisoned"),
+    };
+
+    match store.list_visual_summaries_by_date(&date, limit) {
+        Ok(summaries) => Json(VisualSummariesResponse { summaries }).into_response(),
+        Err(err) => internal_error(err),
+    }
+}
+
+async fn analyze_screenshot(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let now = Utc::now();
+    let mut store = match state.store.lock() {
+        Ok(store) => store,
+        Err(_) => return internal_error("store lock poisoned"),
+    };
+    let screenshot = match store.get_screenshot(id) {
+        Ok(Some(screenshot)) => screenshot,
+        Ok(None) => return (StatusCode::NOT_FOUND, "screenshot not found").into_response(),
+        Err(err) => return internal_error(err),
+    };
+    let mut summary = local_stub_visual_summary(&screenshot, now);
+    match store.insert_visual_summary(&summary) {
+        Ok(summary_id) => {
+            summary.id = summary_id;
+            Json(VisualAnalyzeResponse { summary }).into_response()
+        }
+        Err(err) => internal_error(err),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct InputEventsQuery {
     limit: Option<usize>,
@@ -833,6 +893,105 @@ async fn shutdown(State(state): State<AppState>) -> impl IntoResponse {
         }
         None => (StatusCode::SERVICE_UNAVAILABLE, "shutdown unavailable").into_response(),
     }
+}
+
+fn local_stub_visual_summary(
+    screenshot: &ScreenshotMeta,
+    created_at: DateTime<Utc>,
+) -> VisualSummary {
+    let app = screenshot
+        .process_name
+        .clone()
+        .unwrap_or_else(|| "Unknown app".to_string());
+    let title = screenshot
+        .window_title
+        .clone()
+        .unwrap_or_else(|| "Untitled window".to_string());
+    let activity_category =
+        categorize_screenshot_metadata(&app, &title, &screenshot.capture_status);
+    let visible_apps = screenshot.process_name.iter().cloned().collect::<Vec<_>>();
+    let visible_text_hints = screenshot.window_title.iter().cloned().collect::<Vec<_>>();
+    let project_hints = project_hints_from_metadata(&app, &title);
+    let mut risk_flags = Vec::new();
+    if screenshot.capture_status != "ok" {
+        risk_flags.push(format!("capture_status:{}", screenshot.capture_status));
+    }
+    if screenshot.width == 0 || screenshot.height == 0 {
+        risk_flags.push("empty_dimensions".to_string());
+    }
+
+    let summary_text = if screenshot.capture_status == "ok" {
+        format!(
+            "Metadata-only local summary: {app} appears focused on {title} at {}x{}.",
+            screenshot.width, screenshot.height
+        )
+    } else {
+        format!(
+            "Metadata-only local summary: screenshot was not visually analyzed because capture status is {}.",
+            screenshot.capture_status
+        )
+    };
+
+    VisualSummary {
+        id: 0,
+        screenshot_id: screenshot.id,
+        captured_at: screenshot.captured_at,
+        model_provider: "local_stub".to_string(),
+        model_name: "metadata-v1".to_string(),
+        prompt_version: "visual-summary-v1".to_string(),
+        summary_text,
+        activity_category,
+        project_hints,
+        visible_apps,
+        visible_text_hints,
+        risk_flags,
+        confidence: 0.35,
+        created_at,
+        error: None,
+    }
+}
+
+fn categorize_screenshot_metadata(
+    app: &str,
+    title: &str,
+    capture_status: &str,
+) -> ActivityCategory {
+    if capture_status != "ok" {
+        return ActivityCategory::Unknown;
+    }
+    let combined = format!(
+        "{} {}",
+        app.to_ascii_lowercase(),
+        title.to_ascii_lowercase()
+    );
+    if contains_any(&combined, &["code", "cursor", "cargo", "rust", "tsr"]) {
+        ActivityCategory::Coding
+    } else if contains_any(&combined, &["word", "docx", "writing"]) {
+        ActivityCategory::Writing
+    } else if contains_any(&combined, &["wechat", "weixin", "mail", "outlook"]) {
+        ActivityCategory::Communication
+    } else if contains_any(&combined, &["chrome", "msedge", "edge", "browser"]) {
+        ActivityCategory::Research
+    } else {
+        ActivityCategory::Unknown
+    }
+}
+
+fn project_hints_from_metadata(app: &str, title: &str) -> Vec<String> {
+    let combined = format!(
+        "{} {}",
+        app.to_ascii_lowercase(),
+        title.to_ascii_lowercase()
+    );
+    if contains_any(&combined, &["time state", "tsr", "activity review"]) {
+        vec!["Time State Recorder".to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
+fn contains_any(value: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| value.contains(needle))
 }
 
 fn internal_error(message: impl std::fmt::Display) -> axum::response::Response {

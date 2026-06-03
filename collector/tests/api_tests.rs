@@ -4,7 +4,10 @@ use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use tsr_collector::{
     api,
-    models::{CaptureStatus, LifecycleType, ScreenshotMeta, WindowSnapshot},
+    models::{
+        ActivityCategory, CaptureStatus, LifecycleType, ScreenshotMeta, VisualSummary,
+        WindowSnapshot,
+    },
     storage::Store,
 };
 
@@ -649,6 +652,121 @@ async fn serves_screenshots_without_skip_rows() {
     assert_eq!(screenshots.len(), 1);
     assert_eq!(screenshots[0]["captureStatus"], "ok");
     assert_eq!(screenshots[0]["filePath"], "2026-05-24/09-00.jpg");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn serves_visual_summaries_for_date() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+    let screenshot_id = store
+        .insert_screenshot(
+            &session_id,
+            &ScreenshotMeta {
+                id: 0,
+                captured_at: ts("2026-05-24T10:00:00Z"),
+                file_path: "2026-05-24/10-00.jpg".into(),
+                width: 1280,
+                height: 720,
+                process_name: Some("Code.exe".into()),
+                window_title: Some("main.rs".into()),
+                capture_status: "ok".into(),
+            },
+        )
+        .unwrap();
+    store
+        .insert_visual_summary(&VisualSummary {
+            id: 0,
+            screenshot_id,
+            captured_at: ts("2026-05-24T10:00:00Z"),
+            model_provider: "local_stub".into(),
+            model_name: "metadata-v1".into(),
+            prompt_version: "visual-summary-v1".into(),
+            summary_text: "Code editor focused on main.rs".into(),
+            activity_category: ActivityCategory::Coding,
+            project_hints: vec!["Time State Recorder".into()],
+            visible_apps: vec!["Code.exe".into()],
+            visible_text_hints: vec!["main.rs".into()],
+            risk_flags: vec![],
+            confidence: 0.65,
+            created_at: ts("2026-05-24T10:01:00Z"),
+            error: None,
+        })
+        .unwrap();
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!(
+        "http://{addr}/api/visual-summaries?date=2026-05-24"
+    ))
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["summaries"][0]["screenshotId"], screenshot_id);
+    assert_eq!(body["summaries"][0]["modelProvider"], "local_stub");
+    assert_eq!(body["summaries"][0]["activityCategory"], "coding");
+    assert_eq!(body["summaries"][0]["visibleApps"][0], "Code.exe");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn analyzes_screenshot_with_local_stub() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+    let screenshot_id = store
+        .insert_screenshot(
+            &session_id,
+            &ScreenshotMeta {
+                id: 0,
+                captured_at: ts("2026-05-24T10:00:00Z"),
+                file_path: "2026-05-24/10-00.jpg".into(),
+                width: 1280,
+                height: 720,
+                process_name: Some("Code.exe".into()),
+                window_title: Some("main.rs".into()),
+                capture_status: "ok".into(),
+            },
+        )
+        .unwrap();
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "http://{addr}/api/screenshots/{screenshot_id}/analyze"
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["summary"]["screenshotId"], screenshot_id);
+    assert_eq!(body["summary"]["modelProvider"], "local_stub");
+    assert_eq!(body["summary"]["modelName"], "metadata-v1");
+    assert_eq!(body["summary"]["activityCategory"], "coding");
+    assert!(
+        body["summary"]["summaryText"]
+            .as_str()
+            .unwrap()
+            .contains("Code.exe")
+    );
 
     server.abort();
 }

@@ -2,7 +2,10 @@ use chrono::{DateTime, Utc};
 use rusqlite::params;
 use tsr_collector::{
     interval::build_time_events_with_lifecycle,
-    models::{CaptureStatus, LifecycleType, ScreenshotMeta, WindowSnapshot},
+    models::{
+        ActivityCategory, CaptureStatus, LifecycleType, ScreenshotMeta, VisualSummary,
+        WindowSnapshot,
+    },
     storage::Store,
 };
 
@@ -96,6 +99,62 @@ fn persists_screenshot_metadata_for_session() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].file_path, "2026-05-23/09-01.jpg");
     assert_eq!(rows[0].process_name.as_deref(), Some("Code.exe"));
+}
+
+#[test]
+fn visual_summaries_round_trip_by_date() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+    let screenshot_id = store
+        .insert_screenshot(
+            &session_id,
+            &ScreenshotMeta {
+                id: 0,
+                captured_at: ts("2026-05-23T09:01:00Z"),
+                file_path: "2026-05-23/09-01.jpg".into(),
+                width: 1280,
+                height: 720,
+                process_name: Some("Code.exe".into()),
+                window_title: Some("main.rs".into()),
+                capture_status: "ok".into(),
+            },
+        )
+        .unwrap();
+
+    let inserted = store
+        .insert_visual_summary(&VisualSummary {
+            id: 0,
+            screenshot_id,
+            captured_at: ts("2026-05-23T09:01:00Z"),
+            model_provider: "local_stub".into(),
+            model_name: "metadata-v1".into(),
+            prompt_version: "visual-summary-v1".into(),
+            summary_text: "Code editor focused on main.rs".into(),
+            activity_category: ActivityCategory::Coding,
+            project_hints: vec!["Time State Recorder".into()],
+            visible_apps: vec!["Code.exe".into()],
+            visible_text_hints: vec!["main.rs".into()],
+            risk_flags: vec![],
+            confidence: 0.65,
+            created_at: ts("2026-05-23T09:02:00Z"),
+            error: None,
+        })
+        .unwrap();
+
+    let rows = store
+        .list_visual_summaries_by_date("2026-05-23", 10)
+        .unwrap();
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, inserted);
+    assert_eq!(rows[0].screenshot_id, screenshot_id);
+    assert_eq!(rows[0].model_provider, "local_stub");
+    assert_eq!(rows[0].activity_category, ActivityCategory::Coding);
+    assert_eq!(rows[0].project_hints, vec!["Time State Recorder"]);
+    assert_eq!(rows[0].visible_apps, vec!["Code.exe"]);
+    assert_eq!(rows[0].visible_text_hints, vec!["main.rs"]);
+    assert_eq!(rows[0].summary_text, "Code editor focused on main.rs");
 }
 
 #[test]

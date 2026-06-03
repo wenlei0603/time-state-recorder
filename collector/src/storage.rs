@@ -6,8 +6,9 @@ use rusqlite::{Connection, Transaction, params, types::Type};
 use uuid::Uuid;
 
 use crate::models::{
-    AppScreenshotCount, BlockerHit, CaptureStatus, LifecycleEvent, LifecycleType, ScreenshotMeta,
-    ScreenshotSkippedReasonCount, ScreenshotSummary, StoredWindowEvent, WindowSnapshot,
+    ActivityCategory, AppScreenshotCount, BlockerHit, CaptureStatus, LifecycleEvent, LifecycleType,
+    ScreenshotMeta, ScreenshotSkippedReasonCount, ScreenshotSummary, StoredWindowEvent,
+    VisualSummary, WindowSnapshot,
 };
 
 pub struct Store {
@@ -106,6 +107,27 @@ impl Store {
               FOREIGN KEY(session_id) REFERENCES capture_sessions(id)
             );
             CREATE INDEX IF NOT EXISTS idx_screenshots_at ON screenshot_thumbnails(captured_at);
+
+            CREATE TABLE IF NOT EXISTS visual_summaries (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              screenshot_id INTEGER NOT NULL,
+              captured_at TEXT NOT NULL,
+              model_provider TEXT NOT NULL,
+              model_name TEXT NOT NULL,
+              prompt_version TEXT NOT NULL,
+              summary_text TEXT NOT NULL,
+              activity_category TEXT NOT NULL,
+              project_hints_json TEXT NOT NULL,
+              visible_apps_json TEXT NOT NULL,
+              visible_text_hints_json TEXT NOT NULL,
+              risk_flags_json TEXT NOT NULL,
+              confidence REAL NOT NULL,
+              created_at TEXT NOT NULL,
+              error TEXT,
+              FOREIGN KEY(screenshot_id) REFERENCES screenshot_thumbnails(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_visual_summaries_at ON visual_summaries(captured_at);
+            CREATE INDEX IF NOT EXISTS idx_visual_summaries_screenshot ON visual_summaries(screenshot_id);
 
             CREATE TABLE IF NOT EXISTS input_events (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -534,6 +556,35 @@ impl Store {
         Ok(items)
     }
 
+    pub fn get_screenshot(&self, id: i64) -> Result<Option<ScreenshotMeta>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT id, captured_at, file_path, width, height, process_name, window_title, capture_status
+            FROM screenshot_thumbnails
+            WHERE id = ?1
+            "#,
+        )?;
+
+        let mut rows = statement.query_map(params![id], |row| {
+            let captured_at: String = row.get(1)?;
+            Ok(ScreenshotMeta {
+                id: row.get(0)?,
+                captured_at: parse_ts(&captured_at)?,
+                file_path: row.get(2)?,
+                width: row.get(3)?,
+                height: row.get(4)?,
+                process_name: row.get(5)?,
+                window_title: row.get(6)?,
+                capture_status: row.get(7)?,
+            })
+        })?;
+
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn get_screenshot_summary(&self, date: &str) -> Result<ScreenshotSummary> {
         let pattern = format!("{date}%");
         let total: usize = self
@@ -602,6 +653,62 @@ impl Store {
             top_apps,
             skipped_reasons,
         })
+    }
+
+    pub fn insert_visual_summary(&mut self, summary: &VisualSummary) -> Result<i64> {
+        self.conn.execute(
+            r#"
+            INSERT INTO visual_summaries
+              (screenshot_id, captured_at, model_provider, model_name, prompt_version,
+               summary_text, activity_category, project_hints_json, visible_apps_json,
+               visible_text_hints_json, risk_flags_json, confidence, created_at, error)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+            "#,
+            params![
+                summary.screenshot_id,
+                summary.captured_at.to_rfc3339(),
+                &summary.model_provider,
+                &summary.model_name,
+                &summary.prompt_version,
+                &summary.summary_text,
+                summary.activity_category.as_str(),
+                serde_json::to_string(&summary.project_hints)?,
+                serde_json::to_string(&summary.visible_apps)?,
+                serde_json::to_string(&summary.visible_text_hints)?,
+                serde_json::to_string(&summary.risk_flags)?,
+                summary.confidence,
+                summary.created_at.to_rfc3339(),
+                summary.error.as_deref(),
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn list_visual_summaries_by_date(
+        &self,
+        date: &str,
+        limit: usize,
+    ) -> Result<Vec<VisualSummary>> {
+        let pattern = format!("{date}%");
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT id, screenshot_id, captured_at, model_provider, model_name, prompt_version,
+                   summary_text, activity_category, project_hints_json, visible_apps_json,
+                   visible_text_hints_json, risk_flags_json, confidence, created_at, error
+            FROM visual_summaries
+            WHERE captured_at LIKE ?1
+            ORDER BY captured_at ASC, id ASC
+            LIMIT ?2
+            "#,
+        )?;
+
+        let rows = statement.query_map(params![pattern, limit as i64], map_visual_summary_row)?;
+
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row?);
+        }
+        Ok(items)
     }
 
     pub fn insert_input_segment(
@@ -894,6 +1001,44 @@ fn map_input_event_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<crate::model
     })
 }
 
+fn map_visual_summary_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VisualSummary> {
+    let captured_at: String = row.get(2)?;
+    let activity_category: String = row.get(7)?;
+    let project_hints_json: String = row.get(8)?;
+    let visible_apps_json: String = row.get(9)?;
+    let visible_text_hints_json: String = row.get(10)?;
+    let risk_flags_json: String = row.get(11)?;
+    let created_at: String = row.get(13)?;
+    let activity_category = ActivityCategory::from_db(&activity_category).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            7,
+            Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unknown activity_category: {activity_category}"),
+            )),
+        )
+    })?;
+
+    Ok(VisualSummary {
+        id: row.get(0)?,
+        screenshot_id: row.get(1)?,
+        captured_at: parse_ts(&captured_at)?,
+        model_provider: row.get(3)?,
+        model_name: row.get(4)?,
+        prompt_version: row.get(5)?,
+        summary_text: row.get(6)?,
+        activity_category,
+        project_hints: parse_string_vec(&project_hints_json)?,
+        visible_apps: parse_string_vec(&visible_apps_json)?,
+        visible_text_hints: parse_string_vec(&visible_text_hints_json)?,
+        risk_flags: parse_string_vec(&risk_flags_json)?,
+        confidence: row.get(12)?,
+        created_at: parse_ts(&created_at)?,
+        error: row.get(14)?,
+    })
+}
+
 pub(crate) fn parse_ts(value: &str) -> rusqlite::Result<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .map(|dt| dt.with_timezone(&Utc))
@@ -901,6 +1046,11 @@ pub(crate) fn parse_ts(value: &str) -> rusqlite::Result<DateTime<Utc>> {
 }
 
 fn parse_json(value: &str) -> rusqlite::Result<serde_json::Value> {
+    serde_json::from_str(value)
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))
+}
+
+fn parse_string_vec(value: &str) -> rusqlite::Result<Vec<String>> {
     serde_json::from_str(value)
         .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))
 }
