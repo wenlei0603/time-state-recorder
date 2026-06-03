@@ -30,7 +30,7 @@ use crate::{
     },
     screenshot,
     storage::Store,
-    visual_analysis::{LocalMetadataAnalyzer, VisualAnalysisInput, VisualAnalyzer},
+    visual_analysis::{ConfiguredVisualAnalyzer, VisualAnalysisInput},
     window::sample_foreground_window,
 };
 
@@ -959,14 +959,16 @@ async fn analyze_screenshot(
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
     let now = Utc::now();
-    let mut store = match state.store.lock() {
-        Ok(store) => store,
-        Err(_) => return internal_error("store lock poisoned"),
-    };
-    let screenshot = match store.get_screenshot(id) {
-        Ok(Some(screenshot)) => screenshot,
-        Ok(None) => return (StatusCode::NOT_FOUND, "screenshot not found").into_response(),
-        Err(err) => return internal_error(err),
+    let screenshot = {
+        let store = match state.store.lock() {
+            Ok(store) => store,
+            Err(_) => return internal_error("store lock poisoned"),
+        };
+        match store.get_screenshot(id) {
+            Ok(Some(screenshot)) => screenshot,
+            Ok(None) => return (StatusCode::NOT_FOUND, "screenshot not found").into_response(),
+            Err(err) => return internal_error(err),
+        }
     };
     let image_path = if screenshot.file_path.is_empty() {
         None
@@ -977,10 +979,17 @@ async fn analyze_screenshot(
         screenshot: &screenshot,
         image_path: image_path.as_deref(),
     };
-    let analyzer = LocalMetadataAnalyzer;
-    let mut summary = match analyzer.analyze(&input, now) {
+    let analyzer = match ConfiguredVisualAnalyzer::from_env() {
+        Ok(analyzer) => analyzer,
+        Err(err) => return internal_error(err),
+    };
+    let mut summary = match analyzer.analyze(&input, now).await {
         Ok(summary) => summary,
         Err(err) => return internal_error(err),
+    };
+    let mut store = match state.store.lock() {
+        Ok(store) => store,
+        Err(_) => return internal_error("store lock poisoned"),
     };
     match store.insert_visual_summary(&summary) {
         Ok(summary_id) => {

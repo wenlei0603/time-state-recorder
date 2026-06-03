@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use tsr_collector::{
     models::{ActivityCategory, ScreenshotMeta},
-    visual_analysis::{LocalMetadataAnalyzer, VisualAnalysisInput, VisualAnalyzer},
+    visual_analysis::{
+        LocalMetadataAnalyzer, MiniMaxAnalyzer, MiniMaxConfig, VisualAnalysisInput, VisualAnalyzer,
+    },
 };
 
 #[test]
@@ -98,6 +100,89 @@ fn visual_analysis_input_carries_optional_image_path() {
 
     assert_eq!(summary.screenshot_id, 44);
     assert_eq!(summary.activity_category, ActivityCategory::Research);
+}
+
+#[test]
+fn minimax_request_uses_openai_chat_completions_image_content_block() {
+    let dir = tempfile::tempdir().unwrap();
+    let image_path = dir.path().join("screen.jpg");
+    std::fs::write(&image_path, [0xff, 0xd8, 0xff, 0xd9]).unwrap();
+    let screenshot = ScreenshotMeta {
+        id: 45,
+        captured_at: ts("2026-05-25T09:08:00Z"),
+        file_path: "2026-05-25/09-08.jpg".into(),
+        width: 1280,
+        height: 720,
+        process_name: Some("Code.exe".into()),
+        window_title: Some("visual_analysis.rs".into()),
+        capture_status: "ok".into(),
+    };
+    let input = VisualAnalysisInput {
+        screenshot: &screenshot,
+        image_path: Some(image_path.as_path()),
+    };
+    let analyzer = MiniMaxAnalyzer::new(MiniMaxConfig::new(
+        "test-key",
+        "https://api.minimax.test/v1",
+        "MiniMax-M3",
+    ));
+
+    let request = analyzer.build_chat_completions_request(&input).unwrap();
+
+    assert_eq!(request["model"], "MiniMax-M3");
+    assert_eq!(request["messages"][1]["role"], "user");
+    assert_eq!(request["messages"][1]["content"][0]["type"], "text");
+    assert_eq!(request["messages"][1]["content"][1]["type"], "image_url");
+    assert_eq!(
+        request["messages"][1]["content"][1]["image_url"]["detail"],
+        "default"
+    );
+    assert!(
+        request["messages"][1]["content"][1]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/jpeg;base64,")
+    );
+    assert_eq!(request["thinking"]["type"], "disabled");
+}
+
+#[test]
+fn minimax_json_content_maps_to_visual_summary() {
+    let screenshot = ScreenshotMeta {
+        id: 46,
+        captured_at: ts("2026-05-25T09:09:00Z"),
+        file_path: "2026-05-25/09-09.jpg".into(),
+        width: 1280,
+        height: 720,
+        process_name: Some("Code.exe".into()),
+        window_title: Some("visual_analysis.rs".into()),
+        capture_status: "ok".into(),
+    };
+
+    let summary = MiniMaxAnalyzer::summary_from_response_text(
+        &screenshot,
+        ts("2026-05-25T09:09:10Z"),
+        "MiniMax-M3",
+        r#"{
+          "summaryText": "正在编辑视觉分析模块。",
+          "activityCategory": "coding",
+          "projectHints": ["Time State Recorder"],
+          "visibleApps": ["Code.exe"],
+          "visibleTextHints": ["visual_analysis.rs"],
+          "riskFlags": [],
+          "confidence": 0.82
+        }"#,
+    )
+    .unwrap();
+
+    assert_eq!(summary.screenshot_id, 46);
+    assert_eq!(summary.model_provider, "minimax");
+    assert_eq!(summary.model_name, "MiniMax-M3");
+    assert_eq!(summary.prompt_version, "visual-summary-minimax-m3-v1");
+    assert_eq!(summary.summary_text, "正在编辑视觉分析模块。");
+    assert_eq!(summary.activity_category, ActivityCategory::Coding);
+    assert_eq!(summary.project_hints, vec!["Time State Recorder"]);
+    assert_eq!(summary.confidence, 0.82);
 }
 
 fn ts(value: &str) -> DateTime<Utc> {

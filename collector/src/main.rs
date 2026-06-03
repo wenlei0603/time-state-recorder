@@ -38,6 +38,7 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    load_local_env();
     let cli = Cli::parse();
 
     match cli.command {
@@ -80,6 +81,10 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn load_local_env() {
+    let _ = dotenvy::from_filename(".env.local");
 }
 
 fn ensure_poll_ms(poll_ms: u64) -> Result<()> {
