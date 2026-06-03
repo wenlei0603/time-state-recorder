@@ -6,4 +6,5 @@ pub mod interval;
 pub mod models;
 pub mod screenshot;
 pub mod storage;
+pub mod visual_analysis;
 pub mod window;
