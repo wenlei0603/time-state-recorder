@@ -136,10 +136,10 @@ const DEFAULT_IDLE_THRESHOLD: u64 = 120;
 const DEFAULT_SCREENSHOT_LIMIT: usize = 1440;
 const DEFAULT_HIGH_RES_SCREENSHOT_LIMIT: usize = 288;
 const DEFAULT_HIGH_RES_SCREENSHOT_INTERVAL: u64 = 300;
-const THUMBNAIL_SCREENSHOT_MAX_WIDTH: u32 = 640;
-const THUMBNAIL_SCREENSHOT_QUALITY: u8 = 60;
-const HIGH_RES_SCREENSHOT_MAX_WIDTH: u32 = 1440;
-const HIGH_RES_SCREENSHOT_QUALITY: u8 = 80;
+const THUMBNAIL_SCREENSHOT_MAX_WIDTH: u32 = 960;
+const THUMBNAIL_SCREENSHOT_QUALITY: u8 = 82;
+const HIGH_RES_SCREENSHOT_MAX_WIDTH: u32 = 1600;
+const HIGH_RES_SCREENSHOT_QUALITY: u8 = 88;
 
 #[derive(Debug, Clone)]
 struct DateWindow {
@@ -1280,12 +1280,26 @@ mod tests {
         let profile = screenshot_capture_profile(&state, ScreenshotCaptureKind::HighRes);
 
         assert_eq!(profile.interval_secs, 300);
-        assert_eq!(profile.max_width, 1440);
-        assert_eq!(profile.quality, 80);
+        assert_eq!(profile.max_width, 1600);
+        assert_eq!(profile.quality, 88);
         assert_eq!(
             profile.directory,
             PathBuf::from("data/high-res-screenshots")
         );
+    }
+
+    #[test]
+    fn thumbnail_capture_profile_uses_readable_ui_resolution() {
+        let store = Store::open_memory().unwrap();
+        store.init().unwrap();
+        let state = default_state(store, None, None);
+
+        let profile = screenshot_capture_profile(&state, ScreenshotCaptureKind::Thumbnail);
+
+        assert_eq!(profile.interval_secs, 60);
+        assert_eq!(profile.max_width, 960);
+        assert_eq!(profile.quality, 82);
+        assert_eq!(profile.directory, PathBuf::from("data/screenshots"));
     }
 
     #[test]
