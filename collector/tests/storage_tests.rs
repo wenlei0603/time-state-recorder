@@ -196,6 +196,140 @@ fn visual_summaries_round_trip_by_date() {
 }
 
 #[test]
+fn screenshot_queries_support_utc_day_windows() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+
+    for (captured_at, file_path, capture_status) in [
+        ("2026-06-03T15:59:00Z", "outside-before.jpg", "ok"),
+        ("2026-06-03T16:00:00Z", "inside-start.jpg", "ok"),
+        ("2026-06-04T15:59:00Z", "inside-end.jpg", "ok"),
+        ("2026-06-04T16:00:00Z", "outside-after.jpg", "ok"),
+        ("2026-06-04T10:00:00Z", "", "idle"),
+    ] {
+        store
+            .insert_screenshot(
+                &session_id,
+                &ScreenshotMeta {
+                    id: 0,
+                    captured_at: ts(captured_at),
+                    file_path: file_path.into(),
+                    width: if capture_status == "ok" { 640 } else { 0 },
+                    height: if capture_status == "ok" { 360 } else { 0 },
+                    process_name: Some("Code.exe".into()),
+                    window_title: Some("main.rs".into()),
+                    capture_status: capture_status.into(),
+                },
+            )
+            .unwrap();
+        store
+            .insert_high_res_screenshot(
+                &session_id,
+                &HighResScreenshotMeta {
+                    id: 0,
+                    captured_at: ts(captured_at),
+                    file_path: file_path.into(),
+                    width: if capture_status == "ok" { 1440 } else { 0 },
+                    height: if capture_status == "ok" { 900 } else { 0 },
+                    process_name: Some("Code.exe".into()),
+                    window_title: Some("main.rs".into()),
+                    capture_status: capture_status.into(),
+                },
+            )
+            .unwrap();
+    }
+
+    let start = ts("2026-06-03T16:00:00Z");
+    let end = ts("2026-06-04T16:00:00Z");
+
+    let screenshots = store.list_screenshots_between(start, end, 10).unwrap();
+    assert_eq!(
+        screenshots
+            .iter()
+            .map(|item| item.file_path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["inside-start.jpg", "inside-end.jpg"]
+    );
+
+    let high_res = store
+        .list_high_res_screenshots_between(start, end, 10)
+        .unwrap();
+    assert_eq!(high_res.len(), 2);
+    assert_eq!(high_res[0].file_path, "inside-start.jpg");
+
+    let summary = store
+        .get_screenshot_summary_between("2026-06-04", start, end)
+        .unwrap();
+    assert_eq!(summary.date, "2026-06-04");
+    assert_eq!(summary.total_screenshots, 2);
+    assert_eq!(summary.skipped_reasons.len(), 1);
+    assert_eq!(summary.skipped_reasons[0].reason, "idle");
+}
+
+#[test]
+fn visual_summary_queries_support_utc_day_windows() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+
+    let mut screenshot_ids = Vec::new();
+    for (captured_at, file_path) in [
+        ("2026-06-03T15:59:00Z", "outside-before.jpg"),
+        ("2026-06-03T16:00:00Z", "inside-start.jpg"),
+        ("2026-06-04T15:59:00Z", "inside-end.jpg"),
+        ("2026-06-04T16:00:00Z", "outside-after.jpg"),
+    ] {
+        let screenshot_id = store
+            .insert_screenshot(
+                &session_id,
+                &ScreenshotMeta {
+                    id: 0,
+                    captured_at: ts(captured_at),
+                    file_path: file_path.into(),
+                    width: 1280,
+                    height: 720,
+                    process_name: Some("Code.exe".into()),
+                    window_title: Some("main.rs".into()),
+                    capture_status: "ok".into(),
+                },
+            )
+            .unwrap();
+        screenshot_ids.push((screenshot_id, captured_at));
+    }
+
+    for (screenshot_id, captured_at) in screenshot_ids {
+        store
+            .insert_visual_summary(&VisualSummary {
+                id: 0,
+                screenshot_id,
+                captured_at: ts(captured_at),
+                model_provider: "local_stub".into(),
+                model_name: "metadata-v1".into(),
+                prompt_version: "visual-summary-v1".into(),
+                summary_text: format!("Summary at {captured_at}"),
+                activity_category: ActivityCategory::Coding,
+                project_hints: vec!["Time State Recorder".into()],
+                visible_apps: vec!["Code.exe".into()],
+                visible_text_hints: vec!["main.rs".into()],
+                risk_flags: vec![],
+                confidence: 0.65,
+                created_at: ts(captured_at),
+                error: None,
+            })
+            .unwrap();
+    }
+
+    let rows = store
+        .list_visual_summaries_between(ts("2026-06-03T16:00:00Z"), ts("2026-06-04T16:00:00Z"), 10)
+        .unwrap();
+
+    assert_eq!(rows.len(), 2);
+    assert!(rows[0].summary_text.contains("2026-06-03T16:00:00Z"));
+    assert!(rows[1].summary_text.contains("2026-06-04T15:59:00Z"));
+}
+
+#[test]
 fn persists_lifecycle_events_in_order() {
     let mut store = Store::open_memory().unwrap();
     store.init().unwrap();

@@ -16,7 +16,7 @@ export async function fetchScreenshots(
   date: string,
   fetcher: Fetcher = fetch,
 ): Promise<ScreenshotMeta[]> {
-  const response = await fetcher(`/api/screenshots?date=${encodeURIComponent(date)}`);
+  const response = await fetcher(dateQuery("/api/screenshots", date));
   if (!response.ok) {
     throw new Error(
       `Collector API failed: ${response.status} ${response.statusText}`.trim(),
@@ -35,9 +35,7 @@ export async function fetchScreenshotSummary(
   date: string,
   fetcher: Fetcher = fetch,
 ): Promise<ScreenshotSummary> {
-  const response = await fetcher(
-    `/api/screenshot-summary?date=${encodeURIComponent(date)}`,
-  );
+  const response = await fetcher(dateQuery("/api/screenshot-summary", date));
   if (!response.ok) {
     throw new Error(
       `Collector API failed: ${response.status} ${response.statusText}`.trim(),
@@ -72,9 +70,7 @@ export async function fetchVisualSummaries(
   date: string,
   fetcher: Fetcher = fetch,
 ): Promise<VisualSummary[]> {
-  const response = await fetcher(
-    `/api/visual-summaries?date=${encodeURIComponent(date)}`,
-  );
+  const response = await fetcher(dateQuery("/api/visual-summaries", date));
   if (!response.ok) {
     throw new Error(
       `Collector API failed: ${response.status} ${response.statusText}`.trim(),
@@ -108,6 +104,22 @@ export async function analyzeScreenshot(
   }
 
   return toVisualSummary(body.summary);
+}
+
+function dateQuery(path: string, date: string): string {
+  const params = new URLSearchParams({
+    date,
+    tzOffsetMinutes: String(timezoneOffsetMinutes(date)),
+  });
+  return `${path}?${params.toString()}`;
+}
+
+function timezoneOffsetMinutes(date: string): number {
+  const localMidnight = new Date(`${date}T00:00:00`);
+  if (!Number.isNaN(localMidnight.getTime())) {
+    return localMidnight.getTimezoneOffset();
+  }
+  return new Date().getTimezoneOffset();
 }
 
 function toScreenshotMeta(value: unknown): ScreenshotMeta {

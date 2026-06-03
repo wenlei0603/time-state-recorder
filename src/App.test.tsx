@@ -464,7 +464,10 @@ describe("App", () => {
     expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
     expect(
       fetcher.mock.calls.some(
-        ([input]) => input === "/api/screenshot-summary?date=2026-05-24"
+        ([input]) =>
+          String(input).startsWith(
+            "/api/screenshot-summary?date=2026-05-24&tzOffsetMinutes="
+          )
       )
     ).toBe(true);
     expect(
@@ -480,7 +483,10 @@ describe("App", () => {
     ).toBe(true);
     expect(
       fetcher.mock.calls.some(
-        ([input]) => input === "/api/visual-summaries?date=2026-05-24"
+        ([input]) =>
+          String(input).startsWith(
+            "/api/visual-summaries?date=2026-05-24&tzOffsetMinutes="
+          )
       )
     ).toBe(true);
   });

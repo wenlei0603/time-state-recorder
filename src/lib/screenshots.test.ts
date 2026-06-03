@@ -1,5 +1,49 @@
 import { describe, expect, it, vi } from "vitest";
-import { analyzeScreenshot, fetchScreenshotSummary, fetchVisualSummaries } from "./screenshots";
+import {
+  analyzeScreenshot,
+  fetchScreenshotSummary,
+  fetchScreenshots,
+  fetchVisualSummaries,
+} from "./screenshots";
+
+function expectedDateQuery(path: string, date: string): string {
+  const offset = new Date(`${date}T00:00:00`).getTimezoneOffset();
+  return `${path}?date=${date}&tzOffsetMinutes=${offset}`;
+}
+
+describe("screenshot date queries", () => {
+  it("includes the browser timezone offset for local-day filtering", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        screenshots: [],
+        summaries: [],
+        date: "2026-05-24",
+        totalScreenshots: 0,
+        hoursCovered: 0,
+        topApps: [],
+        skippedReasons: [],
+      }),
+    });
+
+    await fetchScreenshots("2026-05-24", fetcher);
+    await fetchScreenshotSummary("2026-05-24", fetcher);
+    await fetchVisualSummaries("2026-05-24", fetcher);
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      expectedDateQuery("/api/screenshots", "2026-05-24"),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      expectedDateQuery("/api/screenshot-summary", "2026-05-24"),
+    );
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      expectedDateQuery("/api/visual-summaries", "2026-05-24"),
+    );
+  });
+});
 
 describe("fetchScreenshotSummary", () => {
   it("loads skipped screenshot reasons from /api/screenshot-summary", async () => {
@@ -97,7 +141,9 @@ describe("fetchVisualSummaries", () => {
 
     const summaries = await fetchVisualSummaries("2026-05-24", fetcher);
 
-    expect(fetcher).toHaveBeenCalledWith("/api/visual-summaries?date=2026-05-24");
+    expect(fetcher).toHaveBeenCalledWith(
+      expectedDateQuery("/api/visual-summaries", "2026-05-24"),
+    );
     expect(summaries[0].modelProvider).toBe("local_stub");
     expect(summaries[0].visibleApps).toEqual(["Code.exe"]);
   });

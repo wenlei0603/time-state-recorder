@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Result, ensure};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::{Connection, Transaction, params, types::Type};
 use uuid::Uuid;
 
@@ -538,30 +538,42 @@ impl Store {
         date: &str,
         limit: usize,
     ) -> Result<Vec<ScreenshotMeta>> {
-        let pattern = format!("{date}%");
+        let (start, end) = utc_day_bounds(date)?;
+        self.list_screenshots_between(start, end, limit)
+    }
+
+    pub fn list_screenshots_between(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<ScreenshotMeta>> {
         let mut statement = self.conn.prepare(
             r#"
             SELECT id, captured_at, file_path, width, height, process_name, window_title, capture_status
             FROM screenshot_thumbnails
-            WHERE captured_at LIKE ?1 AND capture_status = 'ok'
+            WHERE captured_at >= ?1 AND captured_at < ?2 AND capture_status = 'ok'
             ORDER BY captured_at ASC
-            LIMIT ?2
+            LIMIT ?3
             "#,
         )?;
 
-        let rows = statement.query_map(params![pattern, limit as i64], |row| {
-            let captured_at: String = row.get(1)?;
-            Ok(ScreenshotMeta {
-                id: row.get(0)?,
-                captured_at: parse_ts(&captured_at)?,
-                file_path: row.get(2)?,
-                width: row.get(3)?,
-                height: row.get(4)?,
-                process_name: row.get(5)?,
-                window_title: row.get(6)?,
-                capture_status: row.get(7)?,
-            })
-        })?;
+        let rows = statement.query_map(
+            params![start.to_rfc3339(), end.to_rfc3339(), limit as i64],
+            |row| {
+                let captured_at: String = row.get(1)?;
+                Ok(ScreenshotMeta {
+                    id: row.get(0)?,
+                    captured_at: parse_ts(&captured_at)?,
+                    file_path: row.get(2)?,
+                    width: row.get(3)?,
+                    height: row.get(4)?,
+                    process_name: row.get(5)?,
+                    window_title: row.get(6)?,
+                    capture_status: row.get(7)?,
+                })
+            },
+        )?;
 
         let mut items = Vec::new();
         for row in rows {
@@ -600,12 +612,23 @@ impl Store {
     }
 
     pub fn get_screenshot_summary(&self, date: &str) -> Result<ScreenshotSummary> {
-        let pattern = format!("{date}%");
+        let (start, end) = utc_day_bounds(date)?;
+        self.get_screenshot_summary_between(date, start, end)
+    }
+
+    pub fn get_screenshot_summary_between(
+        &self,
+        date: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<ScreenshotSummary> {
+        let start = start.to_rfc3339();
+        let end = end.to_rfc3339();
         let total: usize = self
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM screenshot_thumbnails WHERE captured_at LIKE ?1 AND capture_status = 'ok'",
-                params![&pattern],
+                "SELECT COUNT(*) FROM screenshot_thumbnails WHERE captured_at >= ?1 AND captured_at < ?2 AND capture_status = 'ok'",
+                params![&start, &end],
                 |row| row.get(0),
             )
             .unwrap_or(0);
@@ -613,8 +636,8 @@ impl Store {
         let hours: usize = self
             .conn
             .query_row(
-                "SELECT COUNT(DISTINCT substr(captured_at, 12, 2)) FROM screenshot_thumbnails WHERE captured_at LIKE ?1 AND capture_status = 'ok'",
-                params![&pattern],
+                "SELECT COUNT(DISTINCT substr(captured_at, 1, 13)) FROM screenshot_thumbnails WHERE captured_at >= ?1 AND captured_at < ?2 AND capture_status = 'ok'",
+                params![&start, &end],
                 |row| row.get(0),
             )
             .unwrap_or(0);
@@ -623,7 +646,7 @@ impl Store {
             r#"
             SELECT process_name, COUNT(*) as cnt
             FROM screenshot_thumbnails
-            WHERE captured_at LIKE ?1 AND capture_status = 'ok' AND process_name IS NOT NULL
+            WHERE captured_at >= ?1 AND captured_at < ?2 AND capture_status = 'ok' AND process_name IS NOT NULL
             GROUP BY process_name
             ORDER BY cnt DESC
             LIMIT 10
@@ -631,7 +654,7 @@ impl Store {
         )?;
 
         let top_apps: Vec<AppScreenshotCount> = stmt
-            .query_map(params![&pattern], |row| {
+            .query_map(params![&start, &end], |row| {
                 Ok(AppScreenshotCount {
                     process_name: row.get(0)?,
                     count: row.get(1)?,
@@ -644,14 +667,14 @@ impl Store {
             r#"
             SELECT capture_status, COUNT(*) as cnt
             FROM screenshot_thumbnails
-            WHERE captured_at LIKE ?1 AND capture_status <> 'ok'
+            WHERE captured_at >= ?1 AND captured_at < ?2 AND capture_status <> 'ok'
             GROUP BY capture_status
             ORDER BY capture_status ASC
             "#,
         )?;
 
         let skipped_reasons: Vec<ScreenshotSkippedReasonCount> = stmt
-            .query_map(params![&pattern], |row| {
+            .query_map(params![&start, &end], |row| {
                 Ok(ScreenshotSkippedReasonCount {
                     reason: row.get(0)?,
                     count: row.get(1)?,
@@ -703,30 +726,42 @@ impl Store {
         date: &str,
         limit: usize,
     ) -> Result<Vec<HighResScreenshotMeta>> {
-        let pattern = format!("{date}%");
+        let (start, end) = utc_day_bounds(date)?;
+        self.list_high_res_screenshots_between(start, end, limit)
+    }
+
+    pub fn list_high_res_screenshots_between(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<HighResScreenshotMeta>> {
         let mut statement = self.conn.prepare(
             r#"
             SELECT id, captured_at, file_path, width, height, process_name, window_title, capture_status
             FROM high_res_screenshots
-            WHERE captured_at LIKE ?1 AND capture_status = 'ok'
+            WHERE captured_at >= ?1 AND captured_at < ?2 AND capture_status = 'ok'
             ORDER BY captured_at ASC
-            LIMIT ?2
+            LIMIT ?3
             "#,
         )?;
 
-        let rows = statement.query_map(params![pattern, limit as i64], |row| {
-            let captured_at: String = row.get(1)?;
-            Ok(HighResScreenshotMeta {
-                id: row.get(0)?,
-                captured_at: parse_ts(&captured_at)?,
-                file_path: row.get(2)?,
-                width: row.get(3)?,
-                height: row.get(4)?,
-                process_name: row.get(5)?,
-                window_title: row.get(6)?,
-                capture_status: row.get(7)?,
-            })
-        })?;
+        let rows = statement.query_map(
+            params![start.to_rfc3339(), end.to_rfc3339(), limit as i64],
+            |row| {
+                let captured_at: String = row.get(1)?;
+                Ok(HighResScreenshotMeta {
+                    id: row.get(0)?,
+                    captured_at: parse_ts(&captured_at)?,
+                    file_path: row.get(2)?,
+                    width: row.get(3)?,
+                    height: row.get(4)?,
+                    process_name: row.get(5)?,
+                    window_title: row.get(6)?,
+                    capture_status: row.get(7)?,
+                })
+            },
+        )?;
 
         let mut items = Vec::new();
         for row in rows {
@@ -769,20 +804,32 @@ impl Store {
         date: &str,
         limit: usize,
     ) -> Result<Vec<VisualSummary>> {
-        let pattern = format!("{date}%");
+        let (start, end) = utc_day_bounds(date)?;
+        self.list_visual_summaries_between(start, end, limit)
+    }
+
+    pub fn list_visual_summaries_between(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<VisualSummary>> {
         let mut statement = self.conn.prepare(
             r#"
             SELECT id, screenshot_id, captured_at, model_provider, model_name, prompt_version,
                    summary_text, activity_category, project_hints_json, visible_apps_json,
                    visible_text_hints_json, risk_flags_json, confidence, created_at, error
             FROM visual_summaries
-            WHERE captured_at LIKE ?1
+            WHERE captured_at >= ?1 AND captured_at < ?2
             ORDER BY captured_at ASC, id ASC
-            LIMIT ?2
+            LIMIT ?3
             "#,
         )?;
 
-        let rows = statement.query_map(params![pattern, limit as i64], map_visual_summary_row)?;
+        let rows = statement.query_map(
+            params![start.to_rfc3339(), end.to_rfc3339(), limit as i64],
+            map_visual_summary_row,
+        )?;
 
         let mut items = Vec::new();
         for row in rows {
@@ -1123,6 +1170,21 @@ pub(crate) fn parse_ts(value: &str) -> rusqlite::Result<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .map(|dt| dt.with_timezone(&Utc))
         .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))
+}
+
+fn utc_day_bounds(date: &str) -> Result<(DateTime<Utc>, DateTime<Utc>)> {
+    let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")?;
+    let start = date
+        .and_hms_opt(0, 0, 0)
+        .expect("midnight is valid")
+        .and_utc();
+    let end = date
+        .succ_opt()
+        .expect("date successor is valid")
+        .and_hms_opt(0, 0, 0)
+        .expect("midnight is valid")
+        .and_utc();
+    Ok((start, end))
 }
 
 fn parse_json(value: &str) -> rusqlite::Result<serde_json::Value> {

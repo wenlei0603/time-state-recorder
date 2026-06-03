@@ -657,6 +657,58 @@ async fn serves_screenshots_without_skip_rows() {
 }
 
 #[tokio::test]
+async fn serves_screenshots_for_browser_local_date_window() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+
+    for (captured_at, file_path) in [
+        ("2026-06-03T15:59:00Z", "outside-before.jpg"),
+        ("2026-06-03T16:00:00Z", "inside-start.jpg"),
+        ("2026-06-04T15:59:00Z", "inside-end.jpg"),
+        ("2026-06-04T16:00:00Z", "outside-after.jpg"),
+    ] {
+        store
+            .insert_screenshot(
+                &session_id,
+                &ScreenshotMeta {
+                    id: 0,
+                    captured_at: ts(captured_at),
+                    file_path: file_path.into(),
+                    width: 640,
+                    height: 360,
+                    process_name: Some("Code.exe".into()),
+                    window_title: Some("main.rs".into()),
+                    capture_status: "ok".into(),
+                },
+            )
+            .unwrap();
+    }
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!(
+        "http://{addr}/api/screenshots?date=2026-06-04&tzOffsetMinutes=-480"
+    ))
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let screenshots = body["screenshots"].as_array().unwrap();
+    assert_eq!(screenshots.len(), 2);
+    assert_eq!(screenshots[0]["filePath"], "inside-start.jpg");
+    assert_eq!(screenshots[1]["filePath"], "inside-end.jpg");
+
+    server.abort();
+}
+
+#[tokio::test]
 async fn serves_visual_summaries_for_date() {
     let mut store = Store::open_memory().unwrap();
     store.init().unwrap();

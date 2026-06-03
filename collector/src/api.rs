@@ -13,7 +13,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, FixedOffset, Local, NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::{sync::oneshot, time};
 use tower_http::services::ServeDir;
@@ -56,6 +56,8 @@ struct LimitQuery {
 struct DateQuery {
     date: Option<String>,
     limit: Option<usize>,
+    #[serde(rename = "tzOffsetMinutes")]
+    tz_offset_minutes: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -138,6 +140,13 @@ const THUMBNAIL_SCREENSHOT_MAX_WIDTH: u32 = 640;
 const THUMBNAIL_SCREENSHOT_QUALITY: u8 = 60;
 const HIGH_RES_SCREENSHOT_MAX_WIDTH: u32 = 1440;
 const HIGH_RES_SCREENSHOT_QUALITY: u8 = 80;
+
+#[derive(Debug, Clone)]
+struct DateWindow {
+    date: String,
+    start_utc: DateTime<Utc>,
+    end_utc: DateTime<Utc>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScreenshotCaptureKind {
@@ -256,6 +265,68 @@ fn router_from_state(state: AppState) -> Router {
             ServeDir::new(high_res_screenshot_dir),
         )
         .with_state(state)
+}
+
+fn date_window_from_query(query: &DateQuery) -> std::result::Result<DateWindow, String> {
+    let date = query
+        .date
+        .clone()
+        .unwrap_or_else(|| Local::now().format("%Y-%m-%d").to_string());
+    let parsed = NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+        .map_err(|_| "date must use YYYY-MM-DD".to_string())?;
+    let (start_utc, end_utc) = if let Some(offset_minutes) = query.tz_offset_minutes {
+        fixed_offset_day_bounds(parsed, offset_minutes)?
+    } else {
+        local_day_bounds(parsed)?
+    };
+    Ok(DateWindow {
+        date,
+        start_utc,
+        end_utc,
+    })
+}
+
+fn fixed_offset_day_bounds(
+    date: NaiveDate,
+    browser_offset_minutes: i32,
+) -> std::result::Result<(DateTime<Utc>, DateTime<Utc>), String> {
+    let east_seconds = browser_offset_minutes
+        .checked_mul(-60)
+        .ok_or_else(|| "tzOffsetMinutes is out of range".to_string())?;
+    let offset = FixedOffset::east_opt(east_seconds)
+        .ok_or_else(|| "tzOffsetMinutes is out of range".to_string())?;
+    let start = date
+        .and_hms_opt(0, 0, 0)
+        .expect("midnight is valid")
+        .and_local_timezone(offset)
+        .single()
+        .ok_or_else(|| "date cannot be resolved for tzOffsetMinutes".to_string())?;
+    let end = date
+        .succ_opt()
+        .ok_or_else(|| "date is out of range".to_string())?
+        .and_hms_opt(0, 0, 0)
+        .expect("midnight is valid")
+        .and_local_timezone(offset)
+        .single()
+        .ok_or_else(|| "date cannot be resolved for tzOffsetMinutes".to_string())?;
+    Ok((start.with_timezone(&Utc), end.with_timezone(&Utc)))
+}
+
+fn local_day_bounds(
+    date: NaiveDate,
+) -> std::result::Result<(DateTime<Utc>, DateTime<Utc>), String> {
+    let start = Local
+        .from_local_datetime(&date.and_hms_opt(0, 0, 0).expect("midnight is valid"))
+        .earliest()
+        .ok_or_else(|| "date cannot be resolved in the local timezone".to_string())?;
+    let end_date = date
+        .succ_opt()
+        .ok_or_else(|| "date is out of range".to_string())?;
+    let end = Local
+        .from_local_datetime(&end_date.and_hms_opt(0, 0, 0).expect("midnight is valid"))
+        .earliest()
+        .ok_or_else(|| "date cannot be resolved in the local timezone".to_string())?;
+    Ok((start.with_timezone(&Utc), end.with_timezone(&Utc)))
 }
 
 fn screenshot_capture_profile(
@@ -874,16 +945,17 @@ async fn screenshots(
     State(state): State<AppState>,
     Query(query): Query<DateQuery>,
 ) -> impl IntoResponse {
-    let date = query
-        .date
-        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+    let date_window = match date_window_from_query(&query) {
+        Ok(date_window) => date_window,
+        Err(message) => return bad_request(&message),
+    };
     let limit = query.limit.unwrap_or(DEFAULT_SCREENSHOT_LIMIT).min(5000);
     let store = match state.store.lock() {
         Ok(store) => store,
         Err(_) => return internal_error("store lock poisoned"),
     };
 
-    match store.list_screenshots_by_date(&date, limit) {
+    match store.list_screenshots_between(date_window.start_utc, date_window.end_utc, limit) {
         Ok(screenshots) => Json(ScreenshotsResponse { screenshots }).into_response(),
         Err(err) => internal_error(err),
     }
@@ -893,15 +965,20 @@ async fn screenshot_summary(
     State(state): State<AppState>,
     Query(query): Query<DateQuery>,
 ) -> impl IntoResponse {
-    let date = query
-        .date
-        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+    let date_window = match date_window_from_query(&query) {
+        Ok(date_window) => date_window,
+        Err(message) => return bad_request(&message),
+    };
     let store = match state.store.lock() {
         Ok(store) => store,
         Err(_) => return internal_error("store lock poisoned"),
     };
 
-    match store.get_screenshot_summary(&date) {
+    match store.get_screenshot_summary_between(
+        &date_window.date,
+        date_window.start_utc,
+        date_window.end_utc,
+    ) {
         Ok(summary) => Json(summary).into_response(),
         Err(err) => internal_error(err),
     }
@@ -911,12 +988,10 @@ async fn high_res_screenshots(
     State(state): State<AppState>,
     Query(query): Query<DateQuery>,
 ) -> impl IntoResponse {
-    let date = query
-        .date
-        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
-    if NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() {
-        return bad_request("date must use YYYY-MM-DD");
-    }
+    let date_window = match date_window_from_query(&query) {
+        Ok(date_window) => date_window,
+        Err(message) => return bad_request(&message),
+    };
     let limit = query
         .limit
         .unwrap_or(DEFAULT_HIGH_RES_SCREENSHOT_LIMIT)
@@ -926,7 +1001,8 @@ async fn high_res_screenshots(
         Err(_) => return internal_error("store lock poisoned"),
     };
 
-    match store.list_high_res_screenshots_by_date(&date, limit) {
+    match store.list_high_res_screenshots_between(date_window.start_utc, date_window.end_utc, limit)
+    {
         Ok(screenshots) => Json(HighResScreenshotsResponse { screenshots }).into_response(),
         Err(err) => internal_error(err),
     }
@@ -936,19 +1012,17 @@ async fn visual_summaries(
     State(state): State<AppState>,
     Query(query): Query<DateQuery>,
 ) -> impl IntoResponse {
-    let date = query
-        .date
-        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
-    if NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() {
-        return bad_request("date must use YYYY-MM-DD");
-    }
+    let date_window = match date_window_from_query(&query) {
+        Ok(date_window) => date_window,
+        Err(message) => return bad_request(&message),
+    };
     let limit = query.limit.unwrap_or(500).min(5_000);
     let store = match state.store.lock() {
         Ok(store) => store,
         Err(_) => return internal_error("store lock poisoned"),
     };
 
-    match store.list_visual_summaries_by_date(&date, limit) {
+    match store.list_visual_summaries_between(date_window.start_utc, date_window.end_utc, limit) {
         Ok(summaries) => Json(VisualSummariesResponse { summaries }).into_response(),
         Err(err) => internal_error(err),
     }
