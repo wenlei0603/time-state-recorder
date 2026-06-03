@@ -6,9 +6,10 @@ use rusqlite::{Connection, Transaction, params, types::Type};
 use uuid::Uuid;
 
 use crate::models::{
-    ActivityCategory, AppScreenshotCount, BlockerHit, CaptureStatus, HighResScreenshotMeta,
-    LifecycleEvent, LifecycleType, ScreenshotMeta, ScreenshotSkippedReasonCount, ScreenshotSummary,
-    StoredWindowEvent, VisualSummary, WindowSnapshot,
+    ActivityCategory, ActivityCategoryCount, AppScreenshotCount, BlockerHit, CaptureStatus,
+    HighResScreenshotMeta, InsightReport, LifecycleEvent, LifecycleType, ScreenshotMeta,
+    ScreenshotSkippedReasonCount, ScreenshotSummary, StoredWindowEvent, VisualObservation,
+    VisualSummary, WindowSnapshot,
 };
 
 pub struct Store {
@@ -142,6 +143,43 @@ impl Store {
               FOREIGN KEY(session_id) REFERENCES capture_sessions(id)
             );
             CREATE INDEX IF NOT EXISTS idx_high_res_screenshots_at ON high_res_screenshots(captured_at);
+
+            CREATE TABLE IF NOT EXISTS visual_observations (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              high_res_screenshot_id INTEGER NOT NULL UNIQUE,
+              captured_at TEXT NOT NULL,
+              file_path TEXT NOT NULL,
+              model_provider TEXT NOT NULL,
+              model_name TEXT NOT NULL,
+              prompt_version TEXT NOT NULL,
+              summary_text TEXT NOT NULL,
+              activity_category TEXT NOT NULL,
+              project_hints_json TEXT NOT NULL,
+              visible_apps_json TEXT NOT NULL,
+              visible_text_hints_json TEXT NOT NULL,
+              risk_flags_json TEXT NOT NULL,
+              confidence REAL NOT NULL,
+              created_at TEXT NOT NULL,
+              error TEXT,
+              FOREIGN KEY(high_res_screenshot_id) REFERENCES high_res_screenshots(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_visual_observations_at ON visual_observations(captured_at);
+
+            CREATE TABLE IF NOT EXISTS insight_reports (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              period_start TEXT NOT NULL,
+              period_end TEXT NOT NULL,
+              generated_at TEXT NOT NULL,
+              report_kind TEXT NOT NULL,
+              model_provider TEXT NOT NULL,
+              model_name TEXT NOT NULL,
+              summary_text TEXT NOT NULL,
+              category_mix_json TEXT NOT NULL,
+              project_hints_json TEXT NOT NULL,
+              evidence_count INTEGER NOT NULL,
+              error TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_insight_reports_period ON insight_reports(period_start, period_end);
 
             CREATE TABLE IF NOT EXISTS input_events (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -838,6 +876,173 @@ impl Store {
         Ok(items)
     }
 
+    pub fn insert_visual_observation(&mut self, observation: &VisualObservation) -> Result<i64> {
+        self.conn.execute(
+            r#"
+            INSERT INTO visual_observations
+              (high_res_screenshot_id, captured_at, file_path, model_provider, model_name,
+               prompt_version, summary_text, activity_category, project_hints_json,
+               visible_apps_json, visible_text_hints_json, risk_flags_json, confidence,
+               created_at, error)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            "#,
+            params![
+                observation.high_res_screenshot_id,
+                observation.captured_at.to_rfc3339(),
+                &observation.file_path,
+                &observation.model_provider,
+                &observation.model_name,
+                &observation.prompt_version,
+                &observation.summary_text,
+                observation.activity_category.as_str(),
+                serde_json::to_string(&observation.project_hints)?,
+                serde_json::to_string(&observation.visible_apps)?,
+                serde_json::to_string(&observation.visible_text_hints)?,
+                serde_json::to_string(&observation.risk_flags)?,
+                observation.confidence,
+                observation.created_at.to_rfc3339(),
+                observation.error.as_deref(),
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn list_visual_observations_between(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<VisualObservation>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT id, high_res_screenshot_id, captured_at, file_path, model_provider, model_name,
+                   prompt_version, summary_text, activity_category, project_hints_json,
+                   visible_apps_json, visible_text_hints_json, risk_flags_json, confidence,
+                   created_at, error
+            FROM visual_observations
+            WHERE captured_at >= ?1 AND captured_at < ?2
+            ORDER BY captured_at ASC, id ASC
+            LIMIT ?3
+            "#,
+        )?;
+
+        let rows = statement.query_map(
+            params![start.to_rfc3339(), end.to_rfc3339(), limit as i64],
+            map_visual_observation_row,
+        )?;
+
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row?);
+        }
+        Ok(items)
+    }
+
+    pub fn list_visual_observations(&self, limit: usize) -> Result<Vec<VisualObservation>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT id, high_res_screenshot_id, captured_at, file_path, model_provider, model_name,
+                   prompt_version, summary_text, activity_category, project_hints_json,
+                   visible_apps_json, visible_text_hints_json, risk_flags_json, confidence,
+                   created_at, error
+            FROM visual_observations
+            ORDER BY captured_at DESC, id DESC
+            LIMIT ?1
+            "#,
+        )?;
+
+        let rows = statement.query_map(params![limit as i64], map_visual_observation_row)?;
+
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row?);
+        }
+        Ok(items)
+    }
+
+    pub fn list_unobserved_high_res_screenshots(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<HighResScreenshotMeta>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT h.id, h.captured_at, h.file_path, h.width, h.height,
+                   h.process_name, h.window_title, h.capture_status
+            FROM high_res_screenshots h
+            LEFT JOIN visual_observations o ON o.high_res_screenshot_id = h.id
+            WHERE h.capture_status = 'ok' AND o.id IS NULL
+            ORDER BY h.captured_at ASC, h.id ASC
+            LIMIT ?1
+            "#,
+        )?;
+
+        let rows = statement.query_map(params![limit as i64], |row| {
+            let captured_at: String = row.get(1)?;
+            Ok(HighResScreenshotMeta {
+                id: row.get(0)?,
+                captured_at: parse_ts(&captured_at)?,
+                file_path: row.get(2)?,
+                width: row.get(3)?,
+                height: row.get(4)?,
+                process_name: row.get(5)?,
+                window_title: row.get(6)?,
+                capture_status: row.get(7)?,
+            })
+        })?;
+
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row?);
+        }
+        Ok(items)
+    }
+
+    pub fn insert_insight_report(&mut self, report: &InsightReport) -> Result<i64> {
+        self.conn.execute(
+            r#"
+            INSERT INTO insight_reports
+              (period_start, period_end, generated_at, report_kind, model_provider, model_name,
+               summary_text, category_mix_json, project_hints_json, evidence_count, error)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            "#,
+            params![
+                report.period_start.to_rfc3339(),
+                report.period_end.to_rfc3339(),
+                report.generated_at.to_rfc3339(),
+                &report.report_kind,
+                &report.model_provider,
+                &report.model_name,
+                &report.summary_text,
+                serde_json::to_string(&report.category_mix)?,
+                serde_json::to_string(&report.project_hints)?,
+                report.evidence_count as i64,
+                report.error.as_deref(),
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn list_insight_reports(&self, limit: usize) -> Result<Vec<InsightReport>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT id, period_start, period_end, generated_at, report_kind, model_provider,
+                   model_name, summary_text, category_mix_json, project_hints_json,
+                   evidence_count, error
+            FROM insight_reports
+            ORDER BY period_end DESC, id DESC
+            LIMIT ?1
+            "#,
+        )?;
+
+        let rows = statement.query_map(params![limit as i64], map_insight_report_row)?;
+
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row?);
+        }
+        Ok(items)
+    }
+
     pub fn insert_input_segment(
         &mut self,
         segment: &crate::models::TextSegment,
@@ -1166,6 +1371,69 @@ fn map_visual_summary_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VisualSum
     })
 }
 
+fn map_visual_observation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VisualObservation> {
+    let captured_at: String = row.get(2)?;
+    let activity_category: String = row.get(8)?;
+    let project_hints_json: String = row.get(9)?;
+    let visible_apps_json: String = row.get(10)?;
+    let visible_text_hints_json: String = row.get(11)?;
+    let risk_flags_json: String = row.get(12)?;
+    let created_at: String = row.get(14)?;
+    let activity_category = ActivityCategory::from_db(&activity_category).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            8,
+            Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unknown activity_category: {activity_category}"),
+            )),
+        )
+    })?;
+
+    Ok(VisualObservation {
+        id: row.get(0)?,
+        high_res_screenshot_id: row.get(1)?,
+        captured_at: parse_ts(&captured_at)?,
+        file_path: row.get(3)?,
+        model_provider: row.get(4)?,
+        model_name: row.get(5)?,
+        prompt_version: row.get(6)?,
+        summary_text: row.get(7)?,
+        activity_category,
+        project_hints: parse_string_vec(&project_hints_json)?,
+        visible_apps: parse_string_vec(&visible_apps_json)?,
+        visible_text_hints: parse_string_vec(&visible_text_hints_json)?,
+        risk_flags: parse_string_vec(&risk_flags_json)?,
+        confidence: row.get(13)?,
+        created_at: parse_ts(&created_at)?,
+        error: row.get(15)?,
+    })
+}
+
+fn map_insight_report_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InsightReport> {
+    let period_start: String = row.get(1)?;
+    let period_end: String = row.get(2)?;
+    let generated_at: String = row.get(3)?;
+    let category_mix_json: String = row.get(8)?;
+    let project_hints_json: String = row.get(9)?;
+    let evidence_count: i64 = row.get(10)?;
+
+    Ok(InsightReport {
+        id: row.get(0)?,
+        period_start: parse_ts(&period_start)?,
+        period_end: parse_ts(&period_end)?,
+        generated_at: parse_ts(&generated_at)?,
+        report_kind: row.get(4)?,
+        model_provider: row.get(5)?,
+        model_name: row.get(6)?,
+        summary_text: row.get(7)?,
+        category_mix: parse_category_mix(&category_mix_json)?,
+        project_hints: parse_string_vec(&project_hints_json)?,
+        evidence_count: evidence_count.max(0) as usize,
+        error: row.get(11)?,
+    })
+}
+
 pub(crate) fn parse_ts(value: &str) -> rusqlite::Result<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .map(|dt| dt.with_timezone(&Utc))
@@ -1193,6 +1461,11 @@ fn parse_json(value: &str) -> rusqlite::Result<serde_json::Value> {
 }
 
 fn parse_string_vec(value: &str) -> rusqlite::Result<Vec<String>> {
+    serde_json::from_str(value)
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))
+}
+
+fn parse_category_mix(value: &str) -> rusqlite::Result<Vec<ActivityCategoryCount>> {
     serde_json::from_str(value)
         .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))
 }

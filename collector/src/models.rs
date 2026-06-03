@@ -319,6 +319,51 @@ pub struct VisualSummary {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualObservation {
+    pub id: i64,
+    pub high_res_screenshot_id: i64,
+    pub captured_at: DateTime<Utc>,
+    pub file_path: String,
+    pub model_provider: String,
+    pub model_name: String,
+    pub prompt_version: String,
+    pub summary_text: String,
+    pub activity_category: ActivityCategory,
+    pub project_hints: Vec<String>,
+    pub visible_apps: Vec<String>,
+    pub visible_text_hints: Vec<String>,
+    pub risk_flags: Vec<String>,
+    pub confidence: f64,
+    pub created_at: DateTime<Utc>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityCategoryCount {
+    pub activity_category: ActivityCategory,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InsightReport {
+    pub id: i64,
+    pub period_start: DateTime<Utc>,
+    pub period_end: DateTime<Utc>,
+    pub generated_at: DateTime<Utc>,
+    pub report_kind: String,
+    pub model_provider: String,
+    pub model_name: String,
+    pub summary_text: String,
+    pub category_mix: Vec<ActivityCategoryCount>,
+    pub project_hints: Vec<String>,
+    pub evidence_count: usize,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScreenshotSummary {

@@ -5,8 +5,9 @@ use chrono::{DateTime, Utc};
 use tsr_collector::{
     api,
     models::{
-        ActivityCategory, CaptureStatus, HighResScreenshotMeta, LifecycleType, ScreenshotMeta,
-        VisualSummary, WindowSnapshot,
+        ActivityCategory, ActivityCategoryCount, CaptureStatus, HighResScreenshotMeta,
+        InsightReport, LifecycleType, ScreenshotMeta, VisualObservation, VisualSummary,
+        WindowSnapshot,
     },
     storage::Store,
 };
@@ -819,6 +820,143 @@ async fn serves_high_res_screenshots_without_skip_rows() {
     assert_eq!(screenshots[0]["width"], 1920);
     assert_eq!(screenshots[0]["height"], 1080);
     assert_eq!(screenshots[0]["captureStatus"], "ok");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn serves_visual_observations_for_date() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+    let high_res_id = store
+        .insert_high_res_screenshot(
+            &session_id,
+            &HighResScreenshotMeta {
+                id: 0,
+                captured_at: ts("2026-05-24T10:05:00Z"),
+                file_path: "2026-05-24/10-05-00.jpg".into(),
+                width: 1600,
+                height: 1000,
+                process_name: Some("Code.exe".into()),
+                window_title: Some("main.rs".into()),
+                capture_status: "ok".into(),
+            },
+        )
+        .unwrap();
+    store
+        .insert_visual_observation(&VisualObservation {
+            id: 0,
+            high_res_screenshot_id: high_res_id,
+            captured_at: ts("2026-05-24T10:05:00Z"),
+            file_path: "2026-05-24/10-05-00.jpg".into(),
+            model_provider: "minimax".into(),
+            model_name: "MiniMax-M3".into(),
+            prompt_version: "visual-summary-minimax-m3-v1".into(),
+            summary_text: "正在调试自动截图摘要".into(),
+            activity_category: ActivityCategory::Coding,
+            project_hints: vec!["Time State Recorder".into()],
+            visible_apps: vec!["Code.exe".into()],
+            visible_text_hints: vec!["main.rs".into()],
+            risk_flags: vec![],
+            confidence: 0.84,
+            created_at: ts("2026-05-24T10:05:20Z"),
+            error: None,
+        })
+        .unwrap();
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!(
+        "http://{addr}/api/visual-observations?date=2026-05-24"
+    ))
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["observations"][0]["highResScreenshotId"], high_res_id);
+    assert_eq!(body["observations"][0]["modelProvider"], "minimax");
+    assert_eq!(
+        body["observations"][0]["summaryText"],
+        "正在调试自动截图摘要"
+    );
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn serves_insight_reports() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    store
+        .insert_insight_report(&InsightReport {
+            id: 0,
+            period_start: ts("2026-05-24T05:00:00Z"),
+            period_end: ts("2026-05-24T10:00:00Z"),
+            generated_at: ts("2026-05-24T10:01:00Z"),
+            report_kind: "5h".into(),
+            model_provider: "local_insight".into(),
+            model_name: "trajectory-v1".into(),
+            summary_text: "过去 5 小时主要在编码。".into(),
+            category_mix: vec![ActivityCategoryCount {
+                activity_category: ActivityCategory::Coding,
+                count: 3,
+            }],
+            project_hints: vec!["Time State Recorder".into()],
+            evidence_count: 3,
+            error: None,
+        })
+        .unwrap();
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!("http://{addr}/api/insight-reports"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["reports"][0]["reportKind"], "5h");
+    assert_eq!(body["reports"][0]["summaryText"], "过去 5 小时主要在编码。");
+    assert_eq!(
+        body["reports"][0]["categoryMix"][0]["activityCategory"],
+        "coding"
+    );
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn serves_analysis_status_feedback() {
+    let store = Store::open_memory().unwrap();
+    store.init().unwrap();
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!("http://{addr}/api/analysis-status"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["visual"]["status"], "idle");
+    assert_eq!(body["report"]["status"], "idle");
 
     server.abort();
 }

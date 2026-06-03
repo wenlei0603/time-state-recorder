@@ -27,6 +27,78 @@ function healthResponse() {
   };
 }
 
+function analysisStatusResponse() {
+  return jsonResponse({
+    visual: {
+      status: "idle",
+      lastStartedAt: "2026-05-24T10:00:00Z",
+      lastFinishedAt: "2026-05-24T10:00:04Z",
+      nextRunAt: "2026-05-24T10:05:00Z",
+      lastError: null
+    },
+    report: {
+      status: "idle",
+      lastStartedAt: "2026-05-24T10:00:05Z",
+      lastFinishedAt: "2026-05-24T10:00:06Z",
+      nextRunAt: "2026-05-24T15:00:00Z",
+      lastError: null
+    },
+    latestObservation: {
+      id: 7,
+      highResScreenshotId: 44,
+      capturedAt: "2026-05-24T10:00:00Z",
+      filePath: "2026-05-24/10-00-00.jpg",
+      modelProvider: "minimax",
+      modelName: "MiniMax-M3",
+      promptVersion: "visual-summary-minimax-m3-v1",
+      summaryText: "Focused coding work.",
+      activityCategory: "coding",
+      projectHints: ["Time State Recorder"],
+      visibleApps: ["Code"],
+      visibleTextHints: ["collector/src/api.rs"],
+      riskFlags: [],
+      confidence: 0.82,
+      createdAt: "2026-05-24T10:00:04Z",
+      error: null
+    },
+    latestReport: {
+      id: 2,
+      periodStart: "2026-05-24T05:00:00Z",
+      periodEnd: "2026-05-24T10:00:00Z",
+      generatedAt: "2026-05-24T10:00:06Z",
+      reportKind: "5h",
+      modelProvider: "local_insight",
+      modelName: "trajectory-v1",
+      summaryText: "Five-hour trajectory summary.",
+      categoryMix: [{ activityCategory: "coding", count: 9 }],
+      projectHints: ["Time State Recorder"],
+      evidenceCount: 12,
+      error: null
+    }
+  });
+}
+
+function insightReportsResponse() {
+  return jsonResponse({
+    reports: [
+      {
+        id: 2,
+        periodStart: "2026-05-24T05:00:00Z",
+        periodEnd: "2026-05-24T10:00:00Z",
+        generatedAt: "2026-05-24T10:00:06Z",
+        reportKind: "5h",
+        modelProvider: "local_insight",
+        modelName: "trajectory-v1",
+        summaryText: "Five-hour trajectory summary.",
+        categoryMix: [{ activityCategory: "coding", count: 9 }],
+        projectHints: ["Time State Recorder"],
+        evidenceCount: 12,
+        error: null
+      }
+    ]
+  });
+}
+
 function jsonResponse(body: unknown) {
   return {
     ok: true,
@@ -301,6 +373,25 @@ describe("App", () => {
 
     expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
     expect(screen.queryByText("Sensitive client roadmap")).not.toBeInTheDocument();
+  });
+
+  it("shows AI insight status while hiding generated text until raw mode", async () => {
+    vi.stubGlobal("fetch", vi.fn(liveDataResponse));
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("region", { name: /ai insight feedback/i })
+    ).toBeInTheDocument();
+    expect(screen.getByText("AI 工作洞察")).toBeInTheDocument();
+    expect(screen.getByText(/12 screenshots/i)).toBeInTheDocument();
+    expect(screen.queryByText("Focused coding work.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Five-hour trajectory summary.")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
+
+    expect(await screen.findByText("Focused coding work.")).toBeInTheDocument();
+    expect(await screen.findByText("Five-hour trajectory summary.")).toBeInTheDocument();
   });
 
   it("shows raw live evidence titles on the flow board after switching privacy mode", async () => {
@@ -638,6 +729,12 @@ describe("App", () => {
 });
 
 async function liveDataResponse(input: string) {
+  if (input === "/api/analysis-status") {
+    return analysisStatusResponse();
+  }
+  if (input.startsWith("/api/insight-reports")) {
+    return insightReportsResponse();
+  }
   if (input === "/api/time-events") {
     return jsonResponse({
       events: [

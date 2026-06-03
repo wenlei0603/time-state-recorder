@@ -138,6 +138,7 @@ fn minimax_request_uses_openai_chat_completions_image_content_block() {
         request["messages"][1]["content"][1]["image_url"]["detail"],
         "default"
     );
+    assert!(request["messages"][1]["content"][1]["image_url"]["max_long_side_pixel"].is_null());
     assert!(
         request["messages"][1]["content"][1]["image_url"]["url"]
             .as_str()

@@ -3,8 +3,9 @@ use rusqlite::params;
 use tsr_collector::{
     interval::build_time_events_with_lifecycle,
     models::{
-        ActivityCategory, CaptureStatus, HighResScreenshotMeta, LifecycleType, ScreenshotMeta,
-        VisualSummary, WindowSnapshot,
+        ActivityCategory, ActivityCategoryCount, CaptureStatus, HighResScreenshotMeta,
+        InsightReport, LifecycleType, ScreenshotMeta, VisualObservation, VisualSummary,
+        WindowSnapshot,
     },
     storage::Store,
 };
@@ -327,6 +328,106 @@ fn visual_summary_queries_support_utc_day_windows() {
     assert_eq!(rows.len(), 2);
     assert!(rows[0].summary_text.contains("2026-06-03T16:00:00Z"));
     assert!(rows[1].summary_text.contains("2026-06-04T15:59:00Z"));
+}
+
+#[test]
+fn visual_observations_round_trip_by_high_res_screenshot() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+    let high_res_id = store
+        .insert_high_res_screenshot(
+            &session_id,
+            &HighResScreenshotMeta {
+                id: 0,
+                captured_at: ts("2026-06-03T10:05:00Z"),
+                file_path: "2026-06-03/10-05-00.jpg".into(),
+                width: 1600,
+                height: 1000,
+                process_name: Some("Code.exe".into()),
+                window_title: Some("analysis worker".into()),
+                capture_status: "ok".into(),
+            },
+        )
+        .unwrap();
+
+    let observation_id = store
+        .insert_visual_observation(&VisualObservation {
+            id: 0,
+            high_res_screenshot_id: high_res_id,
+            captured_at: ts("2026-06-03T10:05:00Z"),
+            file_path: "2026-06-03/10-05-00.jpg".into(),
+            model_provider: "minimax".into(),
+            model_name: "MiniMax-M3".into(),
+            prompt_version: "visual-summary-minimax-m3-v1".into(),
+            summary_text: "正在实现自动视觉分析 worker".into(),
+            activity_category: ActivityCategory::Coding,
+            project_hints: vec!["Time State Recorder".into()],
+            visible_apps: vec!["Code.exe".into()],
+            visible_text_hints: vec!["analysis worker".into()],
+            risk_flags: vec![],
+            confidence: 0.86,
+            created_at: ts("2026-06-03T10:05:20Z"),
+            error: None,
+        })
+        .unwrap();
+
+    let rows = store
+        .list_visual_observations_between(
+            ts("2026-06-03T10:00:00Z"),
+            ts("2026-06-03T10:10:00Z"),
+            10,
+        )
+        .unwrap();
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, observation_id);
+    assert_eq!(rows[0].high_res_screenshot_id, high_res_id);
+    assert_eq!(rows[0].summary_text, "正在实现自动视觉分析 worker");
+}
+
+#[test]
+fn insight_reports_round_trip_by_period() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+
+    let report_id = store
+        .insert_insight_report(&InsightReport {
+            id: 0,
+            period_start: ts("2026-06-03T05:00:00Z"),
+            period_end: ts("2026-06-03T10:00:00Z"),
+            generated_at: ts("2026-06-03T10:01:00Z"),
+            report_kind: "5h".into(),
+            model_provider: "local_insight".into(),
+            model_name: "trajectory-v1".into(),
+            summary_text: "5 小时内主要在实现 Time State Recorder。".into(),
+            category_mix: vec![
+                ActivityCategoryCount {
+                    activity_category: ActivityCategory::Coding,
+                    count: 3,
+                },
+                ActivityCategoryCount {
+                    activity_category: ActivityCategory::Research,
+                    count: 1,
+                },
+            ],
+            project_hints: vec!["Time State Recorder".into()],
+            evidence_count: 4,
+            error: None,
+        })
+        .unwrap();
+
+    let reports = store.list_insight_reports(5).unwrap();
+
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].id, report_id);
+    assert_eq!(reports[0].report_kind, "5h");
+    assert_eq!(reports[0].evidence_count, 4);
+    assert_eq!(
+        reports[0].category_mix[0].activity_category,
+        ActivityCategory::Coding
+    );
+    assert_eq!(reports[0].category_mix[0].count, 3);
 }
 
 #[test]

@@ -173,6 +173,60 @@ export type VisualSummary = {
   error?: string;
 };
 
+export type VisualObservation = {
+  id: number;
+  highResScreenshotId: number;
+  capturedAt: string;
+  filePath: string;
+  modelProvider: string;
+  modelName: string;
+  promptVersion: string;
+  summaryText: string;
+  activityCategory: ActivityCategory;
+  projectHints: string[];
+  visibleApps: string[];
+  visibleTextHints: string[];
+  riskFlags: string[];
+  confidence: number;
+  createdAt: string;
+  error?: string;
+};
+
+export type ActivityCategoryCount = {
+  activityCategory: ActivityCategory;
+  count: number;
+};
+
+export type InsightReport = {
+  id: number;
+  periodStart: string;
+  periodEnd: string;
+  generatedAt: string;
+  reportKind: string;
+  modelProvider: string;
+  modelName: string;
+  summaryText: string;
+  categoryMix: ActivityCategoryCount[];
+  projectHints: string[];
+  evidenceCount: number;
+  error?: string;
+};
+
+export type AnalysisWorkerStatus = {
+  status: "idle" | "running" | "error" | string;
+  lastStartedAt?: string;
+  lastFinishedAt?: string;
+  nextRunAt?: string;
+  lastError?: string;
+};
+
+export type AnalysisStatus = {
+  visual: AnalysisWorkerStatus;
+  report: AnalysisWorkerStatus;
+  latestObservation?: VisualObservation;
+  latestReport?: InsightReport;
+};
+
 export type AppScreenshotCount = {
   processName: string;
   count: number;

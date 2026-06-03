@@ -1321,6 +1321,188 @@ td:nth-child(2) {
   line-height: 1.45;
 }
 
+/* AI Insight Feedback */
+
+.aiInsightPanel {
+  display: grid;
+  width: min(100%, 1180px);
+  gap: 14px;
+  margin-bottom: 16px;
+  border: 1px solid #d9dfd8;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 12px 28px rgba(23, 33, 27, 0.06);
+  padding: 18px;
+}
+
+.aiInsightHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.aiInsightHeader h2 {
+  font-size: 1.08rem;
+}
+
+.aiInsightHeader p {
+  margin: 5px 0 0;
+  color: #5f6d65;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.aiInsightGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(220px, 0.55fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.aiInsightBlock,
+.aiInsightTiming {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid #e2e6e1;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.aiInsightBlockHeader,
+.aiInsightTiming {
+  min-width: 0;
+}
+
+.aiInsightBlockHeader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.aiInsightBlockHeader h3 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.aiInsightBlockHeader span:not(.metricIcon):not(.workerBadge) {
+  color: #5f6d65;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.workerBadge {
+  display: inline-flex;
+  min-width: 62px;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #d9ecdf;
+  color: #1f6b3b;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.workerBadge.loading {
+  background: #e5ebf7;
+  color: #315a9f;
+}
+
+.workerBadge.offline {
+  background: #f5dfdd;
+  color: #8a312e;
+}
+
+.aiInsightBody {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+}
+
+.aiInsightBody p {
+  margin: 0;
+  color: #233028;
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.aiInsightFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.aiInsightFacts span,
+.categoryMix span {
+  display: inline-flex;
+  border-radius: 999px;
+  background: #f3f6f2;
+  color: #5f6d65;
+  font-size: 0.74rem;
+  font-weight: 800;
+  padding: 4px 8px;
+}
+
+.categoryMix {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.aiInsightHints {
+  color: #5f6d65 !important;
+  font-size: 0.8rem !important;
+}
+
+.insightRedacted {
+  padding: 10px 12px;
+  border-radius: 6px;
+}
+
+.aiInsightError {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  color: #8a312e;
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.aiInsightTiming {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.aiInsightTiming svg {
+  color: #356b63;
+}
+
+.aiInsightTiming div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.aiInsightTiming strong {
+  color: #17211b;
+  font-size: 0.9rem;
+}
+
+.aiInsightTiming span {
+  color: #5f6d65;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
 @media (max-width: 980px) {
   .topbar,
   .workspace {
@@ -1717,11 +1899,14 @@ td:nth-child(2) {
   }
 
   .flowBoardHeader,
-  .flowBoardGrid {
+  .flowBoardGrid,
+  .aiInsightHeader,
+  .aiInsightGrid {
     grid-template-columns: 1fr;
   }
 
-  .flowBoardHeader {
+  .flowBoardHeader,
+  .aiInsightHeader {
     display: grid;
   }
 

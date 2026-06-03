@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
@@ -22,11 +22,12 @@ use crate::{
     activity::{ActivityBucketQuery, build_activity_buckets},
     blocker::BlockerEngine,
     input,
+    insights::{ConfiguredInsightReporter, observation_from_visual_summary},
     interval::build_time_events_with_lifecycle,
     models::{
-        ActivityBucket, BlockerHit, CollectorHealth, DbStats, HighResScreenshotMeta,
-        LifecycleEvent, LifecycleType, ScreenshotMeta, SubsystemHealth, TimeEvent, VisualSummary,
-        WindowSnapshot,
+        ActivityBucket, BlockerHit, CollectorHealth, DbStats, HighResScreenshotMeta, InsightReport,
+        LifecycleEvent, LifecycleType, ScreenshotMeta, SubsystemHealth, TimeEvent,
+        VisualObservation, VisualSummary, WindowSnapshot,
     },
     screenshot,
     storage::Store,
@@ -44,6 +45,7 @@ pub struct AppState {
     high_res_screenshot_interval_secs: Arc<u64>,
     idle_threshold_secs: Arc<u64>,
     health: Arc<Mutex<CollectorHealth>>,
+    analysis_status: Arc<Mutex<AnalysisStatus>>,
     shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
@@ -115,6 +117,70 @@ struct VisualSummariesResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct VisualObservationsResponse {
+    observations: Vec<VisualObservation>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InsightReportsResponse {
+    reports: Vec<InsightReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisStatus {
+    visual: AnalysisWorkerStatus,
+    report: AnalysisWorkerStatus,
+    latest_observation: Option<VisualObservation>,
+    latest_report: Option<InsightReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisWorkerStatus {
+    status: String,
+    last_started_at: Option<DateTime<Utc>>,
+    last_finished_at: Option<DateTime<Utc>>,
+    next_run_at: Option<DateTime<Utc>>,
+    last_error: Option<String>,
+}
+
+impl Default for AnalysisStatus {
+    fn default() -> Self {
+        Self {
+            visual: AnalysisWorkerStatus::idle(),
+            report: AnalysisWorkerStatus::idle(),
+            latest_observation: None,
+            latest_report: None,
+        }
+    }
+}
+
+impl AnalysisWorkerStatus {
+    fn idle() -> Self {
+        Self {
+            status: "idle".into(),
+            last_started_at: None,
+            last_finished_at: None,
+            next_run_at: None,
+            last_error: None,
+        }
+    }
+
+    fn running(now: DateTime<Utc>) -> Self {
+        Self {
+            status: "running".into(),
+            last_started_at: Some(now),
+            last_finished_at: None,
+            next_run_at: None,
+            last_error: None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct VisualAnalyzeResponse {
     summary: VisualSummary,
 }
@@ -140,6 +206,9 @@ const THUMBNAIL_SCREENSHOT_MAX_WIDTH: u32 = 960;
 const THUMBNAIL_SCREENSHOT_QUALITY: u8 = 82;
 const HIGH_RES_SCREENSHOT_MAX_WIDTH: u32 = 1600;
 const HIGH_RES_SCREENSHOT_QUALITY: u8 = 88;
+const VISUAL_ANALYSIS_SCAN_INTERVAL: u64 = 30;
+const INSIGHT_REPORT_INTERVAL: u64 = 5 * 60 * 60;
+const INSIGHT_REPORT_CHECK_INTERVAL: u64 = 5 * 60;
 
 #[derive(Debug, Clone)]
 struct DateWindow {
@@ -236,6 +305,7 @@ fn default_state(
                 blocker_hits: 0,
             },
         })),
+        analysis_status: Arc::new(Mutex::new(AnalysisStatus::default())),
         shutdown_tx: Arc::new(Mutex::new(shutdown_tx)),
     }
 }
@@ -254,6 +324,9 @@ fn router_from_state(state: AppState) -> Router {
         .route("/api/screenshot-summary", get(screenshot_summary))
         .route("/api/high-res-screenshots", get(high_res_screenshots))
         .route("/api/visual-summaries", get(visual_summaries))
+        .route("/api/visual-observations", get(visual_observations))
+        .route("/api/insight-reports", get(insight_reports))
+        .route("/api/analysis-status", get(analysis_status))
         .route("/api/screenshots/{id}/analyze", post(analyze_screenshot))
         .route("/api/input-events", get(input_events))
         .route("/api/input-summary", get(input_summary))
@@ -417,6 +490,8 @@ pub async fn serve(
         session_id.clone(),
         ScreenshotCaptureKind::HighRes,
     );
+    let visual_analysis_collector = spawn_visual_analysis_loop(state.clone());
+    let insight_report_collector = spawn_insight_report_loop(state.clone());
     let input_collector = input::spawn_input_collector(state.store.clone(), state.health.clone());
 
     let app = router_from_state(state.clone());
@@ -427,10 +502,14 @@ pub async fn serve(
     window_collector.abort();
     screenshot_collector.abort();
     high_res_screenshot_collector.abort();
+    visual_analysis_collector.abort();
+    insight_report_collector.abort();
     input_collector.abort();
     let _ = window_collector.await;
     let _ = screenshot_collector.await;
     let _ = high_res_screenshot_collector.await;
+    let _ = visual_analysis_collector.await;
+    let _ = insight_report_collector.await;
     let _ = input_collector.await;
 
     if let Ok(mut store) = state.store.lock() {
@@ -455,6 +534,76 @@ fn record_window_capture_success(
         if let Some(last_event_at) = last_event_at {
             h.window_collector.last_event_at = Some(last_event_at);
         }
+    }
+}
+
+fn update_visual_analysis_running(state: &AppState, started_at: DateTime<Utc>) {
+    if let Ok(mut status) = state.analysis_status.lock() {
+        status.visual = AnalysisWorkerStatus::running(started_at);
+    }
+}
+
+fn update_visual_analysis_success(
+    state: &AppState,
+    finished_at: DateTime<Utc>,
+    next_run_at: DateTime<Utc>,
+    observation: VisualObservation,
+) {
+    if let Ok(mut status) = state.analysis_status.lock() {
+        status.visual.status = "idle".into();
+        status.visual.last_finished_at = Some(finished_at);
+        status.visual.next_run_at = Some(next_run_at);
+        status.visual.last_error = None;
+        status.latest_observation = Some(observation);
+    }
+}
+
+fn update_visual_analysis_error(
+    state: &AppState,
+    finished_at: DateTime<Utc>,
+    next_run_at: DateTime<Utc>,
+    error: String,
+) {
+    if let Ok(mut status) = state.analysis_status.lock() {
+        status.visual.status = "error".into();
+        status.visual.last_finished_at = Some(finished_at);
+        status.visual.next_run_at = Some(next_run_at);
+        status.visual.last_error = Some(error);
+    }
+}
+
+fn update_report_running(state: &AppState, started_at: DateTime<Utc>) {
+    if let Ok(mut status) = state.analysis_status.lock() {
+        status.report = AnalysisWorkerStatus::running(started_at);
+    }
+}
+
+fn update_report_success(
+    state: &AppState,
+    finished_at: DateTime<Utc>,
+    next_run_at: DateTime<Utc>,
+    report: InsightReport,
+) {
+    if let Ok(mut status) = state.analysis_status.lock() {
+        status.report.status = "idle".into();
+        status.report.last_finished_at = Some(finished_at);
+        status.report.next_run_at = Some(next_run_at);
+        status.report.last_error = None;
+        status.latest_report = Some(report);
+    }
+}
+
+fn update_report_error(
+    state: &AppState,
+    finished_at: DateTime<Utc>,
+    next_run_at: DateTime<Utc>,
+    error: String,
+) {
+    if let Ok(mut status) = state.analysis_status.lock() {
+        status.report.status = "error".into();
+        status.report.last_finished_at = Some(finished_at);
+        status.report.next_run_at = Some(next_run_at);
+        status.report.last_error = Some(error);
     }
 }
 
@@ -755,6 +904,166 @@ fn spawn_screenshot_loop(
     })
 }
 
+fn spawn_visual_analysis_loop(state: AppState) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            let started_at = Utc::now();
+            let next_run_at =
+                started_at + chrono::Duration::seconds(VISUAL_ANALYSIS_SCAN_INTERVAL as i64);
+            update_visual_analysis_running(&state, started_at);
+            match process_next_visual_observation(&state).await {
+                Ok(Some(observation)) => {
+                    update_visual_analysis_success(&state, Utc::now(), next_run_at, observation);
+                }
+                Ok(None) => {
+                    if let Ok(mut status) = state.analysis_status.lock() {
+                        status.visual.status = "idle".into();
+                        status.visual.next_run_at = Some(next_run_at);
+                    }
+                }
+                Err(error) => {
+                    update_visual_analysis_error(
+                        &state,
+                        Utc::now(),
+                        next_run_at,
+                        format!("{error:#}"),
+                    );
+                }
+            }
+
+            time::sleep(Duration::from_secs(VISUAL_ANALYSIS_SCAN_INTERVAL)).await;
+        }
+    })
+}
+
+async fn process_next_visual_observation(state: &AppState) -> Result<Option<VisualObservation>> {
+    let high_res = {
+        let store = state
+            .store
+            .lock()
+            .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
+        store
+            .list_unobserved_high_res_screenshots(1)?
+            .into_iter()
+            .next()
+    };
+    let Some(high_res) = high_res else {
+        return Ok(None);
+    };
+
+    let screenshot = high_res_to_screenshot_meta(&high_res);
+    let image_path = state.high_res_screenshot_dir.join(&high_res.file_path);
+    let input = VisualAnalysisInput {
+        screenshot: &screenshot,
+        image_path: Some(image_path.as_path()),
+    };
+    let created_at = Utc::now();
+    let summary = ConfiguredVisualAnalyzer::from_env()?
+        .analyze(&input, created_at)
+        .await
+        .with_context(|| {
+            format!(
+                "visual analysis failed for high_res_screenshot_id={}",
+                high_res.id
+            )
+        })?;
+    let mut observation = observation_from_visual_summary(&high_res, &summary);
+
+    let observation_id = {
+        let mut store = state
+            .store
+            .lock()
+            .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
+        store.insert_visual_observation(&observation)?
+    };
+    observation.id = observation_id;
+    Ok(Some(observation))
+}
+
+fn high_res_to_screenshot_meta(high_res: &HighResScreenshotMeta) -> ScreenshotMeta {
+    ScreenshotMeta {
+        id: high_res.id,
+        captured_at: high_res.captured_at,
+        file_path: high_res.file_path.clone(),
+        width: high_res.width,
+        height: high_res.height,
+        process_name: high_res.process_name.clone(),
+        window_title: high_res.window_title.clone(),
+        capture_status: high_res.capture_status.clone(),
+    }
+}
+
+fn spawn_insight_report_loop(state: AppState) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            let started_at = Utc::now();
+            let next_run_at =
+                started_at + chrono::Duration::seconds(INSIGHT_REPORT_CHECK_INTERVAL as i64);
+            update_report_running(&state, started_at);
+            match maybe_generate_insight_report(&state, started_at).await {
+                Ok(Some(report)) => {
+                    let next_report_at = report.period_end
+                        + chrono::Duration::seconds(INSIGHT_REPORT_INTERVAL as i64);
+                    update_report_success(&state, Utc::now(), next_report_at, report);
+                }
+                Ok(None) => {
+                    if let Ok(mut status) = state.analysis_status.lock() {
+                        status.report.status = "idle".into();
+                        status.report.next_run_at = Some(next_run_at);
+                    }
+                }
+                Err(error) => {
+                    update_report_error(&state, Utc::now(), next_run_at, format!("{error:#}"));
+                }
+            }
+
+            time::sleep(Duration::from_secs(INSIGHT_REPORT_CHECK_INTERVAL)).await;
+        }
+    })
+}
+
+async fn maybe_generate_insight_report(
+    state: &AppState,
+    period_end: DateTime<Utc>,
+) -> Result<Option<InsightReport>> {
+    let period_start = period_end - chrono::Duration::seconds(INSIGHT_REPORT_INTERVAL as i64);
+    let observations = {
+        let store = state
+            .store
+            .lock()
+            .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
+        if let Some(latest) = store.list_insight_reports(1)?.into_iter().next() {
+            let next_due =
+                latest.period_end + chrono::Duration::seconds(INSIGHT_REPORT_INTERVAL as i64);
+            if period_end < next_due {
+                return Ok(None);
+            }
+        }
+
+        store
+            .list_visual_observations_between(period_start, period_end, 500)?
+            .into_iter()
+            .filter(|observation| observation.error.is_none())
+            .collect::<Vec<_>>()
+    };
+    if observations.is_empty() {
+        return Ok(None);
+    }
+
+    let mut report = ConfiguredInsightReporter::from_env()?
+        .report(period_start, period_end, &observations)
+        .await?;
+    let report_id = {
+        let mut store = state
+            .store
+            .lock()
+            .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
+        store.insert_insight_report(&report)?
+    };
+    report.id = report_id;
+    Ok(Some(report))
+}
+
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let health_snapshot = match state.health.lock() {
         Ok(h) => h.clone(),
@@ -1027,6 +1336,50 @@ async fn visual_summaries(
     match store.list_visual_summaries_between(date_window.start_utc, date_window.end_utc, limit) {
         Ok(summaries) => Json(VisualSummariesResponse { summaries }).into_response(),
         Err(err) => internal_error(err),
+    }
+}
+
+async fn visual_observations(
+    State(state): State<AppState>,
+    Query(query): Query<DateQuery>,
+) -> impl IntoResponse {
+    let date_window = match date_window_from_query(&query) {
+        Ok(date_window) => date_window,
+        Err(message) => return bad_request(&message),
+    };
+    let limit = query.limit.unwrap_or(500).min(5_000);
+    let store = match state.store.lock() {
+        Ok(store) => store,
+        Err(_) => return internal_error("store lock poisoned"),
+    };
+
+    match store.list_visual_observations_between(date_window.start_utc, date_window.end_utc, limit)
+    {
+        Ok(observations) => Json(VisualObservationsResponse { observations }).into_response(),
+        Err(err) => internal_error(err),
+    }
+}
+
+async fn insight_reports(
+    State(state): State<AppState>,
+    Query(query): Query<LimitQuery>,
+) -> impl IntoResponse {
+    let limit = query.limit.unwrap_or(10).min(100);
+    let store = match state.store.lock() {
+        Ok(store) => store,
+        Err(_) => return internal_error("store lock poisoned"),
+    };
+
+    match store.list_insight_reports(limit) {
+        Ok(reports) => Json(InsightReportsResponse { reports }).into_response(),
+        Err(err) => internal_error(err),
+    }
+}
+
+async fn analysis_status(State(state): State<AppState>) -> impl IntoResponse {
+    match state.analysis_status.lock() {
+        Ok(status) => Json(status.clone()).into_response(),
+        Err(_) => internal_error("analysis status lock poisoned"),
     }
 }
 

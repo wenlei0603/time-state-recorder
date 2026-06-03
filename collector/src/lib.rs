@@ -2,6 +2,7 @@ pub mod activity;
 pub mod api;
 pub mod blocker;
 pub mod input;
+pub mod insights;
 pub mod interval;
 pub mod models;
 pub mod screenshot;

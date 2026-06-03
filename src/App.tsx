@@ -14,6 +14,7 @@ import { CollectorMonitor } from "./CollectorMonitor";
 import { DailyTracking } from "./DailyTracking";
 import { Dashboard } from "./Dashboard";
 import { InputActivity } from "./InputActivity";
+import { InsightFeedback } from "./InsightFeedback";
 import { TimelineView } from "./TimelineView";
 import { TodayFlowBoard } from "./TodayFlowBoard";
 import { activitySampleBuckets } from "./data/activitySample";
@@ -25,6 +26,7 @@ import { fetchActivityBuckets, fetchTimeEvents } from "./lib/api";
 import { currentCollectorDate } from "./lib/dateQuery";
 import { fetchCollectorHealth } from "./lib/health";
 import { fetchInputSummary, fetchTextSegments } from "./lib/input";
+import { fetchAnalysisStatus, fetchInsightReports } from "./lib/insights";
 import {
   analyzeScreenshot,
   fetchScreenshots,
@@ -43,7 +45,9 @@ import {
 } from "./lib/uiModel";
 import type {
   ActivityBucket,
+  AnalysisStatus,
   CollectorHealth,
+  InsightReport,
   ScreenshotMeta,
   ScreenshotSummary,
   TextSegment,
@@ -75,6 +79,10 @@ export function App() {
   );
   const [screenshotSummary, setScreenshotSummary] =
     useState<ScreenshotSummary>(feature3SampleSummary);
+  const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus | undefined>(
+    undefined
+  );
+  const [insightReports, setInsightReports] = useState<InsightReport[]>([]);
   const [health, setHealth] = useState<CollectorHealth | undefined>(undefined);
   const [collectorStatus, setCollectorStatus] = useState<CollectorStatus>("sample");
   const [collectorError, setCollectorError] = useState<string | null>(null);
@@ -87,7 +95,9 @@ export function App() {
   const [screenshotStatus, setScreenshotStatus] =
     useState<UiSourceMode>("sample");
   const [screenshotLoading, setScreenshotLoading] = useState(false);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [visualSummaryError, setVisualSummaryError] = useState<string | null>(null);
   const [analyzingScreenshotId, setAnalyzingScreenshotId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("today");
@@ -119,6 +129,16 @@ export function App() {
     void refreshCollector();
   }, []);
 
+  useEffect(() => {
+    if (sourceMode !== "live") {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      void refreshAnalysisFeedback();
+    }, 15_000);
+    return () => window.clearInterval(intervalId);
+  }, [sourceMode]);
+
   function loadSample() {
     collectorRequestGeneration.current += 1;
     setEvents(feature1SampleEvents);
@@ -128,6 +148,8 @@ export function App() {
     setInputSummary(feature2SampleSummary);
     setScreenshots(feature3SampleScreenshots);
     setScreenshotSummary(feature3SampleSummary);
+    setAnalysisStatus(undefined);
+    setInsightReports([]);
     setHealth(undefined);
     setSourceMode("sample");
     setActivityStatus("sample");
@@ -136,11 +158,13 @@ export function App() {
     setActivityLoading(false);
     setInputLoading(false);
     setScreenshotLoading(false);
+    setAnalysisLoading(false);
     setCollectorStatus("sample");
     setCollectorError(null);
     setActivityError(null);
     setInputError(null);
     setScreenshotError(null);
+    setAnalysisError(null);
     setVisualSummaryError(null);
     setAnalyzingScreenshotId(null);
   }
@@ -162,10 +186,12 @@ export function App() {
     setActivityLoading(true);
     setInputLoading(true);
     setScreenshotLoading(true);
+    setAnalysisLoading(true);
     setCollectorError(null);
     setActivityError(null);
     setInputError(null);
     setScreenshotError(null);
+    setAnalysisError(null);
     setVisualSummaryError(null);
     const isCurrentRequest = () =>
       requestGeneration === collectorRequestGeneration.current;
@@ -207,6 +233,8 @@ export function App() {
             setHealth(undefined);
           }
         });
+
+      void refreshAnalysisFeedback(requestGeneration);
 
       void fetchActivityBuckets(effectiveDate, 180)
         .then((result) => {
@@ -329,12 +357,44 @@ export function App() {
         setActivityError(errorMessage(error));
         setInputError(errorMessage(error));
         setScreenshotError(errorMessage(error));
+        setAnalysisError(errorMessage(error));
         setVisualSummaryError(errorMessage(error));
         setActivityLoading(false);
         setInputLoading(false);
         setScreenshotLoading(false);
+        setAnalysisLoading(false);
       }
     }
+  }
+
+  async function refreshAnalysisFeedback(
+    requestGeneration = collectorRequestGeneration.current
+  ) {
+    setAnalysisLoading(true);
+    setAnalysisError(null);
+    const [statusResult, reportsResult] = await Promise.allSettled([
+      fetchAnalysisStatus(),
+      fetchInsightReports(5)
+    ]);
+    if (requestGeneration !== collectorRequestGeneration.current) {
+      return;
+    }
+
+    const errors: string[] = [];
+    if (statusResult.status === "fulfilled") {
+      setAnalysisStatus(statusResult.value);
+    } else {
+      errors.push(errorMessage(statusResult.reason));
+    }
+
+    if (reportsResult.status === "fulfilled") {
+      setInsightReports(reportsResult.value);
+    } else {
+      errors.push(errorMessage(reportsResult.reason));
+    }
+
+    setAnalysisError(errors.length > 0 ? errors.join(" / ") : null);
+    setAnalysisLoading(false);
   }
 
   return (
@@ -516,6 +576,12 @@ export function App() {
           {screenshotError}
         </p>
       )}
+      {analysisError && (
+        <p className="sampleNotice" role="status">
+          AI insight layer unavailable. Keeping current insight state visible:{" "}
+          {analysisError}
+        </p>
+      )}
       {visualSummaryError && (
         <p className="sampleNotice" role="status">
           Visual summary layer unavailable. Keeping current summary state visible:{" "}
@@ -524,21 +590,31 @@ export function App() {
       )}
 
       {viewMode === "today" ? (
-        <TodayFlowBoard
-          events={events}
-          screenshotSummary={screenshotSummary}
-          screenshots={screenshots}
-          inputSummary={inputSummary}
-          health={health}
-          privacyMode={privacyMode}
-          screenshotsVisible={layers.screenshots}
-          visualSummaries={visualSummaries}
-          analyzingScreenshotId={analyzingScreenshotId}
-          onAnalyzeScreenshot={(screenshotId) => {
-            void handleAnalyzeScreenshot(screenshotId);
-          }}
-          sourceLabel={sourceMode === "live" ? "Live collector" : "Sample workspace"}
-        />
+        <>
+          <InsightFeedback
+            analysisStatus={analysisStatus}
+            reports={insightReports}
+            privacyMode={privacyMode}
+            sourceMode={sourceMode}
+            loading={analysisLoading}
+            error={analysisError}
+          />
+          <TodayFlowBoard
+            events={events}
+            screenshotSummary={screenshotSummary}
+            screenshots={screenshots}
+            inputSummary={inputSummary}
+            health={health}
+            privacyMode={privacyMode}
+            screenshotsVisible={layers.screenshots}
+            visualSummaries={visualSummaries}
+            analyzingScreenshotId={analyzingScreenshotId}
+            onAnalyzeScreenshot={(screenshotId) => {
+              void handleAnalyzeScreenshot(screenshotId);
+            }}
+            sourceLabel={sourceMode === "live" ? "Live collector" : "Sample workspace"}
+          />
+        </>
       ) : viewMode === "activity" ? (
         <ActivityReview
           date={queryDate}

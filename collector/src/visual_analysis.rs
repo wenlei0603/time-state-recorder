@@ -117,7 +117,7 @@ impl MiniMaxConfig {
             base_url: base_url.into(),
             model: model.into(),
             image_detail: "default".to_string(),
-            max_long_side_pixel: Some(1440),
+            max_long_side_pixel: None,
             max_completion_tokens: 700,
         }
     }
