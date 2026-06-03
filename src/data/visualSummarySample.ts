@@ -1,0 +1,38 @@
+import type { VisualSummary } from "../types";
+
+export const visualSummarySample: VisualSummary[] = [
+  {
+    id: 1,
+    screenshotId: 1,
+    capturedAt: "2026-05-24T09:01:00Z",
+    modelProvider: "local_stub",
+    modelName: "metadata-v1",
+    promptVersion: "visual-summary-v1",
+    summaryText: "Metadata-only local summary: Code appears focused on Activity review PRD.",
+    activityCategory: "coding",
+    projectHints: ["Time State Recorder"],
+    visibleApps: ["Code"],
+    visibleTextHints: ["Activity review PRD"],
+    riskFlags: [],
+    confidence: 0.35,
+    createdAt: "2026-05-24T09:02:00Z",
+    error: undefined,
+  },
+  {
+    id: 2,
+    screenshotId: 2,
+    capturedAt: "2026-05-24T09:04:00Z",
+    modelProvider: "local_stub",
+    modelName: "metadata-v1",
+    promptVersion: "visual-summary-v1",
+    summaryText: "Metadata-only local summary: Chrome appears focused on ActivityWatch docs.",
+    activityCategory: "research",
+    projectHints: ["Time State Recorder"],
+    visibleApps: ["Chrome"],
+    visibleTextHints: ["ActivityWatch docs"],
+    riskFlags: [],
+    confidence: 0.35,
+    createdAt: "2026-05-24T09:05:00Z",
+    error: undefined,
+  },
+];

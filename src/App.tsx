@@ -20,11 +20,16 @@ import { activitySampleBuckets } from "./data/activitySample";
 import { feature1SampleEvents } from "./data/feature1Sample";
 import { feature2SampleSegments, feature2SampleSummary } from "./data/feature2Sample";
 import { feature3SampleScreenshots, feature3SampleSummary } from "./data/feature3Sample";
+import { visualSummarySample } from "./data/visualSummarySample";
 import { fetchActivityBuckets, fetchTimeEvents } from "./lib/api";
 import { currentCollectorDate } from "./lib/dateQuery";
 import { fetchCollectorHealth } from "./lib/health";
 import { fetchInputSummary, fetchTextSegments } from "./lib/input";
-import { fetchScreenshots, fetchScreenshotSummary } from "./lib/screenshots";
+import {
+  fetchScreenshots,
+  fetchScreenshotSummary,
+  fetchVisualSummaries
+} from "./lib/screenshots";
 import {
   defaultLayerVisibility,
   toVisibleDashboardEvents,
@@ -41,7 +46,8 @@ import type {
   ScreenshotMeta,
   ScreenshotSummary,
   TextSegment,
-  TimeEvent
+  TimeEvent,
+  VisualSummary
 } from "./types";
 import "./styles.css";
 
@@ -59,6 +65,8 @@ export function App() {
   const [events, setEvents] = useState<TimeEvent[]>(feature1SampleEvents);
   const [activityBuckets, setActivityBuckets] =
     useState<ActivityBucket[]>(activitySampleBuckets);
+  const [visualSummaries, setVisualSummaries] =
+    useState<VisualSummary[]>(visualSummarySample);
   const [segments, setSegments] = useState<TextSegment[]>(feature2SampleSegments);
   const [inputSummary, setInputSummary] = useState(feature2SampleSummary);
   const [screenshots, setScreenshots] = useState<ScreenshotMeta[]>(
@@ -79,6 +87,7 @@ export function App() {
     useState<UiSourceMode>("sample");
   const [screenshotLoading, setScreenshotLoading] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
+  const [visualSummaryError, setVisualSummaryError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("today");
   const [sourceMode, setSourceMode] = useState<UiSourceMode>("sample");
   const [privacyMode, setPrivacyMode] = useState<PrivacyMode>("redacted");
@@ -112,6 +121,7 @@ export function App() {
     collectorRequestGeneration.current += 1;
     setEvents(feature1SampleEvents);
     setActivityBuckets(activitySampleBuckets);
+    setVisualSummaries(visualSummarySample);
     setSegments(feature2SampleSegments);
     setInputSummary(feature2SampleSummary);
     setScreenshots(feature3SampleScreenshots);
@@ -129,6 +139,7 @@ export function App() {
     setActivityError(null);
     setInputError(null);
     setScreenshotError(null);
+    setVisualSummaryError(null);
   }
 
   async function refreshCollector(options?: {
@@ -152,6 +163,7 @@ export function App() {
     setActivityError(null);
     setInputError(null);
     setScreenshotError(null);
+    setVisualSummaryError(null);
     try {
       const shouldLoadRawInput =
         effectivePrivacyMode === "raw" && effectiveViewMode === "input";
@@ -166,6 +178,7 @@ export function App() {
         segmentsResult,
         screenshotSummaryResult,
         screenshotsResult,
+        visualSummariesResult,
         healthResult
       ] = await Promise.allSettled([
         fetchTimeEvents(),
@@ -174,6 +187,7 @@ export function App() {
         shouldLoadRawInput ? fetchTextSegments(effectiveDate) : Promise.resolve([]),
         fetchScreenshotSummary(effectiveDate),
         shouldLoadScreenshotRows ? fetchScreenshots(effectiveDate) : Promise.resolve([]),
+        fetchVisualSummaries(effectiveDate),
         fetchCollectorHealth()
       ]);
 
@@ -220,6 +234,14 @@ export function App() {
         setActivityError(errorMessage(activityResult.reason));
       }
 
+      if (visualSummariesResult.status === "fulfilled") {
+        if (dateStillCurrent) {
+          setVisualSummaries(visualSummariesResult.value);
+        }
+      } else {
+        setVisualSummaryError(errorMessage(visualSummariesResult.reason));
+      }
+
       if (
         summaryResult.status === "fulfilled" &&
         segmentsResult.status === "fulfilled"
@@ -264,6 +286,7 @@ export function App() {
         setCollectorStatus("offline");
         setCollectorError(errorMessage(error));
         setActivityError(errorMessage(error));
+        setVisualSummaryError(errorMessage(error));
       }
     } finally {
       if (requestGeneration === collectorRequestGeneration.current) {
@@ -453,6 +476,12 @@ export function App() {
           {screenshotError}
         </p>
       )}
+      {visualSummaryError && (
+        <p className="sampleNotice" role="status">
+          Visual summary layer unavailable. Keeping current summary state visible:{" "}
+          {visualSummaryError}
+        </p>
+      )}
 
       {viewMode === "today" ? (
         <TodayFlowBoard
@@ -473,6 +502,7 @@ export function App() {
           loading={activityLoading}
           error={activityError}
           privacyMode={privacyMode}
+          visualSummaries={visualSummaries}
           onLoadSample={loadSample}
           onLoadLive={() => void refreshCollector()}
         />

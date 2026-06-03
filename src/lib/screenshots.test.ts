@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchScreenshotSummary } from "./screenshots";
+import { fetchScreenshotSummary, fetchVisualSummaries } from "./screenshots";
 
 describe("fetchScreenshotSummary", () => {
   it("loads skipped screenshot reasons from /api/screenshot-summary", async () => {
@@ -64,6 +64,54 @@ describe("fetchScreenshotSummary", () => {
 
     await expect(fetchScreenshotSummary("2026-05-24", fetcher)).rejects.toThrow(
       "skippedReasons row",
+    );
+  });
+});
+
+describe("fetchVisualSummaries", () => {
+  it("loads visual summaries for a date", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        summaries: [
+          {
+            id: 1,
+            screenshotId: 10,
+            capturedAt: "2026-05-24T10:00:00Z",
+            modelProvider: "local_stub",
+            modelName: "metadata-v1",
+            promptVersion: "visual-summary-v1",
+            summaryText: "Metadata-only local summary",
+            activityCategory: "coding",
+            projectHints: ["Time State Recorder"],
+            visibleApps: ["Code.exe"],
+            visibleTextHints: ["main.rs"],
+            riskFlags: [],
+            confidence: 0.35,
+            createdAt: "2026-05-24T10:01:00Z",
+            error: null,
+          },
+        ],
+      }),
+    });
+
+    const summaries = await fetchVisualSummaries("2026-05-24", fetcher);
+
+    expect(fetcher).toHaveBeenCalledWith("/api/visual-summaries?date=2026-05-24");
+    expect(summaries[0].modelProvider).toBe("local_stub");
+    expect(summaries[0].visibleApps).toEqual(["Code.exe"]);
+  });
+
+  it("rejects invalid visual summary rows", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        summaries: [{ id: 1 }],
+      }),
+    });
+
+    await expect(fetchVisualSummaries("2026-05-24", fetcher)).rejects.toThrow(
+      /invalid visual summary/i,
     );
   });
 });

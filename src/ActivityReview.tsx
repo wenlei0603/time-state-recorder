@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { ActivityBucket, PrivacyMode } from "./types";
+import type { ActivityBucket, PrivacyMode, VisualSummary } from "./types";
 import {
   activityCategoryLabel,
   attentionStateLabel,
@@ -15,6 +15,7 @@ type ActivityReviewProps = {
   loading: boolean;
   error: string | null;
   privacyMode: PrivacyMode;
+  visualSummaries: VisualSummary[];
   onLoadSample: () => void;
   onLoadLive: () => void;
 };
@@ -26,6 +27,7 @@ export function ActivityReview({
   loading,
   error,
   privacyMode,
+  visualSummaries,
   onLoadSample,
   onLoadLive
 }: ActivityReviewProps) {
@@ -44,6 +46,19 @@ export function ActivityReview({
     summary.totalBucketSeconds > 0
       ? Math.round((summary.dominantSeconds / summary.totalBucketSeconds) * 100)
       : 0;
+  const selectedVisualSummaries = useMemo(
+    () =>
+      selectedBucket
+        ? visualSummaries.filter((visualSummary) =>
+            isInsideBucket(
+              visualSummary.capturedAt,
+              selectedBucket.startAt,
+              selectedBucket.endAt
+            )
+          )
+        : [],
+    [selectedBucket, visualSummaries]
+  );
 
   return (
     <section className="activityReview" aria-label="Activity Review">
@@ -52,7 +67,7 @@ export function ActivityReview({
           <p className="eyebrow">3-minute buckets / {sourceMode}</p>
           <h2>Activity Review</h2>
           <p className="reviewSubtitle">
-            {date} · {summary.bucketCount} buckets · raw titles guarded by privacy mode
+            {date} - {summary.bucketCount} buckets - raw titles guarded by privacy mode
           </p>
         </div>
         <div className="inlineActions">
@@ -164,8 +179,8 @@ export function ActivityReview({
                     : "Hidden in redacted mode"}
                 </strong>
                 <span>
-                  {activityCategoryLabel(selectedBucket.activityCategory)} ·{" "}
-                  {attentionStateLabel(selectedBucket.attentionState)} ·{" "}
+                  {activityCategoryLabel(selectedBucket.activityCategory)} -{" "}
+                  {attentionStateLabel(selectedBucket.attentionState)} -{" "}
                   {selectedBucket.switchCount} switches
                 </span>
               </div>
@@ -184,6 +199,30 @@ export function ActivityReview({
                   </article>
                 ))}
               </div>
+              <section className="visualSummaryList" aria-label="Visual summaries">
+                <h4>Visual summaries</h4>
+                {selectedVisualSummaries.length === 0 ? (
+                  <p className="emptyState">No visual summary for this bucket.</p>
+                ) : (
+                  selectedVisualSummaries.map((summary) => (
+                    <article key={summary.id}>
+                      <span>
+                        {summary.modelProvider} / {summary.modelName} /{" "}
+                        {Math.round(summary.confidence * 100)}%
+                      </span>
+                      <strong>{activityCategoryLabel(summary.activityCategory)}</strong>
+                      <p>
+                        {privacyMode === "raw"
+                          ? summary.summaryText
+                          : "Visual summary available - switch to Raw to inspect text."}
+                      </p>
+                      {summary.visibleApps.length > 0 && (
+                        <small>{summary.visibleApps.join(", ")}</small>
+                      )}
+                    </article>
+                  ))
+                )}
+              </section>
             </>
           ) : (
             <p className="emptyState">Select a bucket to inspect evidence.</p>
@@ -215,6 +254,20 @@ function BreakdownBar({
       </div>
     </div>
   );
+}
+
+function isInsideBucket(value: string, start: string, end: string): boolean {
+  const valueTime = Date.parse(value);
+  const startTime = Date.parse(start);
+  const endTime = Date.parse(end);
+  if (
+    Number.isNaN(valueTime) ||
+    Number.isNaN(startTime) ||
+    Number.isNaN(endTime)
+  ) {
+    return false;
+  }
+  return valueTime >= startTime && valueTime < endTime;
 }
 
 function timeLabel(value: string): string {

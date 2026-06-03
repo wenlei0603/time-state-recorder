@@ -478,6 +478,11 @@ describe("App", () => {
           input === "/api/activity-buckets?date=2026-05-24&bucketSeconds=180"
       )
     ).toBe(true);
+    expect(
+      fetcher.mock.calls.some(
+        ([input]) => input === "/api/visual-summaries?date=2026-05-24"
+      )
+    ).toBe(true);
   });
 
   it("renders live activity buckets after loading collector data", async () => {
@@ -489,10 +494,13 @@ describe("App", () => {
     expect((await screen.findAllByText("Code")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Coding").length).toBeGreaterThan(0);
     expect(screen.queryByText("Live Activity Title")).not.toBeInTheDocument();
+    expect(screen.getByText(/Visual summary available/i)).toBeInTheDocument();
+    expect(screen.queryByText("Metadata-only live visual summary")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
 
     expect((await screen.findAllByText("Live Activity Title")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("Metadata-only live visual summary")).toBeInTheDocument();
   });
 
   it("loads live input segments after switching to raw privacy mode", async () => {
@@ -623,6 +631,29 @@ async function liveDataResponse(input: string) {
           processName: "Code",
           windowTitle: "Live screenshot",
           captureStatus: "ok"
+        }
+      ]
+    });
+  }
+  if (input.startsWith("/api/visual-summaries")) {
+    return jsonResponse({
+      summaries: [
+        {
+          id: 1,
+          screenshotId: 1,
+          capturedAt: "2026-05-24T10:01:00Z",
+          modelProvider: "local_stub",
+          modelName: "metadata-v1",
+          promptVersion: "visual-summary-v1",
+          summaryText: "Metadata-only live visual summary",
+          activityCategory: "coding",
+          projectHints: ["Time State Recorder"],
+          visibleApps: ["Code"],
+          visibleTextHints: ["Live Activity Title"],
+          riskFlags: [],
+          confidence: 0.35,
+          createdAt: "2026-05-24T10:02:00Z",
+          error: null
         }
       ]
     });

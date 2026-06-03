@@ -1,7 +1,9 @@
 import type {
+  ActivityCategory,
   ScreenshotMeta,
   ScreenshotSkippedReasonCount,
   ScreenshotSummary,
+  VisualSummary,
 } from "../types";
 
 type Fetcher = (input: string) => Promise<Pick<Response, "ok" | "status" | "statusText" | "json">>;
@@ -62,6 +64,27 @@ export async function fetchScreenshotSummary(
   };
 }
 
+export async function fetchVisualSummaries(
+  date: string,
+  fetcher: Fetcher = fetch,
+): Promise<VisualSummary[]> {
+  const response = await fetcher(
+    `/api/visual-summaries?date=${encodeURIComponent(date)}`,
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Collector API failed: ${response.status} ${response.statusText}`.trim(),
+    );
+  }
+
+  const body: unknown = await response.json();
+  if (!isRecord(body) || !Array.isArray(body.summaries)) {
+    throw new Error("Collector API returned an invalid visual-summaries response");
+  }
+
+  return body.summaries.map(toVisualSummary);
+}
+
 function toScreenshotMeta(value: unknown): ScreenshotMeta {
   if (!isRecord(value)) {
     throw new Error("Collector API returned an invalid screenshot row");
@@ -77,6 +100,34 @@ function toScreenshotMeta(value: unknown): ScreenshotMeta {
     windowTitle: readOptionalString(value, "windowTitle"),
     captureStatus: readString(value, "captureStatus"),
   };
+}
+
+function toVisualSummary(value: unknown): VisualSummary {
+  if (!isRecord(value)) {
+    throw new Error("Collector API returned an invalid visual summary row");
+  }
+
+  try {
+    return {
+      id: readNumber(value, "id"),
+      screenshotId: readNumber(value, "screenshotId"),
+      capturedAt: readString(value, "capturedAt"),
+      modelProvider: readString(value, "modelProvider"),
+      modelName: readString(value, "modelName"),
+      promptVersion: readString(value, "promptVersion"),
+      summaryText: readString(value, "summaryText"),
+      activityCategory: readActivityCategory(value, "activityCategory"),
+      projectHints: readStringArray(value, "projectHints"),
+      visibleApps: readStringArray(value, "visibleApps"),
+      visibleTextHints: readStringArray(value, "visibleTextHints"),
+      riskFlags: readStringArray(value, "riskFlags"),
+      confidence: readNumber(value, "confidence"),
+      createdAt: readString(value, "createdAt"),
+      error: readOptionalString(value, "error"),
+    };
+  } catch (error) {
+    throw new Error(`Collector API returned an invalid visual summary row: ${errorMessage(error)}`);
+  }
 }
 
 function readString(record: Record<string, unknown>, key: string): string {
@@ -105,6 +156,39 @@ function readNumber(record: Record<string, unknown>, key: string): number {
   const value = record[key];
   if (typeof value !== "number") {
     throw new Error(`API row is missing ${key}`);
+  }
+  return value;
+}
+
+function readStringArray(record: Record<string, unknown>, key: string): string[] {
+  const value = record[key];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new Error(`API row has invalid ${key}`);
+  }
+  return value;
+}
+
+function readActivityCategory(
+  record: Record<string, unknown>,
+  key: string,
+): ActivityCategory {
+  const value = record[key];
+  if (
+    value !== "project_work" &&
+    value !== "research" &&
+    value !== "writing" &&
+    value !== "coding" &&
+    value !== "communication" &&
+    value !== "meeting" &&
+    value !== "admin" &&
+    value !== "learning" &&
+    value !== "planning" &&
+    value !== "loafing" &&
+    value !== "personal" &&
+    value !== "idle" &&
+    value !== "unknown"
+  ) {
+    throw new Error(`API row has invalid ${key}`);
   }
   return value;
 }
@@ -141,4 +225,8 @@ function toSkippedReasonCount(value: unknown): ScreenshotSkippedReasonCount {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -1561,6 +1561,43 @@ td:nth-child(2) {
   overflow-wrap: anywhere;
 }
 
+.visualSummaryList {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #d9dfd8;
+}
+
+.visualSummaryList h4 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.visualSummaryList article {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid #e1e7e0;
+  border-radius: 8px;
+  background: #f8faf7;
+}
+
+.visualSummaryList span,
+.visualSummaryList small {
+  color: #5f6d65;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.visualSummaryList p {
+  margin: 0;
+  color: #17211b;
+  font-size: 0.86rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
 .emptyState {
   margin: 0;
   color: #5f6d65;

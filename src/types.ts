@@ -155,6 +155,24 @@ export type ScreenshotSummary = {
   skippedReasons?: ScreenshotSkippedReasonCount[];
 };
 
+export type VisualSummary = {
+  id: number;
+  screenshotId: number;
+  capturedAt: string;
+  modelProvider: string;
+  modelName: string;
+  promptVersion: string;
+  summaryText: string;
+  activityCategory: ActivityCategory;
+  projectHints: string[];
+  visibleApps: string[];
+  visibleTextHints: string[];
+  riskFlags: string[];
+  confidence: number;
+  createdAt: string;
+  error?: string;
+};
+
 export type AppScreenshotCount = {
   processName: string;
   count: number;
