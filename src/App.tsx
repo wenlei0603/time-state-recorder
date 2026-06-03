@@ -532,6 +532,11 @@ export function App() {
           health={health}
           privacyMode={privacyMode}
           screenshotsVisible={layers.screenshots}
+          visualSummaries={visualSummaries}
+          analyzingScreenshotId={analyzingScreenshotId}
+          onAnalyzeScreenshot={(screenshotId) => {
+            void handleAnalyzeScreenshot(screenshotId);
+          }}
           sourceLabel={sourceMode === "live" ? "Live collector" : "Sample workspace"}
         />
       ) : viewMode === "activity" ? (

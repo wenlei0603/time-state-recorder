@@ -1054,6 +1054,15 @@ td:nth-child(2) {
   white-space: nowrap;
 }
 
+.todayScreenshotCard .analysisButton {
+  width: 100%;
+  justify-content: center;
+}
+
+.todayScreenshotCard .visualSummaryCard {
+  max-width: none;
+}
+
 .confidencePill {
   display: inline-flex;
   align-items: center;
@@ -1262,6 +1271,17 @@ td:nth-child(2) {
   gap: 10px;
   padding: 12px;
   background: #f8faf7;
+}
+
+.timelineInlineAnalysis {
+  width: fit-content;
+  max-width: 100%;
+  padding: 8px 0 0;
+  background: transparent;
+}
+
+.timelineInlineAnalysis .visualSummaryCard {
+  max-width: min(620px, 100%);
 }
 
 .analysisButton {

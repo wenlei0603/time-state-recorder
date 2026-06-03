@@ -4,6 +4,7 @@ import {
   Camera,
   Keyboard,
   Shield,
+  Sparkles,
   Timer,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -19,6 +20,7 @@ import type {
   ScreenshotMeta,
   ScreenshotSummary,
   TimeEvent,
+  VisualSummary,
 } from "./types";
 
 type TodayFlowBoardProps = {
@@ -29,8 +31,13 @@ type TodayFlowBoardProps = {
   health?: CollectorHealth;
   privacyMode: PrivacyMode;
   screenshotsVisible: boolean;
+  visualSummaries: VisualSummary[];
+  analyzingScreenshotId?: number | null;
+  onAnalyzeScreenshot: (screenshotId: number) => void;
   sourceLabel: string;
 };
+
+const SCREENSHOT_CONTEXT_WINDOW_MS = 5 * 60 * 1000;
 
 export function TodayFlowBoard({
   events,
@@ -40,6 +47,9 @@ export function TodayFlowBoard({
   health,
   privacyMode,
   screenshotsVisible,
+  visualSummaries,
+  analyzingScreenshotId,
+  onAnalyzeScreenshot,
   sourceLabel,
 }: TodayFlowBoardProps) {
   const [selectedBucketId, setSelectedBucketId] = useState<string | null>(null);
@@ -59,8 +69,15 @@ export function TodayFlowBoard({
     model.buckets[0];
   const selectedEvidence = selectedBucket?.evidence ?? [];
   const selectedScreenshots = selectedBucket
-    ? screenshots.filter((shot) => overlapsBucket(shot, selectedBucket))
+    ? selectScreenshotsForBucket(screenshots, selectedBucket)
     : [];
+  const summaryByScreenshotId = useMemo(() => {
+    const map = new Map<number, VisualSummary>();
+    for (const summary of visualSummaries) {
+      map.set(summary.screenshotId, summary);
+    }
+    return map;
+  }, [visualSummaries]);
 
   return (
     <section className="flowBoard" aria-label="Today Flow Board">
@@ -156,6 +173,9 @@ export function TodayFlowBoard({
                 privacyMode={privacyMode}
                 screenshots={selectedScreenshots}
                 screenshotsVisible={screenshotsVisible}
+                summaryByScreenshotId={summaryByScreenshotId}
+                analyzingScreenshotId={analyzingScreenshotId}
+                onAnalyzeScreenshot={onAnalyzeScreenshot}
               />
             </div>
           )}
@@ -169,10 +189,16 @@ function ScreenshotEvidence({
   privacyMode,
   screenshots,
   screenshotsVisible,
+  summaryByScreenshotId,
+  analyzingScreenshotId,
+  onAnalyzeScreenshot,
 }: {
   privacyMode: PrivacyMode;
   screenshots: ScreenshotMeta[];
   screenshotsVisible: boolean;
+  summaryByScreenshotId: Map<number, VisualSummary>;
+  analyzingScreenshotId?: number | null;
+  onAnalyzeScreenshot: (screenshotId: number) => void;
 }) {
   if (!screenshotsVisible) {
     return (
@@ -196,21 +222,43 @@ function ScreenshotEvidence({
 
   return (
     <div className="todayScreenshotStrip" aria-label="Screenshot evidence">
-      {screenshots.slice(0, 4).map((shot) => (
-        <figure className="todayScreenshotCard" key={shot.id}>
-          <img
-            src={`/screenshots/${shot.filePath}`}
-            alt={`Evidence screenshot at ${formatTime(shot.capturedAt)}`}
-            width={shot.width}
-            height={shot.height}
-            loading="lazy"
-          />
-          <figcaption>
-            <span>{formatTime(shot.capturedAt)}</span>
-            <strong>{shot.processName ?? "Unknown"}</strong>
-          </figcaption>
-        </figure>
-      ))}
+      {screenshots.slice(0, 4).map((shot) => {
+        const summary = summaryByScreenshotId.get(shot.id);
+        return (
+          <figure className="todayScreenshotCard" key={shot.id}>
+            <img
+              src={`/screenshots/${shot.filePath}`}
+              alt={`Evidence screenshot at ${formatTime(shot.capturedAt)}`}
+              width={shot.width}
+              height={shot.height}
+              loading="lazy"
+            />
+            <figcaption>
+              <span>{formatTime(shot.capturedAt)}</span>
+              <strong>{shot.processName ?? "Unknown"}</strong>
+            </figcaption>
+            <button
+              type="button"
+              className="analysisButton"
+              disabled={analyzingScreenshotId === shot.id}
+              onClick={() => onAnalyzeScreenshot(shot.id)}
+            >
+              <Sparkles aria-hidden="true" size={16} />
+              <span>
+                {analyzingScreenshotId === shot.id
+                  ? "Analyzing..."
+                  : "Analyze screenshot"}
+              </span>
+            </button>
+            {summary ? (
+              <div className="visualSummaryCard">
+                <strong>{summary.modelProvider}</strong>
+                <p>{summary.summaryText}</p>
+              </div>
+            ) : null}
+          </figure>
+        );
+      })}
     </div>
   );
 }
@@ -299,6 +347,46 @@ function overlapsBucket(
   }
 
   return capturedAt >= startedAt && capturedAt <= endedAt;
+}
+
+function selectScreenshotsForBucket(
+  screenshots: ScreenshotMeta[],
+  bucket: { startedAt: string; endedAt?: string },
+): ScreenshotMeta[] {
+  const overlapping = screenshots.filter((shot) => overlapsBucket(shot, bucket));
+  if (overlapping.length > 0) {
+    return overlapping;
+  }
+
+  const anchor = bucketAnchorTime(bucket);
+  if (!Number.isFinite(anchor)) {
+    return [];
+  }
+
+  return screenshots
+    .map((shot) => ({
+      shot,
+      distance: Math.abs(Date.parse(shot.capturedAt) - anchor),
+    }))
+    .filter(({ distance }) => Number.isFinite(distance))
+    .filter(({ distance }) => distance <= SCREENSHOT_CONTEXT_WINDOW_MS)
+    .sort((left, right) => left.distance - right.distance)
+    .slice(0, 4)
+    .map(({ shot }) => shot);
+}
+
+function bucketAnchorTime(bucket: { startedAt: string; endedAt?: string }): number {
+  const startedAt = Date.parse(bucket.startedAt);
+  if (!Number.isFinite(startedAt)) {
+    return Number.NaN;
+  }
+
+  const endedAt = bucket.endedAt ? Date.parse(bucket.endedAt) : Number.NaN;
+  if (Number.isFinite(endedAt)) {
+    return startedAt + (endedAt - startedAt) / 2;
+  }
+
+  return startedAt;
 }
 
 function formatTime(value: string): string {

@@ -208,17 +208,8 @@ export function DailyTracking({
                     <span className="timelineTitle">
                       {shot.windowTitle || ""}
                     </span>
-                  </div>
-                  {expanded === shot.id && privacyMode === "raw" && (
-                    <div className="timelineExpand">
-                      <img
-                        src={`/screenshots/${shot.filePath}`}
-                        alt={`Full screenshot at ${formatTime(shot.capturedAt)}`}
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display = "none";
-                        }}
-                      />
-                      <div className="timelineAnalysis">
+                    {privacyMode === "raw" && (
+                      <div className="timelineAnalysis timelineInlineAnalysis">
                         <button
                           type="button"
                           className="analysisButton"
@@ -244,6 +235,17 @@ export function DailyTracking({
                           </div>
                         ) : null}
                       </div>
+                    )}
+                  </div>
+                  {expanded === shot.id && privacyMode === "raw" && (
+                    <div className="timelineExpand">
+                      <img
+                        src={`/screenshots/${shot.filePath}`}
+                        alt={`Full screenshot at ${formatTime(shot.capturedAt)}`}
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display = "none";
+                        }}
+                      />
                     </div>
                   )}
                 </div>

@@ -389,6 +389,25 @@ describe("App", () => {
     expect(
       screen.queryByText(/Screenshot preview hidden in redacted mode/i)
     ).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /analyze screenshot/i })
+    ).toBeInTheDocument();
+  });
+
+  it("uses nearby screenshot evidence for a short Today event", async () => {
+    vi.stubGlobal("fetch", vi.fn(shortEventWithNearbyScreenshotResponse));
+
+    render(<App />);
+
+    expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
+
+    expect(
+      await screen.findByAltText(/Evidence screenshot at/i)
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /analyze screenshot/i })
+    ).toBeInTheDocument();
   });
 
   it("keeps screenshot evidence attached to an open Today bucket beyond fifteen minutes", async () => {
@@ -585,8 +604,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
     fireEvent.click(screen.getByRole("button", { name: /daily tracking/i }));
 
-    const screenshotRow = await screen.findByText("Live screenshot");
-    fireEvent.click(screenshotRow);
+    expect(await screen.findByText("Live screenshot")).toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: /analyze screenshot/i }));
 
     expect(await screen.findByText("MiniMax says this is focused coding work.")).toBeInTheDocument();
@@ -816,6 +834,40 @@ async function openBucketLiveDataResponse(input: string) {
           height: 360,
           processName: "OpenApp",
           windowTitle: "Current long-running task",
+          captureStatus: "ok"
+        }
+      ]
+    });
+  }
+  return liveDataResponse(input);
+}
+
+async function shortEventWithNearbyScreenshotResponse(input: string) {
+  if (input === "/api/time-events") {
+    return jsonResponse({
+      events: [
+        {
+          id: "short-live-window",
+          app: "Code",
+          title: "Brief focus switch",
+          startedAt: "2026-05-24T10:00:00Z",
+          endedAt: "2026-05-24T10:00:01Z",
+          durationSeconds: 1
+        }
+      ]
+    });
+  }
+  if (input.startsWith("/api/screenshots")) {
+    return jsonResponse({
+      screenshots: [
+        {
+          id: 30,
+          capturedAt: "2026-05-24T10:00:45Z",
+          filePath: "2026-05-24/10-00.jpg",
+          width: 640,
+          height: 360,
+          processName: "Code",
+          windowTitle: "Nearby screenshot",
           captureStatus: "ok"
         }
       ]
