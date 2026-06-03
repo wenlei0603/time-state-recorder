@@ -503,6 +503,75 @@ describe("App", () => {
     expect(await screen.findByText("Metadata-only live visual summary")).toBeInTheDocument();
   });
 
+  it("analyzes a raw screenshot and refreshes visual summaries", async () => {
+    let analyzed = false;
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input === "/api/screenshots/1/analyze") {
+        expect(init?.method).toBe("POST");
+        analyzed = true;
+        return jsonResponse({
+          summary: {
+            id: 2,
+            screenshotId: 1,
+            capturedAt: "2026-05-24T10:00:00Z",
+            modelProvider: "minimax",
+            modelName: "MiniMax-M3",
+            promptVersion: "visual-summary-minimax-m3-v1",
+            summaryText: "MiniMax says this is focused coding work.",
+            activityCategory: "coding",
+            projectHints: ["Time State Recorder"],
+            visibleApps: ["Code"],
+            visibleTextHints: ["Live screenshot"],
+            riskFlags: [],
+            confidence: 0.82,
+            createdAt: "2026-05-24T10:02:00Z",
+            error: null
+          }
+        });
+      }
+      if (input.startsWith("/api/visual-summaries") && analyzed) {
+        return jsonResponse({
+          summaries: [
+            {
+              id: 2,
+              screenshotId: 1,
+              capturedAt: "2026-05-24T10:00:00Z",
+              modelProvider: "minimax",
+              modelName: "MiniMax-M3",
+              promptVersion: "visual-summary-minimax-m3-v1",
+              summaryText: "MiniMax says this is focused coding work.",
+              activityCategory: "coding",
+              projectHints: ["Time State Recorder"],
+              visibleApps: ["Code"],
+              visibleTextHints: ["Live screenshot"],
+              riskFlags: [],
+              confidence: 0.82,
+              createdAt: "2026-05-24T10:02:00Z",
+              error: null
+            }
+          ]
+        });
+      }
+      return liveDataResponse(input);
+    });
+    vi.stubGlobal("fetch", fetcher);
+
+    render(<App />);
+
+    expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /daily tracking/i }));
+
+    const screenshotRow = await screen.findByText("Live screenshot");
+    fireEvent.click(screenshotRow);
+    fireEvent.click(await screen.findByRole("button", { name: /analyze screenshot/i }));
+
+    expect(await screen.findByText("MiniMax says this is focused coding work.")).toBeInTheDocument();
+    expect(fetcher).toHaveBeenCalledWith("/api/screenshots/1/analyze", {
+      method: "POST"
+    });
+  });
+
   it("loads live input segments after switching to raw privacy mode", async () => {
     vi.stubGlobal("fetch", vi.fn(liveDataResponse));
 

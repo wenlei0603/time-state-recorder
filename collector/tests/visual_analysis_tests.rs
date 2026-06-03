@@ -5,6 +5,7 @@ use tsr_collector::{
     models::{ActivityCategory, ScreenshotMeta},
     visual_analysis::{
         LocalMetadataAnalyzer, MiniMaxAnalyzer, MiniMaxConfig, VisualAnalysisInput, VisualAnalyzer,
+        select_visual_analyzer_provider,
     },
 };
 
@@ -144,6 +145,26 @@ fn minimax_request_uses_openai_chat_completions_image_content_block() {
             .starts_with("data:image/jpeg;base64,")
     );
     assert_eq!(request["thinking"]["type"], "disabled");
+}
+
+#[test]
+fn provider_selection_infers_minimax_when_credentials_are_present() {
+    assert_eq!(
+        select_visual_analyzer_provider(None, Some("secret"), Some("https://api.minimax.test")),
+        "minimax"
+    );
+    assert_eq!(
+        select_visual_analyzer_provider(None, Some("secret"), None),
+        "local"
+    );
+    assert_eq!(
+        select_visual_analyzer_provider(
+            Some("local"),
+            Some("secret"),
+            Some("https://api.minimax.test")
+        ),
+        "local"
+    );
 }
 
 #[test]

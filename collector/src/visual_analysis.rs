@@ -32,9 +32,15 @@ pub enum ConfiguredVisualAnalyzer {
 
 impl ConfiguredVisualAnalyzer {
     pub fn from_env() -> Result<Self> {
-        let provider =
-            std::env::var("VISUAL_ANALYZER_PROVIDER").unwrap_or_else(|_| "local".to_string());
-        match provider.trim().to_ascii_lowercase().as_str() {
+        let provider = std::env::var("VISUAL_ANALYZER_PROVIDER").ok();
+        let api_key = std::env::var("MINIMAX_API_KEY").ok();
+        let base_url = std::env::var("MINIMAX_BASE_URL").ok();
+        let selected_provider = select_visual_analyzer_provider(
+            provider.as_deref(),
+            api_key.as_deref(),
+            base_url.as_deref(),
+        );
+        match selected_provider.to_ascii_lowercase().as_str() {
             "minimax" => Ok(Self::MiniMax(MiniMaxAnalyzer::new(
                 MiniMaxConfig::from_env()?,
             ))),
@@ -52,6 +58,28 @@ impl ConfiguredVisualAnalyzer {
             Self::Local(analyzer) => analyzer.analyze(input, created_at),
             Self::MiniMax(analyzer) => analyzer.analyze(input, created_at).await,
         }
+    }
+}
+
+pub fn select_visual_analyzer_provider<'a>(
+    provider: Option<&'a str>,
+    minimax_api_key: Option<&str>,
+    minimax_base_url: Option<&str>,
+) -> &'a str {
+    let requested = provider.unwrap_or_default().trim();
+    if !requested.is_empty() {
+        return requested;
+    }
+    let has_minimax_credentials = minimax_api_key
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+        && minimax_base_url
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+    if has_minimax_credentials {
+        "minimax"
+    } else {
+        "local"
     }
 }
 

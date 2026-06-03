@@ -7,6 +7,10 @@ import type {
 } from "../types";
 
 type Fetcher = (input: string) => Promise<Pick<Response, "ok" | "status" | "statusText" | "json">>;
+type MutatingFetcher = (
+  input: string,
+  init?: RequestInit,
+) => Promise<Pick<Response, "ok" | "status" | "statusText" | "json">>;
 
 export async function fetchScreenshots(
   date: string,
@@ -83,6 +87,27 @@ export async function fetchVisualSummaries(
   }
 
   return body.summaries.map(toVisualSummary);
+}
+
+export async function analyzeScreenshot(
+  screenshotId: number,
+  fetcher: MutatingFetcher = fetch,
+): Promise<VisualSummary> {
+  const response = await fetcher(`/api/screenshots/${screenshotId}/analyze`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Collector API failed: ${response.status} ${response.statusText}`.trim(),
+    );
+  }
+
+  const body: unknown = await response.json();
+  if (!isRecord(body) || !isRecord(body.summary)) {
+    throw new Error("Collector API returned an invalid screenshot analysis response");
+  }
+
+  return toVisualSummary(body.summary);
 }
 
 function toScreenshotMeta(value: unknown): ScreenshotMeta {

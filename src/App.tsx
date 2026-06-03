@@ -26,6 +26,7 @@ import { currentCollectorDate } from "./lib/dateQuery";
 import { fetchCollectorHealth } from "./lib/health";
 import { fetchInputSummary, fetchTextSegments } from "./lib/input";
 import {
+  analyzeScreenshot,
   fetchScreenshots,
   fetchScreenshotSummary,
   fetchVisualSummaries
@@ -88,6 +89,7 @@ export function App() {
   const [screenshotLoading, setScreenshotLoading] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
   const [visualSummaryError, setVisualSummaryError] = useState<string | null>(null);
+  const [analyzingScreenshotId, setAnalyzingScreenshotId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("today");
   const [sourceMode, setSourceMode] = useState<UiSourceMode>("sample");
   const [privacyMode, setPrivacyMode] = useState<PrivacyMode>("redacted");
@@ -140,6 +142,7 @@ export function App() {
     setInputError(null);
     setScreenshotError(null);
     setVisualSummaryError(null);
+    setAnalyzingScreenshotId(null);
   }
 
   async function refreshCollector(options?: {
@@ -506,7 +509,7 @@ export function App() {
           onLoadSample={loadSample}
           onLoadLive={() => void refreshCollector()}
         />
-      ) : viewMode === "daily" ? (
+  ) : viewMode === "daily" ? (
         <DailyTracking
           date={queryDate}
           screenshots={screenshots}
@@ -516,6 +519,12 @@ export function App() {
           error={screenshotError}
           screenshotsVisible={layers.screenshots}
           privacyMode={privacyMode}
+          visualSummaries={visualSummaries}
+          analyzingScreenshotId={analyzingScreenshotId}
+          analysisError={visualSummaryError}
+          onAnalyzeScreenshot={(screenshotId) => {
+            void handleAnalyzeScreenshot(screenshotId);
+          }}
           onLoadSample={loadSample}
           onLoadLive={() => void refreshCollector()}
         />
@@ -616,6 +625,36 @@ export function App() {
         viewMode: latestRefreshContext.current.viewMode,
         date: queryDate
       });
+    }
+  }
+
+  async function handleAnalyzeScreenshot(screenshotId: number) {
+    if (privacyMode !== "raw") {
+      return;
+    }
+    setAnalyzingScreenshotId(screenshotId);
+    setVisualSummaryError(null);
+    try {
+      const summary = await analyzeScreenshot(screenshotId);
+      const latestContext = latestRefreshContext.current;
+      if (latestContext.privacyMode !== "raw" || latestContext.date !== queryDate) {
+        return;
+      }
+      setVisualSummaries((current) => [
+        ...current.filter((item) => item.screenshotId !== screenshotId),
+        summary
+      ]);
+      const refreshed = await fetchVisualSummaries(queryDate);
+      if (
+        latestRefreshContext.current.privacyMode === "raw" &&
+        latestRefreshContext.current.date === queryDate
+      ) {
+        setVisualSummaries(refreshed);
+      }
+    } catch (error) {
+      setVisualSummaryError(errorMessage(error));
+    } finally {
+      setAnalyzingScreenshotId(null);
     }
   }
 

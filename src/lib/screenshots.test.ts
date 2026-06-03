@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchScreenshotSummary, fetchVisualSummaries } from "./screenshots";
+import { analyzeScreenshot, fetchScreenshotSummary, fetchVisualSummaries } from "./screenshots";
 
 describe("fetchScreenshotSummary", () => {
   it("loads skipped screenshot reasons from /api/screenshot-summary", async () => {
@@ -113,5 +113,42 @@ describe("fetchVisualSummaries", () => {
     await expect(fetchVisualSummaries("2026-05-24", fetcher)).rejects.toThrow(
       /invalid visual summary/i,
     );
+  });
+});
+
+describe("analyzeScreenshot", () => {
+  it("posts to the collector screenshot analysis endpoint", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({
+        summary: {
+          id: 2,
+          screenshotId: 10,
+          capturedAt: "2026-05-24T10:00:00Z",
+          modelProvider: "minimax",
+          modelName: "MiniMax-M3",
+          promptVersion: "visual-summary-minimax-m3-v1",
+          summaryText: "MiniMax summary",
+          activityCategory: "coding",
+          projectHints: ["Time State Recorder"],
+          visibleApps: ["Code.exe"],
+          visibleTextHints: ["main.rs"],
+          riskFlags: [],
+          confidence: 0.82,
+          createdAt: "2026-05-24T10:01:00Z",
+          error: null,
+        },
+      }),
+    });
+
+    const summary = await analyzeScreenshot(10, fetcher);
+
+    expect(fetcher).toHaveBeenCalledWith("/api/screenshots/10/analyze", {
+      method: "POST",
+    });
+    expect(summary.modelProvider).toBe("minimax");
+    expect(summary.summaryText).toBe("MiniMax summary");
   });
 });

@@ -1,7 +1,7 @@
-import { Camera, Clock, ImageIcon } from "lucide-react";
+import { Camera, Clock, ImageIcon, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { PrivacyMode, UiSourceMode } from "./lib/uiModel";
-import type { ScreenshotMeta, ScreenshotSummary } from "./types";
+import type { ScreenshotMeta, ScreenshotSummary, VisualSummary } from "./types";
 
 interface DailyTrackingProps {
   date: string;
@@ -12,6 +12,10 @@ interface DailyTrackingProps {
   error: string | null;
   screenshotsVisible: boolean;
   privacyMode: PrivacyMode;
+  visualSummaries: VisualSummary[];
+  analyzingScreenshotId?: number | null;
+  analysisError?: string | null;
+  onAnalyzeScreenshot: (screenshotId: number) => void;
   onLoadSample: () => void;
   onLoadLive: () => void;
 }
@@ -40,6 +44,10 @@ export function DailyTracking({
   error,
   screenshotsVisible,
   privacyMode,
+  visualSummaries,
+  analyzingScreenshotId,
+  analysisError,
+  onAnalyzeScreenshot,
   onLoadSample,
   onLoadLive
 }: DailyTrackingProps) {
@@ -59,6 +67,14 @@ export function DailyTracking({
     }
     return map;
   }, [screenshots]);
+
+  const summaryByScreenshotId = useMemo(() => {
+    const map = new Map<number, VisualSummary>();
+    for (const summary of visualSummaries) {
+      map.set(summary.screenshotId, summary);
+    }
+    return map;
+  }, [visualSummaries]);
 
   const topAppList = summary.topApps
     .slice(0, 3)
@@ -111,6 +127,12 @@ export function DailyTracking({
         </p>
       )}
 
+      {analysisError && (
+        <p className="errors" role="status">
+          {analysisError}
+        </p>
+      )}
+
       {sourceMode === "sample" && (
         <p className="sampleNotice">
           Showing sample data. Click "Live Data" when the collector is running.
@@ -142,6 +164,9 @@ export function DailyTracking({
                 <div
                   className={`timelineRow ${expanded === shot.id ? "expanded" : ""}`}
                   key={shot.id}
+                  aria-label={`Screenshot row ${formatTime(shot.capturedAt)} ${
+                    shot.processName || "Unknown app"
+                  }`}
                   onClick={() => setExpanded(expanded === shot.id ? null : shot.id)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
@@ -193,6 +218,32 @@ export function DailyTracking({
                           (e.currentTarget as HTMLImageElement).style.display = "none";
                         }}
                       />
+                      <div className="timelineAnalysis">
+                        <button
+                          type="button"
+                          className="analysisButton"
+                          disabled={analyzingScreenshotId === shot.id}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onAnalyzeScreenshot(shot.id);
+                          }}
+                        >
+                          <Sparkles aria-hidden="true" size={16} />
+                          <span>
+                            {analyzingScreenshotId === shot.id
+                              ? "Analyzing..."
+                              : "Analyze screenshot"}
+                          </span>
+                        </button>
+                        {summaryByScreenshotId.has(shot.id) ? (
+                          <div className="visualSummaryCard">
+                            <strong>
+                              {summaryByScreenshotId.get(shot.id)?.modelProvider}
+                            </strong>
+                            <p>{summaryByScreenshotId.get(shot.id)?.summaryText}</p>
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   )}
                 </div>
