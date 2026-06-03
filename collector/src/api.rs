@@ -24,8 +24,9 @@ use crate::{
     input,
     interval::build_time_events_with_lifecycle,
     models::{
-        ActivityBucket, ActivityCategory, BlockerHit, CollectorHealth, DbStats, LifecycleEvent,
-        LifecycleType, ScreenshotMeta, SubsystemHealth, TimeEvent, VisualSummary, WindowSnapshot,
+        ActivityBucket, ActivityCategory, BlockerHit, CollectorHealth, DbStats,
+        HighResScreenshotMeta, LifecycleEvent, LifecycleType, ScreenshotMeta, SubsystemHealth,
+        TimeEvent, VisualSummary, WindowSnapshot,
     },
     screenshot,
     storage::Store,
@@ -97,6 +98,12 @@ struct ScreenshotsResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct HighResScreenshotsResponse {
+    screenshots: Vec<HighResScreenshotMeta>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct VisualSummariesResponse {
     summaries: Vec<VisualSummary>,
 }
@@ -122,6 +129,7 @@ struct TextSegmentsResponse {
 const DEFAULT_SCREENSHOT_INTERVAL: u64 = 60;
 const DEFAULT_IDLE_THRESHOLD: u64 = 120;
 const DEFAULT_SCREENSHOT_LIMIT: usize = 1440;
+const DEFAULT_HIGH_RES_SCREENSHOT_LIMIT: usize = 288;
 
 pub fn router(store: Store, blocker_config_path: Option<PathBuf>) -> Router {
     router_from_state(default_state(store, blocker_config_path, None))
@@ -199,6 +207,7 @@ fn router_from_state(state: AppState) -> Router {
         .route("/api/blockers", get(blockers))
         .route("/api/screenshots", get(screenshots))
         .route("/api/screenshot-summary", get(screenshot_summary))
+        .route("/api/high-res-screenshots", get(high_res_screenshots))
         .route("/api/visual-summaries", get(visual_summaries))
         .route("/api/screenshots/{id}/analyze", post(analyze_screenshot))
         .route("/api/input-events", get(input_events))
@@ -770,6 +779,31 @@ async fn screenshot_summary(
 
     match store.get_screenshot_summary(&date) {
         Ok(summary) => Json(summary).into_response(),
+        Err(err) => internal_error(err),
+    }
+}
+
+async fn high_res_screenshots(
+    State(state): State<AppState>,
+    Query(query): Query<DateQuery>,
+) -> impl IntoResponse {
+    let date = query
+        .date
+        .unwrap_or_else(|| Utc::now().format("%Y-%m-%d").to_string());
+    if NaiveDate::parse_from_str(&date, "%Y-%m-%d").is_err() {
+        return bad_request("date must use YYYY-MM-DD");
+    }
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_HIGH_RES_SCREENSHOT_LIMIT)
+        .min(5_000);
+    let store = match state.store.lock() {
+        Ok(store) => store,
+        Err(_) => return internal_error("store lock poisoned"),
+    };
+
+    match store.list_high_res_screenshots_by_date(&date, limit) {
+        Ok(screenshots) => Json(HighResScreenshotsResponse { screenshots }).into_response(),
         Err(err) => internal_error(err),
     }
 }

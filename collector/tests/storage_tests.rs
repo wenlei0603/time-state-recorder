@@ -3,8 +3,8 @@ use rusqlite::params;
 use tsr_collector::{
     interval::build_time_events_with_lifecycle,
     models::{
-        ActivityCategory, CaptureStatus, LifecycleType, ScreenshotMeta, VisualSummary,
-        WindowSnapshot,
+        ActivityCategory, CaptureStatus, HighResScreenshotMeta, LifecycleType, ScreenshotMeta,
+        VisualSummary, WindowSnapshot,
     },
     storage::Store,
 };
@@ -99,6 +99,44 @@ fn persists_screenshot_metadata_for_session() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].file_path, "2026-05-23/09-01.jpg");
     assert_eq!(rows[0].process_name.as_deref(), Some("Code.exe"));
+}
+
+#[test]
+fn persists_high_res_screenshot_metadata_by_date_without_skip_rows() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+
+    for (captured_at, file_path, capture_status) in [
+        ("2026-05-23T09:05:00Z", "2026-05-23/09-05.jpg", "ok"),
+        ("2026-05-23T09:10:00Z", "", "idle"),
+    ] {
+        store
+            .insert_high_res_screenshot(
+                &session_id,
+                &HighResScreenshotMeta {
+                    id: 0,
+                    captured_at: ts(captured_at),
+                    file_path: file_path.into(),
+                    width: if capture_status == "ok" { 1920 } else { 0 },
+                    height: if capture_status == "ok" { 1080 } else { 0 },
+                    process_name: Some("Code.exe".into()),
+                    window_title: Some("main.rs".into()),
+                    capture_status: capture_status.into(),
+                },
+            )
+            .unwrap();
+    }
+
+    let rows = store
+        .list_high_res_screenshots_by_date("2026-05-23", 10)
+        .unwrap();
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].file_path, "2026-05-23/09-05.jpg");
+    assert_eq!(rows[0].width, 1920);
+    assert_eq!(rows[0].height, 1080);
+    assert_eq!(rows[0].capture_status, "ok");
 }
 
 #[test]

@@ -5,8 +5,8 @@ use chrono::{DateTime, Utc};
 use tsr_collector::{
     api,
     models::{
-        ActivityCategory, CaptureStatus, LifecycleType, ScreenshotMeta, VisualSummary,
-        WindowSnapshot,
+        ActivityCategory, CaptureStatus, HighResScreenshotMeta, LifecycleType, ScreenshotMeta,
+        VisualSummary, WindowSnapshot,
     },
     storage::Store,
 };
@@ -715,6 +715,58 @@ async fn serves_visual_summaries_for_date() {
     assert_eq!(body["summaries"][0]["modelProvider"], "local_stub");
     assert_eq!(body["summaries"][0]["activityCategory"], "coding");
     assert_eq!(body["summaries"][0]["visibleApps"][0], "Code.exe");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn serves_high_res_screenshots_without_skip_rows() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+
+    for (captured_at, file_path, capture_status) in [
+        ("2026-05-24T10:05:00Z", "2026-05-24/10-05.jpg", "ok"),
+        ("2026-05-24T10:10:00Z", "", "idle"),
+    ] {
+        store
+            .insert_high_res_screenshot(
+                &session_id,
+                &HighResScreenshotMeta {
+                    id: 0,
+                    captured_at: ts(captured_at),
+                    file_path: file_path.into(),
+                    width: if capture_status == "ok" { 1920 } else { 0 },
+                    height: if capture_status == "ok" { 1080 } else { 0 },
+                    process_name: Some("Code.exe".into()),
+                    window_title: Some("main.rs".into()),
+                    capture_status: capture_status.into(),
+                },
+            )
+            .unwrap();
+    }
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!(
+        "http://{addr}/api/high-res-screenshots?date=2026-05-24"
+    ))
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let screenshots = body["screenshots"].as_array().unwrap();
+    assert_eq!(screenshots.len(), 1);
+    assert_eq!(screenshots[0]["filePath"], "2026-05-24/10-05.jpg");
+    assert_eq!(screenshots[0]["width"], 1920);
+    assert_eq!(screenshots[0]["height"], 1080);
+    assert_eq!(screenshots[0]["captureStatus"], "ok");
 
     server.abort();
 }

@@ -6,9 +6,9 @@ use rusqlite::{Connection, Transaction, params, types::Type};
 use uuid::Uuid;
 
 use crate::models::{
-    ActivityCategory, AppScreenshotCount, BlockerHit, CaptureStatus, LifecycleEvent, LifecycleType,
-    ScreenshotMeta, ScreenshotSkippedReasonCount, ScreenshotSummary, StoredWindowEvent,
-    VisualSummary, WindowSnapshot,
+    ActivityCategory, AppScreenshotCount, BlockerHit, CaptureStatus, HighResScreenshotMeta,
+    LifecycleEvent, LifecycleType, ScreenshotMeta, ScreenshotSkippedReasonCount, ScreenshotSummary,
+    StoredWindowEvent, VisualSummary, WindowSnapshot,
 };
 
 pub struct Store {
@@ -128,6 +128,20 @@ impl Store {
             );
             CREATE INDEX IF NOT EXISTS idx_visual_summaries_at ON visual_summaries(captured_at);
             CREATE INDEX IF NOT EXISTS idx_visual_summaries_screenshot ON visual_summaries(screenshot_id);
+
+            CREATE TABLE IF NOT EXISTS high_res_screenshots (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              captured_at TEXT NOT NULL,
+              file_path TEXT NOT NULL,
+              width INTEGER NOT NULL,
+              height INTEGER NOT NULL,
+              process_name TEXT,
+              window_title TEXT,
+              capture_status TEXT NOT NULL DEFAULT 'ok',
+              session_id TEXT NOT NULL,
+              FOREIGN KEY(session_id) REFERENCES capture_sessions(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_high_res_screenshots_at ON high_res_screenshots(captured_at);
 
             CREATE TABLE IF NOT EXISTS input_events (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -653,6 +667,72 @@ impl Store {
             top_apps,
             skipped_reasons,
         })
+    }
+
+    pub fn insert_high_res_screenshot(
+        &mut self,
+        session_id: &str,
+        meta: &HighResScreenshotMeta,
+    ) -> Result<i64> {
+        let tx = self.conn.transaction()?;
+        ensure_session_open_tx(&tx, session_id)?;
+        tx.execute(
+            r#"
+            INSERT INTO high_res_screenshots
+              (captured_at, file_path, width, height, process_name, window_title, capture_status, session_id)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "#,
+            params![
+                meta.captured_at.to_rfc3339(),
+                meta.file_path,
+                meta.width,
+                meta.height,
+                meta.process_name,
+                meta.window_title,
+                meta.capture_status,
+                session_id,
+            ],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.commit()?;
+        Ok(id)
+    }
+
+    pub fn list_high_res_screenshots_by_date(
+        &self,
+        date: &str,
+        limit: usize,
+    ) -> Result<Vec<HighResScreenshotMeta>> {
+        let pattern = format!("{date}%");
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT id, captured_at, file_path, width, height, process_name, window_title, capture_status
+            FROM high_res_screenshots
+            WHERE captured_at LIKE ?1 AND capture_status = 'ok'
+            ORDER BY captured_at ASC
+            LIMIT ?2
+            "#,
+        )?;
+
+        let rows = statement.query_map(params![pattern, limit as i64], |row| {
+            let captured_at: String = row.get(1)?;
+            Ok(HighResScreenshotMeta {
+                id: row.get(0)?,
+                captured_at: parse_ts(&captured_at)?,
+                file_path: row.get(2)?,
+                width: row.get(3)?,
+                height: row.get(4)?,
+                process_name: row.get(5)?,
+                window_title: row.get(6)?,
+                capture_status: row.get(7)?,
+            })
+        })?;
+
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row?);
+        }
+        Ok(items)
     }
 
     pub fn insert_visual_summary(&mut self, summary: &VisualSummary) -> Result<i64> {

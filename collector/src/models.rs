@@ -286,6 +286,19 @@ pub struct ScreenshotMeta {
     pub capture_status: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HighResScreenshotMeta {
+    pub id: i64,
+    pub captured_at: DateTime<Utc>,
+    pub file_path: String,
+    pub width: u32,
+    pub height: u32,
+    pub process_name: Option<String>,
+    pub window_title: Option<String>,
+    pub capture_status: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VisualSummary {
