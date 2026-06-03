@@ -39,6 +39,8 @@ pub struct AppState {
     blocker_engine: Arc<BlockerEngine>,
     screenshot_dir: Arc<PathBuf>,
     screenshot_interval_secs: Arc<u64>,
+    high_res_screenshot_dir: Arc<PathBuf>,
+    high_res_screenshot_interval_secs: Arc<u64>,
     idle_threshold_secs: Arc<u64>,
     health: Arc<Mutex<CollectorHealth>>,
     shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
@@ -130,6 +132,36 @@ const DEFAULT_SCREENSHOT_INTERVAL: u64 = 60;
 const DEFAULT_IDLE_THRESHOLD: u64 = 120;
 const DEFAULT_SCREENSHOT_LIMIT: usize = 1440;
 const DEFAULT_HIGH_RES_SCREENSHOT_LIMIT: usize = 288;
+const DEFAULT_HIGH_RES_SCREENSHOT_INTERVAL: u64 = 300;
+const THUMBNAIL_SCREENSHOT_MAX_WIDTH: u32 = 640;
+const THUMBNAIL_SCREENSHOT_QUALITY: u8 = 60;
+const HIGH_RES_SCREENSHOT_MAX_WIDTH: u32 = 1440;
+const HIGH_RES_SCREENSHOT_QUALITY: u8 = 80;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScreenshotCaptureKind {
+    Thumbnail,
+    HighRes,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScreenshotCaptureProfile {
+    directory: PathBuf,
+    interval_secs: u64,
+    max_width: u32,
+    quality: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScreenshotCaptureRecord {
+    captured_at: DateTime<Utc>,
+    file_path: String,
+    width: u32,
+    height: u32,
+    process_name: Option<String>,
+    window_title: Option<String>,
+    capture_status: String,
+}
 
 pub fn router(store: Store, blocker_config_path: Option<PathBuf>) -> Router {
     router_from_state(default_state(store, blocker_config_path, None))
@@ -150,6 +182,8 @@ fn default_state(
         blocker_engine: Arc::new(engine),
         screenshot_dir: Arc::new(PathBuf::from("data/screenshots")),
         screenshot_interval_secs: Arc::new(DEFAULT_SCREENSHOT_INTERVAL),
+        high_res_screenshot_dir: Arc::new(PathBuf::from("data/high-res-screenshots")),
+        high_res_screenshot_interval_secs: Arc::new(DEFAULT_HIGH_RES_SCREENSHOT_INTERVAL),
         idle_threshold_secs: Arc::new(DEFAULT_IDLE_THRESHOLD),
         health: Arc::new(Mutex::new(CollectorHealth {
             status: "ok".into(),
@@ -198,6 +232,7 @@ fn default_state(
 
 fn router_from_state(state: AppState) -> Router {
     let screenshot_dir = state.screenshot_dir.to_path_buf();
+    let high_res_screenshot_dir = state.high_res_screenshot_dir.to_path_buf();
     Router::new()
         .route("/api/health", get(health))
         .route("/api/window-events", get(window_events))
@@ -215,7 +250,67 @@ fn router_from_state(state: AppState) -> Router {
         .route("/api/text-segments", get(text_segments))
         .route("/api/shutdown", post(shutdown))
         .nest_service("/screenshots", ServeDir::new(screenshot_dir))
+        .nest_service(
+            "/high-res-screenshots",
+            ServeDir::new(high_res_screenshot_dir),
+        )
         .with_state(state)
+}
+
+fn screenshot_capture_profile(
+    state: &AppState,
+    kind: ScreenshotCaptureKind,
+) -> ScreenshotCaptureProfile {
+    match kind {
+        ScreenshotCaptureKind::Thumbnail => ScreenshotCaptureProfile {
+            directory: state.screenshot_dir.to_path_buf(),
+            interval_secs: *state.screenshot_interval_secs,
+            max_width: THUMBNAIL_SCREENSHOT_MAX_WIDTH,
+            quality: THUMBNAIL_SCREENSHOT_QUALITY,
+        },
+        ScreenshotCaptureKind::HighRes => ScreenshotCaptureProfile {
+            directory: state.high_res_screenshot_dir.to_path_buf(),
+            interval_secs: *state.high_res_screenshot_interval_secs,
+            max_width: HIGH_RES_SCREENSHOT_MAX_WIDTH,
+            quality: HIGH_RES_SCREENSHOT_QUALITY,
+        },
+    }
+}
+
+fn insert_screenshot_capture(
+    store: &mut Store,
+    kind: ScreenshotCaptureKind,
+    session_id: &str,
+    record: &ScreenshotCaptureRecord,
+) -> Result<i64> {
+    match kind {
+        ScreenshotCaptureKind::Thumbnail => store.insert_screenshot(
+            session_id,
+            &ScreenshotMeta {
+                id: 0,
+                captured_at: record.captured_at,
+                file_path: record.file_path.clone(),
+                width: record.width,
+                height: record.height,
+                process_name: record.process_name.clone(),
+                window_title: record.window_title.clone(),
+                capture_status: record.capture_status.clone(),
+            },
+        ),
+        ScreenshotCaptureKind::HighRes => store.insert_high_res_screenshot(
+            session_id,
+            &HighResScreenshotMeta {
+                id: 0,
+                captured_at: record.captured_at,
+                file_path: record.file_path.clone(),
+                width: record.width,
+                height: record.height,
+                process_name: record.process_name.clone(),
+                window_title: record.window_title.clone(),
+                capture_status: record.capture_status.clone(),
+            },
+        ),
+    }
 }
 
 pub async fn serve(
@@ -240,7 +335,16 @@ pub async fn serve(
     let state = default_state(store, blocker_config_path, Some(shutdown_tx));
 
     let window_collector = spawn_collector_loop(state.clone(), session_id.clone(), poll_ms);
-    let screenshot_collector = spawn_screenshot_loop(state.clone(), session_id.clone());
+    let screenshot_collector = spawn_screenshot_loop(
+        state.clone(),
+        session_id.clone(),
+        ScreenshotCaptureKind::Thumbnail,
+    );
+    let high_res_screenshot_collector = spawn_screenshot_loop(
+        state.clone(),
+        session_id.clone(),
+        ScreenshotCaptureKind::HighRes,
+    );
     let input_collector = input::spawn_input_collector(state.store.clone(), state.health.clone());
 
     let app = router_from_state(state.clone());
@@ -250,9 +354,11 @@ pub async fn serve(
 
     window_collector.abort();
     screenshot_collector.abort();
+    high_res_screenshot_collector.abort();
     input_collector.abort();
     let _ = window_collector.await;
     let _ = screenshot_collector.await;
+    let _ = high_res_screenshot_collector.await;
     let _ = input_collector.await;
 
     if let Ok(mut store) = state.store.lock() {
@@ -386,29 +492,30 @@ fn record_screenshot_skip(
     session_id: &str,
     reason: &str,
     snapshot: Option<&WindowSnapshot>,
+    kind: ScreenshotCaptureKind,
 ) {
     let now = Utc::now();
     let (process_name, window_title) = screenshot_skip_metadata(reason, snapshot);
     let metadata_error = match state.store.lock() {
-        Ok(mut store) => store
-            .insert_screenshot(
-                session_id,
-                &ScreenshotMeta {
-                    id: 0,
-                    captured_at: now,
-                    file_path: String::new(),
-                    width: 0,
-                    height: 0,
-                    process_name,
-                    window_title,
-                    capture_status: reason.to_string(),
-                },
-            )
-            .err()
-            .map(|err| {
-                eprintln!("screenshot skip metadata write failed: {err:#}");
-                format!("{err:#}")
-            }),
+        Ok(mut store) => insert_screenshot_capture(
+            &mut store,
+            kind,
+            session_id,
+            &ScreenshotCaptureRecord {
+                captured_at: now,
+                file_path: String::new(),
+                width: 0,
+                height: 0,
+                process_name,
+                window_title,
+                capture_status: reason.to_string(),
+            },
+        )
+        .err()
+        .map(|err| {
+            eprintln!("screenshot skip metadata write failed: {err:#}");
+            format!("{err:#}")
+        }),
         Err(_) => {
             eprintln!("screenshot skip metadata write failed: store lock poisoned");
             Some("store lock poisoned".into())
@@ -425,10 +532,15 @@ fn record_screenshot_skip(
     }
 }
 
-fn spawn_screenshot_loop(state: AppState, session_id: String) -> tokio::task::JoinHandle<()> {
-    let interval = *state.screenshot_interval_secs;
+fn spawn_screenshot_loop(
+    state: AppState,
+    session_id: String,
+    kind: ScreenshotCaptureKind,
+) -> tokio::task::JoinHandle<()> {
+    let profile = screenshot_capture_profile(&state, kind);
+    let interval = profile.interval_secs;
     let idle_threshold = *state.idle_threshold_secs;
-    let screenshot_dir = state.screenshot_dir.to_path_buf();
+    let screenshot_dir = profile.directory.clone();
 
     tokio::spawn(async move {
         {
@@ -440,14 +552,14 @@ fn spawn_screenshot_loop(state: AppState, session_id: String) -> tokio::task::Jo
             time::sleep(Duration::from_secs(interval)).await;
 
             if screenshot::idle_seconds() > idle_threshold as f64 {
-                record_screenshot_skip(&state, &session_id, "idle", None);
+                record_screenshot_skip(&state, &session_id, "idle", None, kind);
                 continue;
             }
 
             let snapshot = match sample_foreground_window() {
                 Ok(s) => s,
                 Err(_) => {
-                    record_screenshot_skip(&state, &session_id, "capture_unavailable", None);
+                    record_screenshot_skip(&state, &session_id, "capture_unavailable", None, kind);
                     continue;
                 }
             };
@@ -470,26 +582,36 @@ fn spawn_screenshot_loop(state: AppState, session_id: String) -> tokio::task::Jo
                         });
                     }
                 }
-                record_screenshot_skip(&state, &session_id, "blocked", Some(&snapshot));
+                record_screenshot_skip(&state, &session_id, "blocked", Some(&snapshot), kind);
                 continue;
             }
 
-            let (bytes, w, h) = match screenshot::capture_thumbnail(640, 60) {
-                Some(data) => data,
-                None => {
-                    if let Ok(mut h) = state.health.lock() {
-                        h.screenshot_collector.error_count += 1;
-                        h.screenshot_collector.last_error =
-                            Some("capture_thumbnail returned None".into());
+            let (bytes, w, h) =
+                match screenshot::capture_thumbnail(profile.max_width, profile.quality) {
+                    Some(data) => data,
+                    None => {
+                        if let Ok(mut h) = state.health.lock() {
+                            h.screenshot_collector.error_count += 1;
+                            h.screenshot_collector.last_error =
+                                Some("capture_thumbnail returned None".into());
+                        }
+                        record_screenshot_skip(
+                            &state,
+                            &session_id,
+                            "capture_failed",
+                            Some(&snapshot),
+                            kind,
+                        );
+                        continue;
                     }
-                    record_screenshot_skip(&state, &session_id, "capture_failed", Some(&snapshot));
-                    continue;
-                }
-            };
+                };
 
             let now = Utc::now();
             let date_dir = now.format("%Y-%m-%d").to_string();
-            let filename = format!("{}.jpg", now.format("%H-%M"));
+            let filename = match kind {
+                ScreenshotCaptureKind::Thumbnail => format!("{}.jpg", now.format("%H-%M")),
+                ScreenshotCaptureKind::HighRes => format!("{}.jpg", now.format("%H-%M-%S")),
+            };
             let dir = screenshot_dir.join(&date_dir);
             if let Err(e) = std::fs::create_dir_all(&dir) {
                 eprintln!("screenshot dir create failed: {e:#}");
@@ -497,7 +619,7 @@ fn spawn_screenshot_loop(state: AppState, session_id: String) -> tokio::task::Jo
                     h.screenshot_collector.error_count += 1;
                     h.screenshot_collector.last_error = Some(format!("{e:#}"));
                 }
-                record_screenshot_skip(&state, &session_id, "write_failed", Some(&snapshot));
+                record_screenshot_skip(&state, &session_id, "write_failed", Some(&snapshot), kind);
                 continue;
             }
             let filepath = dir.join(&filename);
@@ -508,29 +630,29 @@ fn spawn_screenshot_loop(state: AppState, session_id: String) -> tokio::task::Jo
                     h.screenshot_collector.error_count += 1;
                     h.screenshot_collector.last_error = Some(format!("{e:#}"));
                 }
-                record_screenshot_skip(&state, &session_id, "write_failed", Some(&snapshot));
+                record_screenshot_skip(&state, &session_id, "write_failed", Some(&snapshot), kind);
                 continue;
             }
 
             let relative_path = format!("{}/{}", date_dir, filename);
 
             let metadata_write_result = match state.store.lock() {
-                Ok(mut store) => store
-                    .insert_screenshot(
-                        &session_id,
-                        &ScreenshotMeta {
-                            id: 0,
-                            captured_at: now,
-                            file_path: relative_path,
-                            width: w,
-                            height: h,
-                            process_name: Some(snapshot.process_name.clone()),
-                            window_title: snapshot.window_title.clone(),
-                            capture_status: "ok".to_string(),
-                        },
-                    )
-                    .map(|_| ())
-                    .map_err(|err| format!("{err:#}")),
+                Ok(mut store) => insert_screenshot_capture(
+                    &mut store,
+                    kind,
+                    &session_id,
+                    &ScreenshotCaptureRecord {
+                        captured_at: now,
+                        file_path: relative_path,
+                        width: w,
+                        height: h,
+                        process_name: Some(snapshot.process_name.clone()),
+                        window_title: snapshot.window_title.clone(),
+                        capture_status: "ok".to_string(),
+                    },
+                )
+                .map(|_| ())
+                .map_err(|err| format!("{err:#}")),
                 Err(_) => Err("store lock poisoned".into()),
             };
 
@@ -553,6 +675,7 @@ fn spawn_screenshot_loop(state: AppState, session_id: String) -> tokio::task::Jo
                         &session_id,
                         "metadata_write_failed",
                         Some(&snapshot),
+                        kind,
                     );
                 }
             }
@@ -1111,5 +1234,63 @@ mod tests {
             "second error"
         ));
         assert_eq!(last_error.as_deref(), Some("second error"));
+    }
+
+    #[test]
+    fn high_res_capture_profile_uses_prd_interval_and_resolution() {
+        let store = Store::open_memory().unwrap();
+        store.init().unwrap();
+        let state = default_state(store, None, None);
+
+        let profile = screenshot_capture_profile(&state, ScreenshotCaptureKind::HighRes);
+
+        assert_eq!(profile.interval_secs, 300);
+        assert_eq!(profile.max_width, 1440);
+        assert_eq!(profile.quality, 80);
+        assert_eq!(
+            profile.directory,
+            PathBuf::from("data/high-res-screenshots")
+        );
+    }
+
+    #[test]
+    fn high_res_capture_kind_writes_high_res_table() {
+        let mut store = Store::open_memory().unwrap();
+        store.init().unwrap();
+        let session_id = store.create_session("0.1.0", "test-config").unwrap();
+
+        insert_screenshot_capture(
+            &mut store,
+            ScreenshotCaptureKind::HighRes,
+            &session_id,
+            &ScreenshotCaptureRecord {
+                captured_at: ts("2026-05-25T09:05:00Z"),
+                file_path: "2026-05-25/09-05-00.jpg".into(),
+                width: 1440,
+                height: 900,
+                process_name: Some("Code.exe".into()),
+                window_title: Some("main.rs".into()),
+                capture_status: "ok".into(),
+            },
+        )
+        .unwrap();
+
+        assert!(
+            store
+                .list_screenshots_by_date("2026-05-25", 10)
+                .unwrap()
+                .is_empty()
+        );
+        let high_res_rows = store
+            .list_high_res_screenshots_by_date("2026-05-25", 10)
+            .unwrap();
+        assert_eq!(high_res_rows.len(), 1);
+        assert_eq!(high_res_rows[0].file_path, "2026-05-25/09-05-00.jpg");
+    }
+
+    fn ts(value: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&Utc)
     }
 }
