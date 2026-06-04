@@ -1,11 +1,10 @@
-import {
-  AlertCircle,
-  Camera,
-  Clock3,
-  FileText,
-  Sparkles,
-} from "lucide-react";
+import { AlertCircle, Camera, Clock3, FileText } from "lucide-react";
 import type { ReactNode } from "react";
+import {
+  buildReportNote,
+  buildWindowNote,
+  type ReportPhase,
+} from "./lib/insightPresentation";
 import type { PrivacyMode, UiSourceMode } from "./lib/uiModel";
 import type {
   ActivityCategory,
@@ -42,15 +41,15 @@ export function InsightFeedback({
   const canShowText = privacyMode === "raw";
 
   return (
-    <section className="aiInsightPanel" aria-label="AI insight feedback">
+    <section className="aiInsightPanel" aria-label="Review Notes">
       <div className="aiInsightHeader">
         <div>
-          <p className="eyebrow">AI insight</p>
-          <h2>AI 工作洞察</h2>
+          <p className="eyebrow">Field notes</p>
+          <h2>Review Notes</h2>
           <p>
             {sourceMode === "live"
-              ? "每分钟保留高分辨率原图，5 分钟窗口选 1/3/5 分钟三张图分析，5 小时汇总轨迹"
-              : "等待 Live collector 后开始反馈"}
+              ? "5 min window · 5 h session · live collector"
+              : "5 min window · 5 h session · sample workspace"}
           </p>
         </div>
         <span className={`statusPill ${statusClass(visualStatus?.status)}`}>
@@ -67,9 +66,9 @@ export function InsightFeedback({
       <div className="aiInsightGrid">
         <InsightBlock
           icon={<Camera aria-hidden="true" size={18} />}
-          title="5 分钟窗口摘要"
+          title="Window note"
           status={visualStatus}
-          cadence="1/3/5 min samples"
+          cadence="1 / 3 / 5 min samples"
         >
           <WindowSummaryContent
             summary={latestWindowSummary}
@@ -80,21 +79,18 @@ export function InsightFeedback({
 
         <InsightBlock
           icon={<FileText aria-hidden="true" size={18} />}
-          title="5h report"
+          title="Session report"
           status={reportStatus}
-          cadence="5 h"
+          cadence="5 h cadence"
         >
           <ReportContent report={latestReport} canShowText={canShowText} />
         </InsightBlock>
+      </div>
 
-        <div className="aiInsightTiming">
-          <Clock3 aria-hidden="true" size={18} />
-          <div>
-            <strong>下一次运行</strong>
-            <span>截图分析：{formatTime(visualStatus?.nextRunAt)}</span>
-            <span>轨迹报告：{formatTime(reportStatus?.nextRunAt)}</span>
-          </div>
-        </div>
+      <div className="aiInsightTiming" aria-label="Review note schedule">
+        <Clock3 aria-hidden="true" size={17} />
+        <span>Window next {formatTime(visualStatus?.nextRunAt)}</span>
+        <span>Report next {formatTime(reportStatus?.nextRunAt)}</span>
       </div>
     </section>
   );
@@ -119,7 +115,7 @@ function InsightBlock({
         <span className="metricIcon">{icon}</span>
         <div>
           <h3>{title}</h3>
-          <span>{cadence} cadence</span>
+          <span>{cadence}</span>
         </div>
         <span className={`workerBadge ${statusClass(status?.status)}`}>
           {workerLabel(status)}
@@ -154,37 +150,53 @@ function WindowSummaryContent({
         />
       );
     }
-    return <p className="emptyState">还没有可展示的 5 分钟窗口分析结果。</p>;
+    return <p className="emptyState">No window note yet.</p>;
   }
+
+  const note = buildWindowNote(summary);
 
   return (
     <div className="aiInsightBody">
       <div className="aiInsightFacts">
         <span>{formatRange(summary.windowStart, summary.windowEnd)}</span>
-        <span>{categoryLabel(summary.primaryActivity)}</span>
-        <span>{Math.round(summary.confidence * 100)}% confidence</span>
+        <span>{categoryLabel(note.primaryActivity)}</span>
+        <span>{Math.round(note.confidence * 100)}% confidence</span>
+        <span>{summary.modelProvider}</span>
       </div>
       {canShowText ? (
         <>
-          <p>{summary.summaryText}</p>
+          <p className="reviewThesis">{note.thesis}</p>
+          {note.intent ? (
+            <p className="aiInsightHints">
+              <strong>Intent</strong>
+              <span>{note.intent}</span>
+            </p>
+          ) : null}
+          {note.continuity ? (
+            <p className="aiInsightHints">
+              <strong>Continuity</strong>
+              <span>{note.continuity}</span>
+            </p>
+          ) : null}
+          <TrajectoryList trajectory={note.trajectory} />
           <div className="categoryMix" aria-label="Window insight labels">
-            <span>{switchingLabel(summary.switchingLevel)}</span>
-            <span>{loafingLabel(summary.loafingLevel)}</span>
-            {summary.projectHints.slice(0, 2).map((hint) => (
+            <span>{switchingLabel(note.switchingLevel)}</span>
+            <span>{loafingLabel(note.loafingLevel)}</span>
+            {compactList(note.projectHints, 2).map((hint) => (
               <span key={hint}>{hint}</span>
             ))}
           </div>
-          {summary.taskIntent ? (
-            <p className="aiInsightHints">任务意图：{summary.taskIntent}</p>
+          {note.switchingEvidence || note.loafingEvidence ? (
+            <div className="reviewEvidence">
+              {note.switchingEvidence ? <p>{note.switchingEvidence}</p> : null}
+              {note.loafingEvidence ? <p>{note.loafingEvidence}</p> : null}
+            </div>
           ) : null}
-          <TrajectoryList trajectory={summary.trajectory} />
-          <p className="aiInsightHints">
-            切换：{summary.switchingEvidence} 摸鱼：{summary.loafingEvidence}
-          </p>
+          <RawSummaryDetails summary={summary} />
         </>
       ) : (
         <p className="redactedText insightRedacted">
-          5 分钟窗口摘要已生成，内容在 Redacted 模式隐藏。
+          Window note generated. Text is hidden in redacted mode.
         </p>
       )}
       {summary.error ? (
@@ -212,10 +224,10 @@ function LegacyObservationContent({
         <span>{Math.round(observation.confidence * 100)}% confidence</span>
       </div>
       {canShowText ? (
-        <p>{observation.summaryText}</p>
+        <p className="reviewThesis">{observation.summaryText}</p>
       ) : (
         <p className="redactedText insightRedacted">
-          旧版单张截图摘要已生成，内容在 Redacted 模式隐藏。
+          Legacy screenshot note generated. Text is hidden in redacted mode.
         </p>
       )}
     </div>
@@ -229,10 +241,11 @@ function TrajectoryList({ trajectory }: { trajectory: VisualTrajectoryPoint[] })
 
   return (
     <ol className="windowTrajectory" aria-label="1 3 5 minute trajectory">
-      {trajectory.map((point) => (
+      {trajectory.slice(0, 3).map((point) => (
         <li key={`${point.minuteMark}-${point.screenshotId}`}>
-          <strong>第 {point.minuteMark} 分钟</strong>
+          <strong>Minute {point.minuteMark}</strong>
           <span>{point.observation}</span>
+          <small>{categoryLabel(point.activityCategory)}</small>
         </li>
       ))}
     </ol>
@@ -247,8 +260,10 @@ function ReportContent({
   canShowText: boolean;
 }) {
   if (!report) {
-    return <p className="emptyState">5 小时轨迹报告尚未生成。</p>;
+    return <p className="emptyState">No session report yet.</p>;
   }
+
+  const note = buildReportNote(report);
 
   return (
     <div className="aiInsightBody">
@@ -268,16 +283,28 @@ function ReportContent({
       ) : null}
       {canShowText ? (
         <>
-          <p>{report.summaryText}</p>
-          {report.projectHints.length > 0 ? (
-            <p className="aiInsightHints">
-              {report.projectHints.slice(0, 5).join(" / ")}
-            </p>
+          <p className="reviewThesis">{note.mainThread}</p>
+          <ReportPhaseList phases={note.phases} />
+          {note.projects.length > 0 ? (
+            <div className="reviewProjectChips" aria-label="Session projects">
+              <strong>Projects</strong>
+              <div>
+                {compactList(note.projects, 3).map((project) => (
+                  <span key={project}>{shortText(project, 72)}</span>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {note.fullText !== note.mainThread ? (
+            <details className="reviewDetails">
+              <summary>Show full report</summary>
+              <p>{note.fullText}</p>
+            </details>
           ) : null}
         </>
       ) : (
         <p className="redactedText insightRedacted">
-          5h report 已生成，正文在 Redacted 模式隐藏。
+          Session report generated. Text is hidden in redacted mode.
         </p>
       )}
       {report.error ? (
@@ -287,6 +314,36 @@ function ReportContent({
         </p>
       ) : null}
     </div>
+  );
+}
+
+function ReportPhaseList({ phases }: { phases: ReportPhase[] }) {
+  if (phases.length === 0) {
+    return null;
+  }
+
+  return (
+    <ol className="reportPhases" aria-label="Session report phases">
+      {phases.slice(0, 3).map((phase, index) => (
+        <li key={`${phase.label}-${index}`}>
+          <strong>{phase.label}</strong>
+          <span>{phase.detail}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function RawSummaryDetails({ summary }: { summary: VisualWindowSummary }) {
+  if (summary.rawSummaryJson === null || summary.rawSummaryJson === undefined) {
+    return null;
+  }
+
+  return (
+    <details className="reviewDetails">
+      <summary>Raw JSON</summary>
+      <pre>{JSON.stringify(summary.rawSummaryJson, null, 2)}</pre>
+    </details>
   );
 }
 
@@ -344,26 +401,26 @@ function formatRange(start: string, end: string): string {
 function switchingLabel(level: string): string {
   switch (level) {
     case "low":
-      return "低切换";
+      return "Low switching";
     case "medium":
-      return "中切换";
+      return "Medium switching";
     case "high":
-      return "高切换";
+      return "High switching";
     default:
-      return "切换未知";
+      return "Switching unknown";
   }
 }
 
 function loafingLabel(level: string): string {
   switch (level) {
     case "none":
-      return "无摸鱼";
+      return "No loafing";
     case "possible":
-      return "可能摸鱼";
+      return "Possible drift";
     case "clear":
-      return "明显摸鱼";
+      return "Clear drift";
     default:
-      return "摸鱼未知";
+      return "Drift unknown";
   }
 }
 
@@ -396,4 +453,18 @@ function categoryLabel(category: ActivityCategory): string {
     case "unknown":
       return "Unknown";
   }
+}
+
+function compactList(values: string[], limit: number): string[] {
+  if (values.length <= limit) {
+    return values;
+  }
+  return [...values.slice(0, limit), `+${values.length - limit}`];
+}
+
+function shortText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength - 1).trim()}…`;
 }

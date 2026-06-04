@@ -70,7 +70,8 @@ function analysisStatusResponse() {
       modelProvider: "minimax",
       modelName: "MiniMax-M3",
       promptVersion: "visual-window-minimax-m3-v1",
-      summaryText: "持续实现窗口级视觉分析。",
+      summaryText:
+        '```json\n{"summaryText":"Focused Overpayment analysis.","taskIntent":"Prepare regression table","continuity":"Continues formal analysis"}\n```',
       continuity: "continued_focus",
       primaryActivity: "coding",
       projectHints: ["Time State Recorder"],
@@ -103,7 +104,11 @@ function analysisStatusResponse() {
       visibleTextHints: ["visual_window_summaries"],
       riskFlags: [],
       confidence: 0.86,
-      rawSummaryJson: { summaryText: "持续实现窗口级视觉分析。" },
+      rawSummaryJson: {
+        summaryText: "Focused Overpayment analysis.",
+        taskIntent: "Prepare regression table",
+        continuity: "Continues formal analysis"
+      },
       createdAt: "2026-05-24T10:05:04Z",
       error: null
     },
@@ -115,7 +120,8 @@ function analysisStatusResponse() {
       reportKind: "5h",
       modelProvider: "local_insight",
       modelName: "trajectory-v1",
-      summaryText: "Five-hour trajectory summary.",
+      summaryText:
+        "5小时工作轨迹可分四个阶段。① 教学协调阶段(06:20-07:00)：处理课程材料。② Stata实证阶段(07:15-07:35)：推进do-file。③ Codex工程阶段(07:35-08:10)：整理worktree。整体呈现科研-工程并行。",
       categoryMix: [{ activityCategory: "coding", count: 9 }],
       projectHints: ["Time State Recorder"],
       evidenceCount: 12,
@@ -135,7 +141,8 @@ function insightReportsResponse() {
         reportKind: "5h",
         modelProvider: "local_insight",
         modelName: "trajectory-v1",
-        summaryText: "Five-hour trajectory summary.",
+        summaryText:
+          "5小时工作轨迹可分四个阶段。① 教学协调阶段(06:20-07:00)：处理课程材料。② Stata实证阶段(07:15-07:35)：推进do-file。③ Codex工程阶段(07:35-08:10)：整理worktree。整体呈现科研-工程并行。",
         categoryMix: [{ activityCategory: "coding", count: 9 }],
         projectHints: ["Time State Recorder"],
         evidenceCount: 12,
@@ -421,26 +428,28 @@ describe("App", () => {
     expect(screen.queryByText("Sensitive client roadmap")).not.toBeInTheDocument();
   });
 
-  it("shows AI insight status while hiding generated text until raw mode", async () => {
+  it("shows Review Notes status while hiding generated text until raw mode", async () => {
     vi.stubGlobal("fetch", vi.fn(liveDataResponse));
 
     render(<App />);
 
     expect(
-      await screen.findByRole("region", { name: /ai insight feedback/i })
+      await screen.findByRole("region", { name: /review notes/i })
     ).toBeInTheDocument();
-    expect(screen.getByText("AI 工作洞察")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Review Notes" })).toBeInTheDocument();
     expect(screen.getByText(/12 windows/i)).toBeInTheDocument();
-    expect(screen.queryByText("持续实现窗口级视觉分析。")).not.toBeInTheDocument();
+    expect(screen.queryByText("Focused Overpayment analysis.")).not.toBeInTheDocument();
     expect(screen.queryByText("Focused coding work.")).not.toBeInTheDocument();
-    expect(screen.queryByText("Five-hour trajectory summary.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/5小时工作轨迹/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
 
-    expect(await screen.findByText("持续实现窗口级视觉分析。")).toBeInTheDocument();
-    expect(await screen.findByText(/第 1 分钟/)).toBeInTheDocument();
-    expect(await screen.findByText(/低切换/)).toBeInTheDocument();
-    expect(await screen.findByText("Five-hour trajectory summary.")).toBeInTheDocument();
+    expect(await screen.findByText("Focused Overpayment analysis.")).toBeInTheDocument();
+    expect(await screen.findByText("Prepare regression table")).toBeInTheDocument();
+    expect(await screen.findByText(/Minute 1/)).toBeInTheDocument();
+    expect(await screen.findByText(/Low switching/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/教学协调阶段/)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/```json/)).not.toBeInTheDocument();
   });
 
   it("shows raw live evidence titles on the flow board after switching privacy mode", async () => {

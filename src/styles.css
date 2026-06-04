@@ -4,6 +4,13 @@
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
+  --review-serif: ui-serif, "New York", "Iowan Old Style", "Palatino Linotype",
+    Palatino, Georgia, serif;
+  --pine: #1f4d3a;
+  --sage: #a8bdae;
+  --paper: #f6f8f3;
+  --ink: #17211b;
+  --muted-ink: #66736a;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -1349,18 +1356,20 @@ td:nth-child(2) {
   line-height: 1.45;
 }
 
-/* AI Insight Feedback */
+/* Review Notes */
 
 .aiInsightPanel {
   display: grid;
   width: min(100%, 1180px);
-  gap: 14px;
+  gap: 12px;
   margin-bottom: 16px;
-  border: 1px solid #d9dfd8;
+  border: 1px solid rgba(168, 189, 174, 0.62);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 12px 28px rgba(23, 33, 27, 0.06);
-  padding: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(250, 252, 249, 0.94)),
+    #ffffff;
+  box-shadow: 0 10px 24px rgba(23, 33, 27, 0.045);
+  padding: 16px;
 }
 
 .aiInsightHeader {
@@ -1368,41 +1377,53 @@ td:nth-child(2) {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  border-bottom: 1px solid #e1e7e0;
+  padding-bottom: 12px;
+}
+
+.aiInsightHeader > .statusPill {
+  justify-self: end;
+  width: fit-content;
 }
 
 .aiInsightHeader h2 {
-  font-size: 1.08rem;
+  color: var(--pine);
+  font-family: var(--review-serif);
+  font-size: 1.18rem;
+  font-weight: 650;
+  letter-spacing: 0;
 }
 
 .aiInsightHeader p {
   margin: 5px 0 0;
-  color: #5f6d65;
-  font-size: 0.86rem;
-  font-weight: 700;
+  color: var(--muted-ink);
+  font-size: 0.82rem;
+  font-weight: 650;
 }
 
 .aiInsightGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) minmax(220px, 0.55fr);
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
   gap: 12px;
-  align-items: stretch;
+  align-items: start;
 }
 
-.aiInsightBlock,
-.aiInsightTiming {
+.aiInsightBlock {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
-  border: 1px solid #e2e6e1;
+  min-height: 320px;
+  border: 1px solid #e2e8e1;
   border-radius: 8px;
   background: #ffffff;
-  padding: 14px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  padding: 13px;
 }
 
-.aiInsightBlockHeader,
-.aiInsightTiming {
-  min-width: 0;
+.aiInsightBlock .metricIcon {
+  background: #edf3ee;
+  color: var(--pine);
 }
 
 .aiInsightBlockHeader {
@@ -1410,18 +1431,24 @@ td:nth-child(2) {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  border-bottom: 1px solid #edf1ec;
+  padding-bottom: 10px;
 }
 
 .aiInsightBlockHeader h3 {
   margin: 0;
-  font-size: 0.92rem;
+  color: var(--ink);
+  font-family: var(--review-serif);
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: 0;
 }
 
 .aiInsightBlockHeader span:not(.metricIcon):not(.workerBadge) {
-  color: #5f6d65;
-  font-size: 0.76rem;
-  font-weight: 800;
-  text-transform: uppercase;
+  color: var(--muted-ink);
+  font-size: 0.75rem;
+  font-weight: 650;
 }
 
 .workerBadge {
@@ -1429,16 +1456,16 @@ td:nth-child(2) {
   min-width: 62px;
   justify-content: center;
   border-radius: 999px;
-  padding: 4px 8px;
-  background: #d9ecdf;
-  color: #1f6b3b;
+  padding: 3px 8px;
+  background: #e4eee6;
+  color: var(--pine);
   font-size: 0.72rem;
-  font-weight: 800;
+  font-weight: 750;
 }
 
 .workerBadge.loading {
-  background: #e5ebf7;
-  color: #315a9f;
+  background: #f1ead8;
+  color: #765c18;
 }
 
 .workerBadge.offline {
@@ -1448,33 +1475,44 @@ td:nth-child(2) {
 
 .aiInsightBody {
   display: grid;
-  gap: 9px;
+  gap: 10px;
   min-width: 0;
 }
 
 .aiInsightBody p {
   margin: 0;
-  color: #233028;
-  font-size: 0.88rem;
-  font-weight: 700;
-  line-height: 1.45;
+  color: var(--ink);
+  font-family: var(--review-serif);
+  font-size: 0.98rem;
+  font-weight: 400;
+  line-height: 1.52;
   overflow-wrap: anywhere;
+}
+
+.reviewThesis {
+  display: -webkit-box;
+  max-width: 68ch;
+  overflow: hidden;
+  color: #12271d !important;
+  font-size: 1.02rem !important;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .aiInsightFacts {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 
 .aiInsightFacts span,
 .categoryMix span {
   display: inline-flex;
   border-radius: 999px;
-  background: #f3f6f2;
-  color: #5f6d65;
+  background: #f2f6f1;
+  color: #52635a;
   font-size: 0.74rem;
-  font-weight: 800;
+  font-weight: 700;
   padding: 4px 8px;
 }
 
@@ -1485,13 +1523,42 @@ td:nth-child(2) {
 }
 
 .aiInsightHints {
-  color: #5f6d65 !important;
-  font-size: 0.8rem !important;
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+  color: var(--muted-ink) !important;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif !important;
+  font-size: 0.82rem !important;
+  line-height: 1.4 !important;
+}
+
+.aiInsightHints strong {
+  color: var(--pine);
+  font-weight: 750;
+}
+
+.reviewEvidence {
+  display: grid;
+  gap: 5px;
+  border-left: 2px solid var(--sage);
+  padding-left: 10px;
+}
+
+.reviewEvidence p {
+  color: var(--muted-ink);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-size: 0.82rem;
+  line-height: 1.42;
 }
 
 .windowTrajectory {
   display: grid;
-  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1499,29 +1566,144 @@ td:nth-child(2) {
 
 .windowTrajectory li {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 8px;
-  align-items: start;
+  min-height: 104px;
+  align-content: start;
+  gap: 6px;
   min-width: 0;
-  color: #233028;
-  font-size: 0.8rem;
-  font-weight: 700;
-  line-height: 1.4;
+  border: 1px solid #e3e9e2;
+  border-radius: 7px;
+  background: #fbfcfa;
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.38;
+  padding: 9px;
 }
 
 .windowTrajectory strong {
-  color: #356b63;
-  font-size: 0.78rem;
+  color: var(--pine);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-size: 0.76rem;
+  font-weight: 800;
   white-space: nowrap;
 }
 
 .windowTrajectory span {
   min-width: 0;
+  font-family: var(--review-serif);
   overflow-wrap: anywhere;
 }
 
+.windowTrajectory small {
+  width: fit-content;
+  border-radius: 999px;
+  background: #edf3ee;
+  color: var(--muted-ink);
+  font-size: 0.68rem;
+  font-weight: 750;
+  padding: 2px 6px;
+}
+
+.reportPhases {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reportPhases li {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid #edf1ec;
+  padding-top: 8px;
+}
+
+.reportPhases strong {
+  color: var(--pine);
+  font-family: var(--review-serif);
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+
+.reportPhases span {
+  color: var(--muted-ink);
+  font-size: 0.84rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.reviewProjectChips {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  color: var(--muted-ink);
+  font-size: 0.82rem;
+}
+
+.reviewProjectChips > strong {
+  color: var(--pine);
+  font-weight: 750;
+}
+
+.reviewProjectChips div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.reviewProjectChips span {
+  max-width: min(100%, 260px);
+  overflow: hidden;
+  border-radius: 999px;
+  background: #f2f6f1;
+  color: #52635a;
+  font-size: 0.74rem;
+  font-weight: 700;
+  padding: 4px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reviewDetails {
+  border-top: 1px solid #edf1ec;
+  color: var(--muted-ink);
+  font-size: 0.82rem;
+  padding-top: 8px;
+}
+
+.reviewDetails summary {
+  width: fit-content;
+  color: var(--pine);
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.reviewDetails p,
+.reviewDetails pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 8px 0 0;
+  border-radius: 6px;
+  background: #f6f8f3;
+  color: #233028;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+
 .insightRedacted {
-  padding: 10px 12px;
+  border-color: #b9cabb;
+  background: #f8faf7;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif !important;
+  padding: 11px 12px;
   border-radius: 6px;
 }
 
@@ -1538,28 +1720,20 @@ td:nth-child(2) {
 }
 
 .aiInsightTiming {
-  grid-template-columns: auto minmax(0, 1fr);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  border-top: 1px solid #e1e7e0;
+  color: var(--muted-ink);
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding-top: 10px;
 }
 
 .aiInsightTiming svg {
-  color: #356b63;
-}
-
-.aiInsightTiming div {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-
-.aiInsightTiming strong {
-  color: #17211b;
-  font-size: 0.9rem;
-}
-
-.aiInsightTiming span {
-  color: #5f6d65;
-  font-size: 0.8rem;
-  font-weight: 800;
+  color: var(--pine);
 }
 
 @media (max-width: 980px) {
@@ -1971,6 +2145,22 @@ td:nth-child(2) {
 
   .flowSummary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .aiInsightBlock {
+    min-height: auto;
+  }
+
+  .windowTrajectory {
+    grid-template-columns: 1fr;
+  }
+
+  .aiInsightHints {
+    grid-template-columns: 1fr;
+  }
+
+  .reviewProjectChips {
+    grid-template-columns: 1fr;
   }
 
   .sectionHeader,
