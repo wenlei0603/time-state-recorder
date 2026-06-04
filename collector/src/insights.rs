@@ -1,13 +1,16 @@
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::models::{
-    ActivityCategory, ActivityCategoryCount, HighResScreenshotMeta, InsightReport,
-    VisualObservation, VisualSummary, VisualWindowSummary,
+    ActivityCategory, ActivityCategoryCount, DailyActivityStats, DailyBrief, DailyComparison,
+    HighResScreenshotMeta, HourlyActivityMetric, InsightReport, VisualObservation, VisualSummary,
+    VisualWindowSummary,
 };
 
 const LOCAL_REPORT_PROMPT_VERSION: &str = "trajectory-v1";
+const DAILY_BRIEF_PROMPT_VERSION: &str = "daily-brief-v1";
+const LOCAL_DAILY_BRIEF_MODEL: &str = "daily-brief-local-v1";
 
 pub fn observation_from_visual_summary(
     high_res: &HighResScreenshotMeta,
@@ -349,6 +352,308 @@ impl LocalInsightReporter {
 }
 
 #[derive(Debug, Clone)]
+pub enum ConfiguredDailyBriefReporter {
+    Local(LocalDailyBriefReporter),
+    MiniMax(MiniMaxDailyBriefReporter),
+}
+
+impl ConfiguredDailyBriefReporter {
+    pub fn from_env() -> Result<Self> {
+        let provider = std::env::var("DAILY_BRIEF_PROVIDER").ok();
+        let api_key = std::env::var("MINIMAX_API_KEY").ok();
+        let base_url = std::env::var("MINIMAX_BASE_URL").ok();
+        let selected_provider = select_insight_report_provider(
+            provider.as_deref(),
+            api_key.as_deref(),
+            base_url.as_deref(),
+        );
+
+        match selected_provider.to_ascii_lowercase().as_str() {
+            "minimax" => Ok(Self::MiniMax(MiniMaxDailyBriefReporter::new(
+                MiniMaxInsightConfig::from_daily_env()?,
+            ))),
+            "local" | "local_stub" | "" => Ok(Self::Local(LocalDailyBriefReporter)),
+            other => bail!("unsupported DAILY_BRIEF_PROVIDER: {other}"),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn report(
+        &self,
+        date: &str,
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+        scheduled_for_local: &str,
+        stats: &DailyActivityStats,
+        hourly_metrics: &[HourlyActivityMetric],
+        comparison: &DailyComparison,
+        reports: &[InsightReport],
+    ) -> Result<DailyBrief> {
+        let generated_at = Utc::now();
+        match self {
+            Self::Local(reporter) => reporter.report(
+                date,
+                period_start,
+                period_end,
+                scheduled_for_local,
+                stats,
+                hourly_metrics,
+                comparison,
+                reports,
+                generated_at,
+            ),
+            Self::MiniMax(reporter) => {
+                reporter
+                    .report(
+                        date,
+                        period_start,
+                        period_end,
+                        scheduled_for_local,
+                        stats,
+                        hourly_metrics,
+                        comparison,
+                        reports,
+                        generated_at,
+                    )
+                    .await
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LocalDailyBriefReporter;
+
+impl LocalDailyBriefReporter {
+    #[allow(clippy::too_many_arguments)]
+    pub fn report(
+        &self,
+        date: &str,
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+        scheduled_for_local: &str,
+        stats: &DailyActivityStats,
+        hourly_metrics: &[HourlyActivityMetric],
+        comparison: &DailyComparison,
+        reports: &[InsightReport],
+        generated_at: DateTime<Utc>,
+    ) -> Result<DailyBrief> {
+        let report_ids = reports.iter().map(|report| report.id).collect::<Vec<_>>();
+        let dominant = stats
+            .category_mix
+            .first()
+            .map(|item| item.activity_category.as_str())
+            .unwrap_or(ActivityCategory::Unknown.as_str());
+        let daily_summary_text = format!(
+            "{date} 记录包含 {:.1} 小时活跃桌面时间，主要活动类型为 {dominant}，覆盖 {} 个 5 小时报告。",
+            stats.active_hours,
+            reports.len()
+        );
+        let action_trajectory = if reports.is_empty() {
+            "当日没有可用的 5 小时报告，暂不能形成连续行动轨迹。".to_string()
+        } else {
+            reports
+                .iter()
+                .map(|report| {
+                    format!(
+                        "{} - {}：{}",
+                        report.period_start.format("%H:%M"),
+                        report.period_end.format("%H:%M"),
+                        report.summary_text
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let raw_summary_json = serde_json::json!({
+            "dailySummaryText": daily_summary_text,
+            "actionTrajectory": action_trajectory,
+            "comparisonExplanation": comparison.explanation
+        });
+
+        Ok(DailyBrief {
+            id: 0,
+            date: date.into(),
+            period_start,
+            period_end,
+            generated_at,
+            scheduled_for_local: scheduled_for_local.into(),
+            model_provider: "local_insight".into(),
+            model_name: LOCAL_DAILY_BRIEF_MODEL.into(),
+            prompt_version: DAILY_BRIEF_PROMPT_VERSION.into(),
+            status: "complete".into(),
+            descriptive_stats: stats.clone(),
+            hourly_metrics: hourly_metrics.to_vec(),
+            comparison: comparison.clone(),
+            five_hour_report_ids: report_ids,
+            daily_summary_text,
+            action_trajectory,
+            raw_summary_json,
+            error: None,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MiniMaxDailyBriefReporter {
+    client: reqwest::Client,
+    config: MiniMaxInsightConfig,
+}
+
+impl MiniMaxDailyBriefReporter {
+    pub fn new(config: MiniMaxInsightConfig) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            config,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_chat_completions_request(
+        &self,
+        date: &str,
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+        stats: &DailyActivityStats,
+        hourly_metrics: &[HourlyActivityMetric],
+        comparison: &DailyComparison,
+        reports: &[InsightReport],
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "model": self.config.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You write a neutral Chinese daily desktop-work brief from structured activity metrics and five-hour reports. Return compact JSON only."
+                },
+                {
+                    "role": "user",
+                    "content": daily_brief_prompt(
+                        date,
+                        period_start,
+                        period_end,
+                        stats,
+                        hourly_metrics,
+                        comparison,
+                        reports,
+                    )
+                }
+            ],
+            "temperature": 0.2,
+            "top_p": 0.95,
+            "max_completion_tokens": self.config.max_completion_tokens,
+            "thinking": { "type": "disabled" }
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn report(
+        &self,
+        date: &str,
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+        scheduled_for_local: &str,
+        stats: &DailyActivityStats,
+        hourly_metrics: &[HourlyActivityMetric],
+        comparison: &DailyComparison,
+        reports: &[InsightReport],
+        generated_at: DateTime<Utc>,
+    ) -> Result<DailyBrief> {
+        let body = self.build_chat_completions_request(
+            date,
+            period_start,
+            period_end,
+            stats,
+            hourly_metrics,
+            comparison,
+            reports,
+        );
+        let response = self
+            .client
+            .post(self.config.chat_completions_url())
+            .bearer_auth(&self.config.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context("MiniMax daily brief request failed")?;
+        let status = response.status();
+        let response_text = response
+            .text()
+            .await
+            .context("MiniMax daily brief response body read failed")?;
+        if !status.is_success() {
+            bail!("MiniMax daily brief returned {status}: {response_text}");
+        }
+        let content = parse_chat_completion_content(&response_text)?;
+        Self::brief_from_response_text(
+            date,
+            period_start,
+            period_end,
+            scheduled_for_local,
+            stats,
+            hourly_metrics,
+            comparison,
+            reports,
+            generated_at,
+            &self.config.model,
+            &content,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn brief_from_response_text(
+        date: &str,
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+        scheduled_for_local: &str,
+        stats: &DailyActivityStats,
+        hourly_metrics: &[HourlyActivityMetric],
+        comparison: &DailyComparison,
+        reports: &[InsightReport],
+        generated_at: DateTime<Utc>,
+        model_name: &str,
+        content: &str,
+    ) -> Result<DailyBrief> {
+        let local = LocalDailyBriefReporter.report(
+            date,
+            period_start,
+            period_end,
+            scheduled_for_local,
+            stats,
+            hourly_metrics,
+            comparison,
+            reports,
+            generated_at,
+        )?;
+        let parsed = parse_model_daily_brief_json(content);
+        let mut comparison = comparison.clone();
+        if let Some(explanation) = parsed
+            .as_ref()
+            .and_then(|value| value.comparison_explanation.clone())
+        {
+            comparison.explanation = explanation;
+        }
+
+        Ok(DailyBrief {
+            model_provider: "minimax".into(),
+            model_name: model_name.into(),
+            daily_summary_text: parsed
+                .as_ref()
+                .and_then(|value| value.daily_summary_text.clone())
+                .unwrap_or(local.daily_summary_text),
+            action_trajectory: parsed
+                .as_ref()
+                .and_then(|value| value.action_trajectory.clone())
+                .unwrap_or(local.action_trajectory),
+            raw_summary_json: serde_json::from_str(strip_json_fence(content.trim()))
+                .unwrap_or_else(|_| serde_json::json!({ "content": content.trim() })),
+            comparison,
+            ..local
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct MiniMaxInsightConfig {
     api_key: String,
     base_url: String,
@@ -382,6 +687,25 @@ impl MiniMaxInsightConfig {
         {
             config.max_completion_tokens = value.parse().with_context(|| {
                 format!("MINIMAX_REPORT_MAX_COMPLETION_TOKENS must be an integer, got {value}")
+            })?;
+        }
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn from_daily_env() -> Result<Self> {
+        let api_key = std::env::var("MINIMAX_API_KEY")
+            .context("MINIMAX_API_KEY is required when DAILY_BRIEF_PROVIDER=minimax")?;
+        let base_url = std::env::var("MINIMAX_BASE_URL")
+            .context("MINIMAX_BASE_URL is required when DAILY_BRIEF_PROVIDER=minimax")?;
+        let model = std::env::var("MINIMAX_MODEL").unwrap_or_else(|_| "MiniMax-M3".to_string());
+        let mut config = Self::new(api_key, base_url, model);
+        config.max_completion_tokens = 1400;
+        if let Ok(value) = std::env::var("MINIMAX_DAILY_BRIEF_MAX_COMPLETION_TOKENS")
+            .or_else(|_| std::env::var("MINIMAX_MAX_COMPLETION_TOKENS"))
+        {
+            config.max_completion_tokens = value.parse().with_context(|| {
+                format!("MINIMAX_DAILY_BRIEF_MAX_COMPLETION_TOKENS must be an integer, got {value}")
             })?;
         }
         config.validate()?;
@@ -623,6 +947,14 @@ struct ModelReportJson {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelDailyBriefJson {
+    daily_summary_text: Option<String>,
+    action_trajectory: Option<String>,
+    comparison_explanation: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ChatCompletionResponse {
     choices: Vec<ChatCompletionChoice>,
 }
@@ -702,6 +1034,50 @@ fn window_summary_report_prompt(
     )
 }
 
+fn daily_brief_prompt(
+    date: &str,
+    period_start: DateTime<Utc>,
+    period_end: DateTime<Utc>,
+    stats: &DailyActivityStats,
+    hourly_metrics: &[HourlyActivityMetric],
+    comparison: &DailyComparison,
+    reports: &[InsightReport],
+) -> String {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ReportPromptRow<'a> {
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+        summary_text: &'a str,
+        category_mix: &'a [ActivityCategoryCount],
+        project_hints: &'a [String],
+        evidence_count: usize,
+    }
+
+    let report_rows = reports
+        .iter()
+        .map(|report| ReportPromptRow {
+            period_start: report.period_start,
+            period_end: report.period_end,
+            summary_text: &report.summary_text,
+            category_mix: &report.category_mix,
+            project_hints: &report.project_hints,
+            evidence_count: report.evidence_count,
+        })
+        .collect::<Vec<_>>();
+
+    format!(
+        "Write a neutral daily brief in Chinese. Return JSON only with keys dailySummaryText, actionTrajectory, comparisonExplanation. Do not include advice, praise, criticism, ranking, or value judgment. Avoid words equivalent to productive, wasted, efficient, inefficient, good, bad, should. Describe the desktop-work action trajectory chronologically and use uncertainty when evidence is incomplete. date={}, periodStart={}, periodEnd={}, descriptiveStats={}, hourlyMetrics={}, comparison={}, fiveHourReports={}",
+        date,
+        period_start.to_rfc3339(),
+        period_end.to_rfc3339(),
+        serde_json::to_string(stats).unwrap_or_else(|_| "{}".to_string()),
+        serde_json::to_string(hourly_metrics).unwrap_or_else(|_| "[]".to_string()),
+        serde_json::to_string(comparison).unwrap_or_else(|_| "{}".to_string()),
+        serde_json::to_string(&report_rows).unwrap_or_else(|_| "[]".to_string())
+    )
+}
+
 fn parse_chat_completion_content(response_text: &str) -> Result<String> {
     let response: ChatCompletionResponse =
         serde_json::from_str(response_text).context("MiniMax response was not valid JSON")?;
@@ -715,6 +1091,11 @@ fn parse_chat_completion_content(response_text: &str) -> Result<String> {
 }
 
 fn parse_model_report_json(content: &str) -> Option<ModelReportJson> {
+    let trimmed = strip_json_fence(content.trim());
+    serde_json::from_str(trimmed).ok()
+}
+
+fn parse_model_daily_brief_json(content: &str) -> Option<ModelDailyBriefJson> {
     let trimmed = strip_json_fence(content.trim());
     serde_json::from_str(trimmed).ok()
 }

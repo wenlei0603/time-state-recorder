@@ -5,7 +5,8 @@ use chrono::{DateTime, Utc};
 use tsr_collector::{
     api,
     models::{
-        ActivityCategory, ActivityCategoryCount, CaptureStatus, HighResScreenshotMeta,
+        ActivityCategory, ActivityCategoryCount, CaptureStatus, DailyActivityStats,
+        DailyAppActivity, DailyBrief, DailyComparison, HighResScreenshotMeta, HourlyActivityMetric,
         InsightReport, LifecycleType, ScreenshotMeta, VisualObservation, VisualSummary,
         VisualTrajectoryPoint, VisualWindowSummary, WindowSnapshot,
     },
@@ -1004,6 +1005,106 @@ async fn serves_insight_reports() {
 }
 
 #[tokio::test]
+async fn serves_date_scoped_insight_reports_chronologically() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    for (start, end, summary) in [
+        (
+            "2026-05-23T19:00:00Z",
+            "2026-05-24T00:30:00Z",
+            "跨入 5 月 24 日的报告。",
+        ),
+        (
+            "2026-05-24T05:00:00Z",
+            "2026-05-24T10:00:00Z",
+            "5 月 24 日上午报告。",
+        ),
+        (
+            "2026-05-25T00:30:00Z",
+            "2026-05-25T05:00:00Z",
+            "下一日报告。",
+        ),
+    ] {
+        store
+            .insert_insight_report(&sample_insight_report(0, start, end, summary))
+            .unwrap();
+    }
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!(
+        "http://{addr}/api/insight-reports?date=2026-05-24&kind=5h&limit=10"
+    ))
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["reports"].as_array().unwrap().len(), 2);
+    assert_eq!(body["reports"][0]["summaryText"], "跨入 5 月 24 日的报告。");
+    assert_eq!(body["reports"][1]["summaryText"], "5 月 24 日上午报告。");
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn serves_daily_brief_response_with_stats_and_same_day_reports() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let first_report_id = store
+        .insert_insight_report(&sample_insight_report(
+            0,
+            "2026-05-24T05:00:00Z",
+            "2026-05-24T10:00:00Z",
+            "上午报告。",
+        ))
+        .unwrap();
+    let second_report_id = store
+        .insert_insight_report(&sample_insight_report(
+            0,
+            "2026-05-24T10:00:00Z",
+            "2026-05-24T15:00:00Z",
+            "下午报告。",
+        ))
+        .unwrap();
+    let mut brief = sample_daily_brief("2026-05-24");
+    brief.five_hour_report_ids = vec![first_report_id, second_report_id];
+    brief.hourly_metrics[0].five_hour_report_ids = vec![first_report_id];
+    store.insert_daily_brief(&brief).unwrap();
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!("http://{addr}/api/daily-brief?date=2026-05-24"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["date"], "2026-05-24");
+    assert_eq!(body["status"], "complete");
+    assert_eq!(
+        body["brief"]["dailySummaryText"],
+        "当天以编码和阅读窗口为主。"
+    );
+    assert_eq!(body["descriptiveStats"]["activeSeconds"], 3600);
+    assert_eq!(body["hourlyMetrics"][0]["hour"], 9);
+    assert_eq!(body["fiveHourReports"].as_array().unwrap().len(), 2);
+    assert_eq!(body["fiveHourReports"][0]["summaryText"], "上午报告。");
+
+    server.abort();
+}
+
+#[tokio::test]
 async fn serves_analysis_status_feedback() {
     let store = Store::open_memory().unwrap();
     store.init().unwrap();
@@ -1097,6 +1198,105 @@ fn insert(store: &mut Store, session_id: &str, ts: &str, hwnd: i64, app: &str, t
             },
         )
         .unwrap();
+}
+
+fn sample_insight_report(id: i64, start: &str, end: &str, summary: &str) -> InsightReport {
+    InsightReport {
+        id,
+        period_start: ts(start),
+        period_end: ts(end),
+        generated_at: ts(end),
+        report_kind: "5h".into(),
+        model_provider: "local_insight".into(),
+        model_name: "trajectory-v1".into(),
+        summary_text: summary.into(),
+        category_mix: vec![ActivityCategoryCount {
+            activity_category: ActivityCategory::Coding,
+            count: 1,
+        }],
+        project_hints: vec!["Time State Recorder".into()],
+        evidence_count: 1,
+        error: None,
+    }
+}
+
+fn sample_daily_brief(date: &str) -> DailyBrief {
+    DailyBrief {
+        id: 0,
+        date: date.into(),
+        period_start: ts("2026-05-24T00:00:00Z"),
+        period_end: ts("2026-05-25T00:00:00Z"),
+        generated_at: ts("2026-05-24T15:40:05Z"),
+        scheduled_for_local: "23:40".into(),
+        model_provider: "local_insight".into(),
+        model_name: "daily-brief-local-v1".into(),
+        prompt_version: "daily-brief-v1".into(),
+        status: "complete".into(),
+        descriptive_stats: DailyActivityStats {
+            date: date.into(),
+            period_start: ts("2026-05-24T00:00:00Z"),
+            period_end: ts("2026-05-25T00:00:00Z"),
+            active_seconds: 3600,
+            active_hours: 1.0,
+            window_event_count: 4,
+            switch_count: 2,
+            distinct_app_count: 2,
+            top_apps: vec![DailyAppActivity {
+                process_name: "Code.exe".into(),
+                active_seconds: 2400,
+                share: 0.67,
+            }],
+            category_mix: vec![ActivityCategoryCount {
+                activity_category: ActivityCategory::Coding,
+                count: 2,
+            }],
+            input_chars: 120,
+            input_events: 140,
+            screenshot_count: 6,
+            high_res_screenshot_count: 3,
+            visual_window_count: 4,
+            five_hour_report_count: 2,
+            first_activity_at: Some(ts("2026-05-24T05:00:00Z")),
+            last_activity_at: Some(ts("2026-05-24T15:00:00Z")),
+        },
+        hourly_metrics: vec![HourlyActivityMetric {
+            hour: 9,
+            start_at: ts("2026-05-24T09:00:00Z"),
+            end_at: ts("2026-05-24T10:00:00Z"),
+            active_seconds: 1800,
+            active_ratio: 0.5,
+            window_event_count: 2,
+            switch_count: 1,
+            distinct_app_count: 2,
+            dominant_app: Some("Code.exe".into()),
+            dominant_category: ActivityCategory::Coding,
+            input_chars: 60,
+            screenshot_count: 2,
+            high_res_screenshot_count: 1,
+            visual_window_count: 1,
+            five_hour_report_ids: vec![],
+        }],
+        comparison: DailyComparison {
+            baseline_days: 7,
+            compared_dates: vec!["2026-05-23".into()],
+            active_seconds_delta: 600,
+            switches_per_hour_delta: 0.2,
+            input_chars_delta: 120,
+            screenshot_coverage_delta: 0.1,
+            dominant_category_shift: Some("research -> coding".into()),
+            start_time_shift_minutes: Some(-10),
+            end_time_shift_minutes: Some(20),
+            explanation: "编码窗口较前一日增加。".into(),
+        },
+        five_hour_report_ids: vec![],
+        daily_summary_text: "当天以编码和阅读窗口为主。".into(),
+        action_trajectory: "上午出现编码窗口，下午出现阅读窗口。".into(),
+        raw_summary_json: serde_json::json!({
+            "dailySummaryText": "当天以编码和阅读窗口为主。",
+            "actionTrajectory": "上午出现编码窗口，下午出现阅读窗口。"
+        }),
+        error: None,
+    }
 }
 
 fn ts(value: &str) -> DateTime<Utc> {

@@ -1,13 +1,17 @@
-use std::path::Path;
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use anyhow::{Result, ensure};
 use chrono::{DateTime, NaiveDate, Utc};
-use rusqlite::{Connection, Transaction, params, types::Type};
+use rusqlite::{Connection, OptionalExtension, Transaction, params, types::Type};
 use uuid::Uuid;
 
 use crate::models::{
     ActivityCategory, ActivityCategoryCount, AppScreenshotCount, BlockerHit, CaptureStatus,
-    HighResScreenshotMeta, ImageRetentionStats, InsightReport, LifecycleEvent, LifecycleType,
+    DailyActivityStats, DailyAppActivity, DailyBrief, DailyComparison, HighResScreenshotMeta,
+    HourlyActivityMetric, ImageRetentionStats, InsightReport, LifecycleEvent, LifecycleType,
     ScreenshotMeta, ScreenshotSkippedReasonCount, ScreenshotSummary, StoredWindowEvent,
     VisualObservation, VisualSummary, VisualTrajectoryPoint, VisualWindowSummary, WindowSnapshot,
 };
@@ -38,6 +42,14 @@ pub struct StoredScreenshotFile {
     pub captured_at: DateTime<Utc>,
     pub file_path: String,
     pub file_size_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActivitySlice {
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    seconds: i64,
+    app: String,
 }
 
 impl Store {
@@ -241,6 +253,33 @@ impl Store {
               error TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_insight_reports_period ON insight_reports(period_start, period_end);
+            CREATE INDEX IF NOT EXISTS idx_insight_reports_kind_period
+              ON insight_reports(report_kind, period_start, period_end);
+
+            CREATE TABLE IF NOT EXISTS daily_briefs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              date TEXT NOT NULL,
+              period_start TEXT NOT NULL,
+              period_end TEXT NOT NULL,
+              generated_at TEXT NOT NULL,
+              scheduled_for_local TEXT NOT NULL,
+              model_provider TEXT NOT NULL,
+              model_name TEXT NOT NULL,
+              prompt_version TEXT NOT NULL,
+              status TEXT NOT NULL,
+              descriptive_stats_json TEXT NOT NULL,
+              hourly_metrics_json TEXT NOT NULL,
+              comparison_json TEXT NOT NULL,
+              five_hour_report_ids_json TEXT NOT NULL,
+              daily_summary_text TEXT NOT NULL,
+              action_trajectory TEXT NOT NULL,
+              raw_summary_json TEXT NOT NULL,
+              error TEXT
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_briefs_date_schedule
+              ON daily_briefs(date, scheduled_for_local);
+            CREATE INDEX IF NOT EXISTS idx_daily_briefs_generated
+              ON daily_briefs(generated_at);
 
             CREATE TABLE IF NOT EXISTS input_events (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1265,6 +1304,528 @@ impl Store {
         Ok(items)
     }
 
+    pub fn list_insight_reports_between(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        kind: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<InsightReport>> {
+        let start = start.to_rfc3339();
+        let end = end.to_rfc3339();
+        let limit = limit as i64;
+        let mut items = Vec::new();
+
+        if let Some(kind) = kind {
+            let mut statement = self.conn.prepare(
+                r#"
+                SELECT id, period_start, period_end, generated_at, report_kind, model_provider,
+                       model_name, summary_text, category_mix_json, project_hints_json,
+                       evidence_count, error
+                FROM insight_reports
+                WHERE period_start < ?2
+                  AND period_end > ?1
+                  AND report_kind = ?3
+                ORDER BY period_start ASC, id ASC
+                LIMIT ?4
+                "#,
+            )?;
+            let rows =
+                statement.query_map(params![start, end, kind, limit], map_insight_report_row)?;
+            for row in rows {
+                items.push(row?);
+            }
+        } else {
+            let mut statement = self.conn.prepare(
+                r#"
+                SELECT id, period_start, period_end, generated_at, report_kind, model_provider,
+                       model_name, summary_text, category_mix_json, project_hints_json,
+                       evidence_count, error
+                FROM insight_reports
+                WHERE period_start < ?2
+                  AND period_end > ?1
+                ORDER BY period_start ASC, id ASC
+                LIMIT ?3
+                "#,
+            )?;
+            let rows = statement.query_map(params![start, end, limit], map_insight_report_row)?;
+            for row in rows {
+                items.push(row?);
+            }
+        }
+
+        Ok(items)
+    }
+
+    pub fn insert_daily_brief(&mut self, brief: &DailyBrief) -> Result<i64> {
+        if let Some(existing_id) = self
+            .conn
+            .query_row(
+                "SELECT id FROM daily_briefs WHERE date = ?1 AND scheduled_for_local = ?2",
+                params![&brief.date, &brief.scheduled_for_local],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+        {
+            self.conn.execute(
+                r#"
+                UPDATE daily_briefs
+                SET period_start = ?1,
+                    period_end = ?2,
+                    generated_at = ?3,
+                    model_provider = ?4,
+                    model_name = ?5,
+                    prompt_version = ?6,
+                    status = ?7,
+                    descriptive_stats_json = ?8,
+                    hourly_metrics_json = ?9,
+                    comparison_json = ?10,
+                    five_hour_report_ids_json = ?11,
+                    daily_summary_text = ?12,
+                    action_trajectory = ?13,
+                    raw_summary_json = ?14,
+                    error = ?15
+                WHERE id = ?16
+                "#,
+                params![
+                    brief.period_start.to_rfc3339(),
+                    brief.period_end.to_rfc3339(),
+                    brief.generated_at.to_rfc3339(),
+                    &brief.model_provider,
+                    &brief.model_name,
+                    &brief.prompt_version,
+                    &brief.status,
+                    serde_json::to_string(&brief.descriptive_stats)?,
+                    serde_json::to_string(&brief.hourly_metrics)?,
+                    serde_json::to_string(&brief.comparison)?,
+                    serde_json::to_string(&brief.five_hour_report_ids)?,
+                    &brief.daily_summary_text,
+                    &brief.action_trajectory,
+                    serde_json::to_string(&brief.raw_summary_json)?,
+                    brief.error.as_deref(),
+                    existing_id,
+                ],
+            )?;
+            return Ok(existing_id);
+        }
+
+        self.conn.execute(
+            r#"
+            INSERT INTO daily_briefs
+              (date, period_start, period_end, generated_at, scheduled_for_local,
+               model_provider, model_name, prompt_version, status, descriptive_stats_json,
+               hourly_metrics_json, comparison_json, five_hour_report_ids_json,
+               daily_summary_text, action_trajectory, raw_summary_json, error)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            "#,
+            params![
+                &brief.date,
+                brief.period_start.to_rfc3339(),
+                brief.period_end.to_rfc3339(),
+                brief.generated_at.to_rfc3339(),
+                &brief.scheduled_for_local,
+                &brief.model_provider,
+                &brief.model_name,
+                &brief.prompt_version,
+                &brief.status,
+                serde_json::to_string(&brief.descriptive_stats)?,
+                serde_json::to_string(&brief.hourly_metrics)?,
+                serde_json::to_string(&brief.comparison)?,
+                serde_json::to_string(&brief.five_hour_report_ids)?,
+                &brief.daily_summary_text,
+                &brief.action_trajectory,
+                serde_json::to_string(&brief.raw_summary_json)?,
+                brief.error.as_deref(),
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn upsert_daily_brief_error(
+        &mut self,
+        mut brief: DailyBrief,
+        error: impl Into<String>,
+    ) -> Result<i64> {
+        brief.status = "error".into();
+        brief.error = Some(error.into());
+        self.insert_daily_brief(&brief)
+    }
+
+    pub fn get_daily_brief_by_date(
+        &self,
+        date: &str,
+        scheduled_for_local: &str,
+    ) -> Result<Option<DailyBrief>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT id, date, period_start, period_end, generated_at, scheduled_for_local,
+                   model_provider, model_name, prompt_version, status, descriptive_stats_json,
+                   hourly_metrics_json, comparison_json, five_hour_report_ids_json,
+                   daily_summary_text, action_trajectory, raw_summary_json, error
+            FROM daily_briefs
+            WHERE date = ?1 AND scheduled_for_local = ?2
+            ORDER BY generated_at DESC, id DESC
+            LIMIT 1
+            "#,
+        )?;
+        statement
+            .query_row(params![date, scheduled_for_local], map_daily_brief_row)
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn latest_daily_brief(&self) -> Result<Option<DailyBrief>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT id, date, period_start, period_end, generated_at, scheduled_for_local,
+                   model_provider, model_name, prompt_version, status, descriptive_stats_json,
+                   hourly_metrics_json, comparison_json, five_hour_report_ids_json,
+                   daily_summary_text, action_trajectory, raw_summary_json, error
+            FROM daily_briefs
+            ORDER BY generated_at DESC, id DESC
+            LIMIT 1
+            "#,
+        )?;
+        statement
+            .query_row([], map_daily_brief_row)
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn daily_brief_exists(&self, date: &str, scheduled_for_local: &str) -> Result<bool> {
+        let exists = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM daily_briefs WHERE date = ?1 AND scheduled_for_local = ?2 LIMIT 1",
+                params![date, scheduled_for_local],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        Ok(exists)
+    }
+
+    pub fn build_daily_activity_stats(
+        &self,
+        date: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        five_hour_reports: &[InsightReport],
+    ) -> Result<DailyActivityStats> {
+        let slices = self.window_activity_slices(start, end)?;
+        let mut app_seconds: HashMap<String, i64> = HashMap::new();
+        let mut distinct_apps = HashSet::new();
+        let mut first_activity_at: Option<DateTime<Utc>> = None;
+        let mut last_activity_at: Option<DateTime<Utc>> = None;
+        let mut active_seconds = 0;
+
+        for slice in &slices {
+            active_seconds += slice.seconds;
+            distinct_apps.insert(slice.app.clone());
+            *app_seconds.entry(slice.app.clone()).or_default() += slice.seconds;
+            first_activity_at =
+                Some(first_activity_at.map_or(slice.start, |value| value.min(slice.start)));
+            last_activity_at =
+                Some(last_activity_at.map_or(slice.end, |value| value.max(slice.end)));
+        }
+
+        let mut top_apps = app_seconds
+            .into_iter()
+            .map(|(process_name, seconds)| DailyAppActivity {
+                process_name,
+                active_seconds: seconds,
+                share: if active_seconds > 0 {
+                    seconds as f64 / active_seconds as f64
+                } else {
+                    0.0
+                },
+            })
+            .collect::<Vec<_>>();
+        top_apps.sort_by(|left, right| {
+            right
+                .active_seconds
+                .cmp(&left.active_seconds)
+                .then_with(|| left.process_name.cmp(&right.process_name))
+        });
+        top_apps.truncate(5);
+
+        let screenshot_count =
+            self.count_rows_between("screenshot_thumbnails", "captured_at", start, end)?;
+        let high_res_screenshot_count =
+            self.count_rows_between("high_res_screenshots", "captured_at", start, end)?;
+        let visual_window_count =
+            self.count_rows_between("visual_window_summaries", "window_start", start, end)?;
+        let (input_events, input_chars) = self.input_counts_between(start, end)?;
+        let category_mix = category_mix_from_reports(five_hour_reports);
+
+        Ok(DailyActivityStats {
+            date: date.into(),
+            period_start: start,
+            period_end: end,
+            active_seconds,
+            active_hours: active_seconds as f64 / 3600.0,
+            window_event_count: self.count_window_events_between(start, end)?,
+            switch_count: slices
+                .windows(2)
+                .filter(|pair| pair[0].app != pair[1].app)
+                .count(),
+            distinct_app_count: distinct_apps.len(),
+            top_apps,
+            category_mix,
+            input_chars,
+            input_events,
+            screenshot_count,
+            high_res_screenshot_count,
+            visual_window_count,
+            five_hour_report_count: five_hour_reports.len(),
+            first_activity_at,
+            last_activity_at,
+        })
+    }
+
+    pub fn build_hourly_activity_metrics(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        five_hour_reports: &[InsightReport],
+    ) -> Result<Vec<HourlyActivityMetric>> {
+        let slices = self.window_activity_slices(start, end)?;
+        let mut metrics = Vec::with_capacity(24);
+        for hour in 0..24 {
+            let hour_start = start + chrono::Duration::hours(hour);
+            let hour_end = (hour_start + chrono::Duration::hours(1)).min(end);
+            let hour_slices = slices
+                .iter()
+                .filter(|slice| slice.start < hour_end && slice.end > hour_start)
+                .collect::<Vec<_>>();
+            let mut active_seconds = 0;
+            let mut app_seconds: HashMap<String, i64> = HashMap::new();
+            let mut distinct_apps = HashSet::new();
+            for slice in &hour_slices {
+                let overlap_start = slice.start.max(hour_start);
+                let overlap_end = slice.end.min(hour_end);
+                let seconds = (overlap_end - overlap_start).num_seconds().max(0);
+                active_seconds += seconds;
+                distinct_apps.insert(slice.app.clone());
+                *app_seconds.entry(slice.app.clone()).or_default() += seconds;
+            }
+            let dominant_app = app_seconds
+                .into_iter()
+                .max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(&left.0)))
+                .map(|(app, _)| app);
+            let (_input_events, input_chars) = self.input_counts_between(hour_start, hour_end)?;
+            let report_ids = five_hour_reports
+                .iter()
+                .filter(|report| report.period_start < hour_end && report.period_end > hour_start)
+                .map(|report| report.id)
+                .collect::<Vec<_>>();
+
+            metrics.push(HourlyActivityMetric {
+                hour: hour as u8,
+                start_at: hour_start,
+                end_at: hour_end,
+                active_seconds: active_seconds.min(3600),
+                active_ratio: (active_seconds.min(3600) as f64 / 3600.0).clamp(0.0, 1.0),
+                window_event_count: self.count_window_events_between(hour_start, hour_end)?,
+                switch_count: hour_slices
+                    .windows(2)
+                    .filter(|pair| pair[0].app != pair[1].app)
+                    .count(),
+                distinct_app_count: distinct_apps.len(),
+                dominant_app,
+                dominant_category: dominant_category_from_reports(five_hour_reports, &report_ids),
+                input_chars,
+                screenshot_count: self.count_rows_between(
+                    "screenshot_thumbnails",
+                    "captured_at",
+                    hour_start,
+                    hour_end,
+                )?,
+                high_res_screenshot_count: self.count_rows_between(
+                    "high_res_screenshots",
+                    "captured_at",
+                    hour_start,
+                    hour_end,
+                )?,
+                visual_window_count: self.count_rows_between(
+                    "visual_window_summaries",
+                    "window_start",
+                    hour_start,
+                    hour_end,
+                )?,
+                five_hour_report_ids: report_ids,
+            });
+        }
+        Ok(metrics)
+    }
+
+    pub fn build_daily_comparison(
+        &self,
+        date: &str,
+        stats: &DailyActivityStats,
+    ) -> Result<DailyComparison> {
+        Ok(DailyComparison {
+            baseline_days: 0,
+            compared_dates: Vec::new(),
+            active_seconds_delta: stats.active_seconds,
+            switches_per_hour_delta: if stats.active_hours > 0.0 {
+                stats.switch_count as f64 / stats.active_hours
+            } else {
+                0.0
+            },
+            input_chars_delta: stats.input_chars as i64,
+            screenshot_coverage_delta: stats.screenshot_count as f64,
+            dominant_category_shift: stats
+                .category_mix
+                .first()
+                .map(|category| format!("unknown -> {}", category.activity_category.as_str())),
+            start_time_shift_minutes: None,
+            end_time_shift_minutes: None,
+            explanation: format!("{date} 暂无足够历史基线，当前显示当日指标本身。"),
+        })
+    }
+
+    fn window_activity_slices(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Vec<ActivitySlice>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT
+              r.id AS raw_event_id,
+              r.session_id,
+              r.event_ts,
+              w.hwnd,
+              w.pid,
+              w.process_name,
+              w.exe_path_hash,
+              w.window_title,
+              w.capture_status
+            FROM raw_events r
+            JOIN window_events w ON w.raw_event_id = r.id
+            WHERE r.event_type = 'window_focus'
+              AND r.event_ts < ?1
+            ORDER BY r.session_id ASC, r.event_ts ASC, r.id ASC
+            "#,
+        )?;
+        let rows = statement.query_map(params![end.to_rfc3339()], |row| {
+            let event_ts: String = row.get(2)?;
+            let capture_status: String = row.get(8)?;
+            Ok(StoredWindowEvent {
+                raw_event_id: row.get(0)?,
+                session_id: row.get(1)?,
+                event_ts: parse_ts(&event_ts)?,
+                hwnd: row.get(3)?,
+                pid: row.get(4)?,
+                process_name: row.get(5)?,
+                exe_path_hash: row.get(6)?,
+                window_title: row.get(7)?,
+                capture_status: CaptureStatus::from_db(&capture_status),
+            })
+        })?;
+        let mut events = Vec::new();
+        for row in rows {
+            events.push(row?);
+        }
+
+        let mut slices = Vec::new();
+        for (index, event) in events.iter().enumerate() {
+            if event.capture_status != CaptureStatus::Ok {
+                continue;
+            }
+            let next_at = events
+                .iter()
+                .skip(index + 1)
+                .find(|candidate| candidate.session_id == event.session_id)
+                .map(|candidate| candidate.event_ts)
+                .unwrap_or(end);
+            let slice_start = event.event_ts.max(start);
+            let slice_end = next_at.min(end);
+            if slice_end > slice_start {
+                slices.push(ActivitySlice {
+                    start: slice_start,
+                    end: slice_end,
+                    seconds: (slice_end - slice_start).num_seconds().max(0),
+                    app: event.process_name.clone(),
+                });
+            }
+        }
+        slices.sort_by(|left, right| {
+            left.start
+                .cmp(&right.start)
+                .then_with(|| left.app.cmp(&right.app))
+        });
+        Ok(slices)
+    }
+
+    fn count_window_events_between(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<usize> {
+        let count: i64 = self.conn.query_row(
+            r#"
+            SELECT COUNT(*)
+            FROM raw_events r
+            JOIN window_events w ON w.raw_event_id = r.id
+            WHERE r.event_type = 'window_focus'
+              AND r.event_ts >= ?1
+              AND r.event_ts < ?2
+              AND w.capture_status = 'ok'
+            "#,
+            params![start.to_rfc3339(), end.to_rfc3339()],
+            |row| row.get(0),
+        )?;
+        Ok(count.max(0) as usize)
+    }
+
+    fn count_rows_between(
+        &self,
+        table: &str,
+        column: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<usize> {
+        let sql = match (table, column) {
+            ("screenshot_thumbnails", "captured_at") => {
+                "SELECT COUNT(*) FROM screenshot_thumbnails WHERE captured_at >= ?1 AND captured_at < ?2 AND capture_status = 'ok'"
+            }
+            ("high_res_screenshots", "captured_at") => {
+                "SELECT COUNT(*) FROM high_res_screenshots WHERE captured_at >= ?1 AND captured_at < ?2 AND capture_status = 'ok'"
+            }
+            ("visual_window_summaries", "window_start") => {
+                "SELECT COUNT(*) FROM visual_window_summaries WHERE window_start >= ?1 AND window_start < ?2 AND error IS NULL"
+            }
+            _ => return Ok(0),
+        };
+        let count: i64 =
+            self.conn
+                .query_row(sql, params![start.to_rfc3339(), end.to_rfc3339()], |row| {
+                    row.get(0)
+                })?;
+        Ok(count.max(0) as usize)
+    }
+
+    fn input_counts_between(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<(usize, usize)> {
+        let (events, chars): (i64, i64) = self.conn.query_row(
+            r#"
+            SELECT COUNT(*),
+                   COALESCE(SUM(CASE WHEN character IS NULL THEN 0 ELSE length(character) END), 0)
+            FROM input_events
+            WHERE event_ts >= ?1
+              AND event_ts < ?2
+            "#,
+            params![start.to_rfc3339(), end.to_rfc3339()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok((events.max(0) as usize, chars.max(0) as usize))
+    }
+
     pub fn insert_input_segment(
         &mut self,
         segment: &crate::models::TextSegment,
@@ -1831,6 +2392,77 @@ fn map_insight_report_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InsightRe
     })
 }
 
+fn map_daily_brief_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DailyBrief> {
+    let period_start: String = row.get(2)?;
+    let period_end: String = row.get(3)?;
+    let generated_at: String = row.get(4)?;
+    let descriptive_stats_json: String = row.get(10)?;
+    let hourly_metrics_json: String = row.get(11)?;
+    let comparison_json: String = row.get(12)?;
+    let five_hour_report_ids_json: String = row.get(13)?;
+    let raw_summary_json: String = row.get(16)?;
+
+    Ok(DailyBrief {
+        id: row.get(0)?,
+        date: row.get(1)?,
+        period_start: parse_ts(&period_start)?,
+        period_end: parse_ts(&period_end)?,
+        generated_at: parse_ts(&generated_at)?,
+        scheduled_for_local: row.get(5)?,
+        model_provider: row.get(6)?,
+        model_name: row.get(7)?,
+        prompt_version: row.get(8)?,
+        status: row.get(9)?,
+        descriptive_stats: parse_daily_activity_stats(&descriptive_stats_json)?,
+        hourly_metrics: parse_hourly_activity_metrics(&hourly_metrics_json)?,
+        comparison: parse_daily_comparison(&comparison_json)?,
+        five_hour_report_ids: parse_i64_vec(&five_hour_report_ids_json)?,
+        daily_summary_text: row.get(14)?,
+        action_trajectory: row.get(15)?,
+        raw_summary_json: parse_json(&raw_summary_json)?,
+        error: row.get(17)?,
+    })
+}
+
+fn category_mix_from_reports(reports: &[InsightReport]) -> Vec<ActivityCategoryCount> {
+    let mut counts: Vec<ActivityCategoryCount> = Vec::new();
+    for report in reports {
+        for item in &report.category_mix {
+            if let Some(existing) = counts
+                .iter_mut()
+                .find(|existing| existing.activity_category == item.activity_category)
+            {
+                existing.count += item.count;
+            } else {
+                counts.push(item.clone());
+            }
+        }
+    }
+    counts.sort_by(|left, right| {
+        right.count.cmp(&left.count).then_with(|| {
+            left.activity_category
+                .as_str()
+                .cmp(right.activity_category.as_str())
+        })
+    });
+    counts
+}
+
+fn dominant_category_from_reports(
+    reports: &[InsightReport],
+    report_ids: &[i64],
+) -> ActivityCategory {
+    let filtered = reports
+        .iter()
+        .filter(|report| report_ids.contains(&report.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    category_mix_from_reports(&filtered)
+        .first()
+        .map(|item| item.activity_category.clone())
+        .unwrap_or(ActivityCategory::Unknown)
+}
+
 pub(crate) fn parse_ts(value: &str) -> rusqlite::Result<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .map(|dt| dt.with_timezone(&Utc))
@@ -1873,6 +2505,21 @@ fn parse_visual_trajectory(value: &str) -> rusqlite::Result<Vec<VisualTrajectory
 }
 
 fn parse_category_mix(value: &str) -> rusqlite::Result<Vec<ActivityCategoryCount>> {
+    serde_json::from_str(value)
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))
+}
+
+fn parse_daily_activity_stats(value: &str) -> rusqlite::Result<DailyActivityStats> {
+    serde_json::from_str(value)
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))
+}
+
+fn parse_hourly_activity_metrics(value: &str) -> rusqlite::Result<Vec<HourlyActivityMetric>> {
+    serde_json::from_str(value)
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))
+}
+
+fn parse_daily_comparison(value: &str) -> rusqlite::Result<DailyComparison> {
     serde_json::from_str(value)
         .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))
 }

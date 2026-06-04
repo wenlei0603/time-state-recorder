@@ -1125,6 +1125,146 @@ td:nth-child(2) {
   color: #8a6d10;
 }
 
+/* Daily Brief */
+
+.dailyBriefPanel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 92%, white);
+  padding: 24px;
+  box-shadow: var(--shadow-soft);
+}
+
+.dailyBriefHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.dailyBriefHeader h2 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 1.45rem;
+}
+
+.dailyBriefHeader p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.dailyBriefStats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.dailyBriefMetric {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-muted);
+}
+
+.dailyBriefMetric strong,
+.dailyBriefMetric span {
+  display: block;
+}
+
+.dailyBriefMetric strong {
+  font-family: var(--font-serif);
+  font-size: 1rem;
+}
+
+.dailyBriefMetric div span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.dailyBriefSection {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 16px;
+  margin-top: 16px;
+}
+
+.dailyBriefSection h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-family: var(--font-serif);
+  font-size: 1rem;
+}
+
+.dailyBriefSection p {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.65;
+}
+
+.dailyBriefLead {
+  font-weight: 700;
+  margin-bottom: 8px !important;
+}
+
+.hourlyHeatmap {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(18px, 1fr));
+  gap: 4px;
+}
+
+.heatCell {
+  min-height: 48px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--accent) calc(var(--heat, 0) * 72%),
+    var(--surface-muted)
+  );
+  color: var(--ink);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 4px 2px;
+  font-size: 0.62rem;
+}
+
+.dailyReportList {
+  display: grid;
+  gap: 10px;
+}
+
+.dailyReportRow {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--surface) 88%, var(--surface-muted));
+}
+
+.dailyReportRow div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.dailyReportRow strong {
+  font-family: var(--font-serif);
+}
+
+.dailyReportRow span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
 /* Daily Tracking */
 
 .dailyTracking {

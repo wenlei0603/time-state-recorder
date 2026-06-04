@@ -152,6 +152,128 @@ function insightReportsResponse() {
   });
 }
 
+function dailyBriefResponse() {
+  return jsonResponse({
+    date: "2026-05-24",
+    status: "complete",
+    nextRunAt: "2026-05-24T15:40:00Z",
+    brief: {
+      id: 5,
+      date: "2026-05-24",
+      periodStart: "2026-05-24T00:00:00Z",
+      periodEnd: "2026-05-25T00:00:00Z",
+      generatedAt: "2026-05-24T15:40:05Z",
+      scheduledForLocal: "23:40",
+      modelProvider: "local_insight",
+      modelName: "daily-brief-local-v1",
+      promptVersion: "daily-brief-v1",
+      status: "complete",
+      descriptiveStats: dailyStats(),
+      hourlyMetrics: [hourlyMetric()],
+      comparison: dailyComparison(),
+      fiveHourReportIds: [2, 3],
+      dailySummaryText: "当天以编码和阅读窗口为主。",
+      actionTrajectory: "上午出现编码窗口，下午出现阅读窗口。",
+      rawSummaryJson: {
+        dailySummaryText: "当天以编码和阅读窗口为主。",
+        actionTrajectory: "上午出现编码窗口，下午出现阅读窗口。"
+      },
+      error: null
+    },
+    fiveHourReports: [
+      {
+        id: 2,
+        periodStart: "2026-05-24T05:00:00Z",
+        periodEnd: "2026-05-24T10:00:00Z",
+        generatedAt: "2026-05-24T10:00:06Z",
+        reportKind: "5h",
+        modelProvider: "local_insight",
+        modelName: "trajectory-v1",
+        summaryText: "上午报告。",
+        categoryMix: [{ activityCategory: "coding", count: 9 }],
+        projectHints: ["Time State Recorder"],
+        evidenceCount: 12,
+        error: null
+      },
+      {
+        id: 3,
+        periodStart: "2026-05-24T10:00:00Z",
+        periodEnd: "2026-05-24T15:00:00Z",
+        generatedAt: "2026-05-24T15:00:06Z",
+        reportKind: "5h",
+        modelProvider: "local_insight",
+        modelName: "trajectory-v1",
+        summaryText: "下午报告。",
+        categoryMix: [{ activityCategory: "research", count: 4 }],
+        projectHints: ["AMR reading"],
+        evidenceCount: 8,
+        error: null
+      }
+    ],
+    descriptiveStats: dailyStats(),
+    hourlyMetrics: [hourlyMetric()],
+    comparison: dailyComparison()
+  });
+}
+
+function dailyStats() {
+  return {
+    date: "2026-05-24",
+    periodStart: "2026-05-24T00:00:00Z",
+    periodEnd: "2026-05-25T00:00:00Z",
+    activeSeconds: 3600,
+    activeHours: 1,
+    windowEventCount: 4,
+    switchCount: 2,
+    distinctAppCount: 2,
+    topApps: [{ processName: "Code.exe", activeSeconds: 2400, share: 0.67 }],
+    categoryMix: [{ activityCategory: "coding", count: 2 }],
+    inputChars: 120,
+    inputEvents: 140,
+    screenshotCount: 6,
+    highResScreenshotCount: 3,
+    visualWindowCount: 4,
+    fiveHourReportCount: 2,
+    firstActivityAt: "2026-05-24T05:00:00Z",
+    lastActivityAt: "2026-05-24T15:00:00Z"
+  };
+}
+
+function hourlyMetric() {
+  return {
+    hour: 9,
+    startAt: "2026-05-24T09:00:00Z",
+    endAt: "2026-05-24T10:00:00Z",
+    activeSeconds: 1800,
+    activeRatio: 0.5,
+    windowEventCount: 2,
+    switchCount: 1,
+    distinctAppCount: 2,
+    dominantApp: "Code.exe",
+    dominantCategory: "coding",
+    inputChars: 60,
+    screenshotCount: 2,
+    highResScreenshotCount: 1,
+    visualWindowCount: 1,
+    fiveHourReportIds: [2]
+  };
+}
+
+function dailyComparison() {
+  return {
+    baselineDays: 7,
+    comparedDates: ["2026-05-23"],
+    activeSecondsDelta: 600,
+    switchesPerHourDelta: 0.2,
+    inputCharsDelta: 120,
+    screenshotCoverageDelta: 0.1,
+    dominantCategoryShift: "research -> coding",
+    startTimeShiftMinutes: -10,
+    endTimeShiftMinutes: 20,
+    explanation: "编码窗口较前一日增加。"
+  };
+}
+
 function jsonResponse(body: unknown) {
   return {
     ok: true,
@@ -437,7 +559,7 @@ describe("App", () => {
       await screen.findByRole("region", { name: /review notes/i })
     ).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Review Notes" })).toBeInTheDocument();
-    expect(screen.getByText(/12 windows/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/12 windows/i).length).toBeGreaterThan(0);
     expect(screen.queryByText("Focused Overpayment analysis.")).not.toBeInTheDocument();
     expect(screen.queryByText("Focused coding work.")).not.toBeInTheDocument();
     expect(screen.queryByText(/5小时工作轨迹/)).not.toBeInTheDocument();
@@ -450,6 +572,34 @@ describe("App", () => {
     expect(await screen.findByText(/Low switching/)).toBeInTheDocument();
     expect((await screen.findAllByText(/教学协调阶段/)).length).toBeGreaterThan(0);
     expect(screen.queryByText(/```json/)).not.toBeInTheDocument();
+  });
+
+  it("shows backend Daily Brief stats while hiding generated narrative until raw mode", async () => {
+    const fetcher = vi.fn(liveDataResponse);
+    vi.stubGlobal("fetch", fetcher);
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("region", { name: /daily brief/i })
+    ).toBeInTheDocument();
+    expect(screen.getByText(/1.0h active/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 reports/i)).toBeInTheDocument();
+    expect(screen.getByText(/09:00/)).toBeInTheDocument();
+    expect(screen.queryByText("当天以编码和阅读窗口为主。")).not.toBeInTheDocument();
+    expect(screen.queryByText("上午报告。")).not.toBeInTheDocument();
+
+    expect(
+      fetcher.mock.calls.some(([input]) =>
+        String(input).startsWith("/api/daily-brief?date=")
+      )
+    ).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
+
+    expect(await screen.findByText("当天以编码和阅读窗口为主。")).toBeInTheDocument();
+    expect(await screen.findByText("上午报告。")).toBeInTheDocument();
+    expect(await screen.findByText(/上午出现编码窗口/)).toBeInTheDocument();
   });
 
   it("shows raw live evidence titles on the flow board after switching privacy mode", async () => {
@@ -792,6 +942,9 @@ async function liveDataResponse(input: string) {
   }
   if (input.startsWith("/api/insight-reports")) {
     return insightReportsResponse();
+  }
+  if (input.startsWith("/api/daily-brief")) {
+    return dailyBriefResponse();
   }
   if (input === "/api/time-events") {
     return jsonResponse({

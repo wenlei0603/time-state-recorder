@@ -1,7 +1,13 @@
 import { Camera, Clock, ImageIcon, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
+import { DailyBriefPanel } from "./DailyBriefPanel";
 import type { PrivacyMode, UiSourceMode } from "./lib/uiModel";
-import type { ScreenshotMeta, ScreenshotSummary, VisualSummary } from "./types";
+import type {
+  DailyBriefResponse,
+  ScreenshotMeta,
+  ScreenshotSummary,
+  VisualSummary
+} from "./types";
 
 interface DailyTrackingProps {
   date: string;
@@ -13,6 +19,8 @@ interface DailyTrackingProps {
   screenshotsVisible: boolean;
   privacyMode: PrivacyMode;
   visualSummaries: VisualSummary[];
+  dailyBriefResponse?: DailyBriefResponse;
+  dailyBriefError?: string | null;
   analyzingScreenshotId?: number | null;
   analysisError?: string | null;
   onAnalyzeScreenshot: (screenshotId: number) => void;
@@ -45,6 +53,8 @@ export function DailyTracking({
   screenshotsVisible,
   privacyMode,
   visualSummaries,
+  dailyBriefResponse,
+  dailyBriefError,
   analyzingScreenshotId,
   analysisError,
   onAnalyzeScreenshot,
@@ -83,9 +93,16 @@ export function DailyTracking({
 
   return (
     <section className="dailyTracking">
+      <DailyBriefPanel
+        response={dailyBriefResponse}
+        sourceMode={sourceMode}
+        privacyMode={privacyMode}
+        loading={loading}
+        error={dailyBriefError}
+      />
       <div className="dailyHeader">
         <div>
-          <h2>Daily Tracking</h2>
+          <h2>Screenshot Timeline</h2>
           <p className="dailyDate">{date}</p>
         </div>
         <div className="actions">

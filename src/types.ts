@@ -247,6 +247,96 @@ export type InsightReport = {
   error?: string;
 };
 
+export type DailyAppActivity = {
+  processName: string;
+  activeSeconds: number;
+  share: number;
+};
+
+export type DailyActivityStats = {
+  date: string;
+  periodStart: string;
+  periodEnd: string;
+  activeSeconds: number;
+  activeHours: number;
+  windowEventCount: number;
+  switchCount: number;
+  distinctAppCount: number;
+  topApps: DailyAppActivity[];
+  categoryMix: ActivityCategoryCount[];
+  inputChars: number;
+  inputEvents: number;
+  screenshotCount: number;
+  highResScreenshotCount: number;
+  visualWindowCount: number;
+  fiveHourReportCount: number;
+  firstActivityAt?: string;
+  lastActivityAt?: string;
+};
+
+export type HourlyActivityMetric = {
+  hour: number;
+  startAt: string;
+  endAt: string;
+  activeSeconds: number;
+  activeRatio: number;
+  windowEventCount: number;
+  switchCount: number;
+  distinctAppCount: number;
+  dominantApp?: string;
+  dominantCategory: ActivityCategory;
+  inputChars: number;
+  screenshotCount: number;
+  highResScreenshotCount: number;
+  visualWindowCount: number;
+  fiveHourReportIds: number[];
+};
+
+export type DailyComparison = {
+  baselineDays: number;
+  comparedDates: string[];
+  activeSecondsDelta: number;
+  switchesPerHourDelta: number;
+  inputCharsDelta: number;
+  screenshotCoverageDelta: number;
+  dominantCategoryShift?: string;
+  startTimeShiftMinutes?: number;
+  endTimeShiftMinutes?: number;
+  explanation: string;
+};
+
+export type DailyBrief = {
+  id: number;
+  date: string;
+  periodStart: string;
+  periodEnd: string;
+  generatedAt: string;
+  scheduledForLocal: string;
+  modelProvider: string;
+  modelName: string;
+  promptVersion: string;
+  status: string;
+  descriptiveStats: DailyActivityStats;
+  hourlyMetrics: HourlyActivityMetric[];
+  comparison: DailyComparison;
+  fiveHourReportIds: number[];
+  dailySummaryText: string;
+  actionTrajectory: string;
+  rawSummaryJson: unknown;
+  error?: string;
+};
+
+export type DailyBriefResponse = {
+  date: string;
+  status: "missing" | "pending" | "running" | "complete" | "error" | string;
+  nextRunAt?: string;
+  brief?: DailyBrief;
+  fiveHourReports: InsightReport[];
+  descriptiveStats: DailyActivityStats;
+  hourlyMetrics: HourlyActivityMetric[];
+  comparison: DailyComparison;
+};
+
 export type AnalysisWorkerStatus = {
   status: "idle" | "running" | "error" | string;
   lastStartedAt?: string;
@@ -258,9 +348,11 @@ export type AnalysisWorkerStatus = {
 export type AnalysisStatus = {
   visual: AnalysisWorkerStatus;
   report: AnalysisWorkerStatus;
+  daily?: AnalysisWorkerStatus;
   latestObservation?: VisualObservation;
   latestWindowSummary?: VisualWindowSummary;
   latestReport?: InsightReport;
+  latestDailyBrief?: DailyBrief;
 };
 
 export type AppScreenshotCount = {

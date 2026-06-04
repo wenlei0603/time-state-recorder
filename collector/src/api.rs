@@ -23,10 +23,11 @@ use crate::{
     blocker::BlockerEngine,
     image_retention::{ImageRetentionPolicy, cleanup_expired_images},
     input,
-    insights::ConfiguredInsightReporter,
+    insights::{ConfiguredDailyBriefReporter, ConfiguredInsightReporter, LocalDailyBriefReporter},
     interval::build_time_events_with_lifecycle,
     models::{
-        ActivityBucket, BlockerHit, CollectorHealth, DbStats, HighResScreenshotMeta, InsightReport,
+        ActivityBucket, BlockerHit, CollectorHealth, DailyActivityStats, DailyBrief,
+        DailyComparison, DbStats, HighResScreenshotMeta, HourlyActivityMetric, InsightReport,
         LifecycleEvent, LifecycleType, ScreenshotMeta, SubsystemHealth, TimeEvent,
         VisualObservation, VisualSummary, VisualWindowSummary, WindowSnapshot,
     },
@@ -64,6 +65,7 @@ struct DateQuery {
     limit: Option<usize>,
     #[serde(rename = "tzOffsetMinutes")]
     tz_offset_minutes: Option<i32>,
+    kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,14 +139,29 @@ struct InsightReportsResponse {
     reports: Vec<InsightReport>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DailyBriefResponse {
+    date: String,
+    status: String,
+    next_run_at: Option<DateTime<Utc>>,
+    brief: Option<DailyBrief>,
+    five_hour_reports: Vec<InsightReport>,
+    descriptive_stats: DailyActivityStats,
+    hourly_metrics: Vec<HourlyActivityMetric>,
+    comparison: DailyComparison,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AnalysisStatus {
     visual: AnalysisWorkerStatus,
     report: AnalysisWorkerStatus,
+    daily: AnalysisWorkerStatus,
     latest_observation: Option<VisualObservation>,
     latest_window_summary: Option<VisualWindowSummary>,
     latest_report: Option<InsightReport>,
+    latest_daily_brief: Option<DailyBrief>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -162,9 +179,11 @@ impl Default for AnalysisStatus {
         Self {
             visual: AnalysisWorkerStatus::idle(),
             report: AnalysisWorkerStatus::idle(),
+            daily: AnalysisWorkerStatus::idle(),
             latest_observation: None,
             latest_window_summary: None,
             latest_report: None,
+            latest_daily_brief: None,
         }
     }
 }
@@ -225,6 +244,8 @@ const INSIGHT_REPORT_INTERVAL: u64 = 5 * 60 * 60;
 const INSIGHT_REPORT_CHECK_INTERVAL: u64 = 5 * 60;
 const VISUAL_WINDOW_INTERVAL: i64 = 5 * 60;
 const VISUAL_WINDOW_LOOKBACK_HOURS: i64 = 6;
+const DAILY_BRIEF_CHECK_INTERVAL: u64 = 60;
+const DEFAULT_DAILY_BRIEF_LOCAL_TIME: &str = "23:40";
 
 #[derive(Debug, Clone)]
 struct DateWindow {
@@ -337,6 +358,8 @@ fn router_from_state(state: AppState) -> Router {
         .route("/api/visual-observations", get(visual_observations))
         .route("/api/visual-window-summaries", get(visual_window_summaries))
         .route("/api/insight-reports", get(insight_reports))
+        .route("/api/daily-brief", get(daily_brief))
+        .route("/api/daily-brief/generate", post(generate_daily_brief))
         .route("/api/analysis-status", get(analysis_status))
         .route("/api/screenshots/{id}/analyze", post(analyze_screenshot))
         .route("/api/input-events", get(input_events))
@@ -368,6 +391,62 @@ fn date_window_from_query(query: &DateQuery) -> std::result::Result<DateWindow, 
         start_utc,
         end_utc,
     })
+}
+
+fn date_window_for_local_date(date: NaiveDate) -> std::result::Result<DateWindow, String> {
+    let (start_utc, end_utc) = local_day_bounds(date)?;
+    Ok(DateWindow {
+        date: date.format("%Y-%m-%d").to_string(),
+        start_utc,
+        end_utc,
+    })
+}
+
+fn daily_brief_schedule_label() -> String {
+    let value = std::env::var("DAILY_BRIEF_LOCAL_TIME")
+        .unwrap_or_else(|_| DEFAULT_DAILY_BRIEF_LOCAL_TIME.to_string());
+    if parse_daily_brief_time(&value).is_some() {
+        value
+    } else {
+        DEFAULT_DAILY_BRIEF_LOCAL_TIME.to_string()
+    }
+}
+
+fn parse_daily_brief_time(value: &str) -> Option<(u32, u32)> {
+    let (hour, minute) = value.trim().split_once(':')?;
+    let hour = hour.parse::<u32>().ok()?;
+    let minute = minute.parse::<u32>().ok()?;
+    if hour < 24 && minute < 60 {
+        Some((hour, minute))
+    } else {
+        None
+    }
+}
+
+fn daily_brief_due_now(now: DateTime<Local>, schedule_label: &str) -> bool {
+    let Some(scheduled) = local_scheduled_at(now.date_naive(), schedule_label) else {
+        return false;
+    };
+    now >= scheduled
+}
+
+fn next_daily_brief_run_at(now: DateTime<Utc>, schedule_label: &str) -> Option<DateTime<Utc>> {
+    let now_local = now.with_timezone(&Local);
+    let today = now_local.date_naive();
+    let today_run = local_scheduled_at(today, schedule_label)?;
+    let next_local = if now_local < today_run {
+        today_run
+    } else {
+        let tomorrow = today.succ_opt()?;
+        local_scheduled_at(tomorrow, schedule_label)?
+    };
+    Some(next_local.with_timezone(&Utc))
+}
+
+fn local_scheduled_at(date: NaiveDate, schedule_label: &str) -> Option<DateTime<Local>> {
+    let (hour, minute) = parse_daily_brief_time(schedule_label)?;
+    let naive = date.and_hms_opt(hour, minute, 0)?;
+    Local.from_local_datetime(&naive).single()
 }
 
 fn fixed_offset_day_bounds(
@@ -505,6 +584,7 @@ pub async fn serve(
     );
     let visual_analysis_collector = spawn_visual_analysis_loop(state.clone());
     let insight_report_collector = spawn_insight_report_loop(state.clone());
+    let daily_brief_collector = spawn_daily_brief_loop(state.clone());
     let image_retention_collector = spawn_image_retention_loop(state.clone());
     let input_collector = input::spawn_input_collector(state.store.clone(), state.health.clone());
 
@@ -518,6 +598,7 @@ pub async fn serve(
     high_res_screenshot_collector.abort();
     visual_analysis_collector.abort();
     insight_report_collector.abort();
+    daily_brief_collector.abort();
     image_retention_collector.abort();
     input_collector.abort();
     let _ = window_collector.await;
@@ -525,6 +606,7 @@ pub async fn serve(
     let _ = high_res_screenshot_collector.await;
     let _ = visual_analysis_collector.await;
     let _ = insight_report_collector.await;
+    let _ = daily_brief_collector.await;
     let _ = image_retention_collector.await;
     let _ = input_collector.await;
 
@@ -620,6 +702,48 @@ fn update_report_error(
         status.report.last_finished_at = Some(finished_at);
         status.report.next_run_at = Some(next_run_at);
         status.report.last_error = Some(error);
+    }
+}
+
+fn update_daily_running(state: &AppState, started_at: DateTime<Utc>) {
+    if let Ok(mut status) = state.analysis_status.lock() {
+        status.daily = AnalysisWorkerStatus::running(started_at);
+    }
+}
+
+fn update_daily_success(
+    state: &AppState,
+    finished_at: DateTime<Utc>,
+    next_run_at: DateTime<Utc>,
+    brief: DailyBrief,
+) {
+    if let Ok(mut status) = state.analysis_status.lock() {
+        status.daily.status = "idle".into();
+        status.daily.last_finished_at = Some(finished_at);
+        status.daily.next_run_at = Some(next_run_at);
+        status.daily.last_error = None;
+        status.latest_daily_brief = Some(brief);
+    }
+}
+
+fn update_daily_idle(state: &AppState, next_run_at: DateTime<Utc>) {
+    if let Ok(mut status) = state.analysis_status.lock() {
+        status.daily.status = "idle".into();
+        status.daily.next_run_at = Some(next_run_at);
+    }
+}
+
+fn update_daily_error(
+    state: &AppState,
+    finished_at: DateTime<Utc>,
+    next_run_at: DateTime<Utc>,
+    error: String,
+) {
+    if let Ok(mut status) = state.analysis_status.lock() {
+        status.daily.status = "error".into();
+        status.daily.last_finished_at = Some(finished_at);
+        status.daily.next_run_at = Some(next_run_at);
+        status.daily.last_error = Some(error);
     }
 }
 
@@ -1187,6 +1311,127 @@ async fn maybe_generate_insight_report(
     Ok(Some(report))
 }
 
+fn spawn_daily_brief_loop(state: AppState) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            let started_at = Utc::now();
+            let schedule_label = daily_brief_schedule_label();
+            let next_run_at =
+                next_daily_brief_run_at(started_at, &schedule_label).unwrap_or_else(|| {
+                    started_at + chrono::Duration::seconds(DAILY_BRIEF_CHECK_INTERVAL as i64)
+                });
+            update_daily_running(&state, started_at);
+
+            if daily_brief_due_now(Local::now(), &schedule_label) {
+                let local_date = Local::now().date_naive();
+                let generation_result = match date_window_for_local_date(local_date) {
+                    Ok(date_window) => {
+                        async_maybe_generate_daily_brief(&state, date_window, &schedule_label).await
+                    }
+                    Err(message) => Err(anyhow::anyhow!(message)),
+                };
+                match generation_result {
+                    Ok(Some(brief)) => {
+                        let next = next_daily_brief_run_at(Utc::now(), &schedule_label)
+                            .unwrap_or(next_run_at);
+                        update_daily_success(&state, Utc::now(), next, brief);
+                    }
+                    Ok(None) => update_daily_idle(&state, next_run_at),
+                    Err(error) => {
+                        update_daily_error(&state, Utc::now(), next_run_at, format!("{error:#}"));
+                    }
+                }
+            } else {
+                update_daily_idle(&state, next_run_at);
+            }
+
+            time::sleep(Duration::from_secs(DAILY_BRIEF_CHECK_INTERVAL)).await;
+        }
+    })
+}
+
+async fn async_maybe_generate_daily_brief(
+    state: &AppState,
+    date_window: DateWindow,
+    scheduled_for_local: &str,
+) -> Result<Option<DailyBrief>> {
+    let (reports, stats, hourly_metrics, comparison) = {
+        let store = state
+            .store
+            .lock()
+            .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
+        if store.daily_brief_exists(&date_window.date, scheduled_for_local)? {
+            return Ok(store.get_daily_brief_by_date(&date_window.date, scheduled_for_local)?);
+        }
+        let reports = store.list_insight_reports_between(
+            date_window.start_utc,
+            date_window.end_utc,
+            Some("5h"),
+            100,
+        )?;
+        let stats = store.build_daily_activity_stats(
+            &date_window.date,
+            date_window.start_utc,
+            date_window.end_utc,
+            &reports,
+        )?;
+        let hourly_metrics = store.build_hourly_activity_metrics(
+            date_window.start_utc,
+            date_window.end_utc,
+            &reports,
+        )?;
+        let comparison = store.build_daily_comparison(&date_window.date, &stats)?;
+        (reports, stats, hourly_metrics, comparison)
+    };
+
+    let report_result = ConfiguredDailyBriefReporter::from_env()?
+        .report(
+            &date_window.date,
+            date_window.start_utc,
+            date_window.end_utc,
+            scheduled_for_local,
+            &stats,
+            &hourly_metrics,
+            &comparison,
+            &reports,
+        )
+        .await;
+    let mut brief = match report_result {
+        Ok(brief) => brief,
+        Err(error) => {
+            let mut fallback = LocalDailyBriefReporter.report(
+                &date_window.date,
+                date_window.start_utc,
+                date_window.end_utc,
+                scheduled_for_local,
+                &stats,
+                &hourly_metrics,
+                &comparison,
+                &reports,
+                Utc::now(),
+            )?;
+            fallback.status = "error".into();
+            fallback.error = Some(format!("{error:#}"));
+            let mut store = state
+                .store
+                .lock()
+                .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
+            let id = store.upsert_daily_brief_error(fallback.clone(), format!("{error:#}"))?;
+            fallback.id = id;
+            return Err(error);
+        }
+    };
+    let id = {
+        let mut store = state
+            .store
+            .lock()
+            .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
+        store.insert_daily_brief(&brief)?
+    };
+    brief.id = id;
+    Ok(Some(brief))
+}
+
 async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let health_snapshot = match state.health.lock() {
         Ok(h) => h.clone(),
@@ -1495,7 +1740,7 @@ async fn visual_window_summaries(
 
 async fn insight_reports(
     State(state): State<AppState>,
-    Query(query): Query<LimitQuery>,
+    Query(query): Query<DateQuery>,
 ) -> impl IntoResponse {
     let limit = query.limit.unwrap_or(10).min(100);
     let store = match state.store.lock() {
@@ -1503,10 +1748,122 @@ async fn insight_reports(
         Err(_) => return internal_error("store lock poisoned"),
     };
 
-    match store.list_insight_reports(limit) {
-        Ok(reports) => Json(InsightReportsResponse { reports }).into_response(),
+    if query.date.is_some() {
+        let date_window = match date_window_from_query(&query) {
+            Ok(date_window) => date_window,
+            Err(message) => return bad_request(&message),
+        };
+        match store.list_insight_reports_between(
+            date_window.start_utc,
+            date_window.end_utc,
+            query.kind.as_deref().or(Some("5h")),
+            limit,
+        ) {
+            Ok(reports) => Json(InsightReportsResponse { reports }).into_response(),
+            Err(err) => internal_error(err),
+        }
+    } else {
+        match store.list_insight_reports(limit) {
+            Ok(reports) => Json(InsightReportsResponse { reports }).into_response(),
+            Err(err) => internal_error(err),
+        }
+    }
+}
+
+async fn daily_brief(
+    State(state): State<AppState>,
+    Query(query): Query<DateQuery>,
+) -> impl IntoResponse {
+    let date_window = match date_window_from_query(&query) {
+        Ok(date_window) => date_window,
+        Err(message) => return bad_request(&message),
+    };
+    match build_daily_brief_response(&state, date_window) {
+        Ok(response) => Json(response).into_response(),
         Err(err) => internal_error(err),
     }
+}
+
+async fn generate_daily_brief(
+    State(state): State<AppState>,
+    Query(query): Query<DateQuery>,
+) -> impl IntoResponse {
+    let date_window = match date_window_from_query(&query) {
+        Ok(date_window) => date_window,
+        Err(message) => return bad_request(&message),
+    };
+    let schedule_label = daily_brief_schedule_label();
+    match async_maybe_generate_daily_brief(&state, date_window.clone(), &schedule_label).await {
+        Ok(Some(brief)) => {
+            update_daily_success(
+                &state,
+                Utc::now(),
+                next_daily_brief_run_at(Utc::now(), &schedule_label).unwrap_or(Utc::now()),
+                brief,
+            );
+            match build_daily_brief_response(&state, date_window) {
+                Ok(response) => Json(response).into_response(),
+                Err(err) => internal_error(err),
+            }
+        }
+        Ok(None) => match build_daily_brief_response(&state, date_window) {
+            Ok(response) => Json(response).into_response(),
+            Err(err) => internal_error(err),
+        },
+        Err(err) => internal_error(err),
+    }
+}
+
+fn build_daily_brief_response(
+    state: &AppState,
+    date_window: DateWindow,
+) -> Result<DailyBriefResponse> {
+    let schedule_label = daily_brief_schedule_label();
+    let store = state
+        .store
+        .lock()
+        .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
+    let reports = store.list_insight_reports_between(
+        date_window.start_utc,
+        date_window.end_utc,
+        Some("5h"),
+        100,
+    )?;
+    let brief = store.get_daily_brief_by_date(&date_window.date, &schedule_label)?;
+    let stats = if let Some(brief) = &brief {
+        brief.descriptive_stats.clone()
+    } else {
+        store.build_daily_activity_stats(
+            &date_window.date,
+            date_window.start_utc,
+            date_window.end_utc,
+            &reports,
+        )?
+    };
+    let hourly_metrics = if let Some(brief) = &brief {
+        brief.hourly_metrics.clone()
+    } else {
+        store.build_hourly_activity_metrics(date_window.start_utc, date_window.end_utc, &reports)?
+    };
+    let comparison = if let Some(brief) = &brief {
+        brief.comparison.clone()
+    } else {
+        store.build_daily_comparison(&date_window.date, &stats)?
+    };
+    let status = brief
+        .as_ref()
+        .map(|brief| brief.status.clone())
+        .unwrap_or_else(|| "missing".into());
+    Ok(DailyBriefResponse {
+        date: date_window.date,
+        status,
+        next_run_at: next_daily_brief_run_at(Utc::now(), &schedule_label),
+        brief,
+        five_hour_reports: reports,
+        descriptive_stats: stats,
+        hourly_metrics,
+        comparison,
+    })
 }
 
 async fn analysis_status(State(state): State<AppState>) -> impl IntoResponse {

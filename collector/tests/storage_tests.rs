@@ -3,7 +3,8 @@ use rusqlite::params;
 use tsr_collector::{
     interval::build_time_events_with_lifecycle,
     models::{
-        ActivityCategory, ActivityCategoryCount, CaptureStatus, HighResScreenshotMeta,
+        ActivityCategory, ActivityCategoryCount, CaptureStatus, DailyActivityStats,
+        DailyAppActivity, DailyBrief, DailyComparison, HighResScreenshotMeta, HourlyActivityMetric,
         InsightReport, LifecycleType, ScreenshotMeta, VisualObservation, VisualSummary,
         VisualTrajectoryPoint, VisualWindowSummary, WindowSnapshot,
     },
@@ -517,6 +518,108 @@ fn insight_reports_round_trip_by_period() {
 }
 
 #[test]
+fn lists_insight_reports_between_chronologically_for_selected_day() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+
+    for (start, end, summary) in [
+        (
+            "2026-06-02T19:00:00Z",
+            "2026-06-03T00:30:00Z",
+            "跨入目标日期的夜间报告。",
+        ),
+        (
+            "2026-06-03T05:00:00Z",
+            "2026-06-03T10:00:00Z",
+            "上午编码报告。",
+        ),
+        (
+            "2026-06-04T00:30:00Z",
+            "2026-06-04T05:00:00Z",
+            "下一日报告。",
+        ),
+    ] {
+        store
+            .insert_insight_report(&sample_insight_report(start, end, summary))
+            .unwrap();
+    }
+
+    let reports = store
+        .list_insight_reports_between(
+            ts("2026-06-03T00:00:00Z"),
+            ts("2026-06-04T00:00:00Z"),
+            Some("5h"),
+            10,
+        )
+        .unwrap();
+
+    assert_eq!(
+        reports
+            .iter()
+            .map(|report| report.summary_text.as_str())
+            .collect::<Vec<_>>(),
+        vec!["跨入目标日期的夜间报告。", "上午编码报告。"]
+    );
+}
+
+#[test]
+fn daily_brief_round_trips_with_hourly_metrics_and_report_ids() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+
+    let brief = DailyBrief {
+        id: 0,
+        date: "2026-06-03".into(),
+        period_start: ts("2026-06-03T00:00:00Z"),
+        period_end: ts("2026-06-04T00:00:00Z"),
+        generated_at: ts("2026-06-03T15:40:05Z"),
+        scheduled_for_local: "23:40".into(),
+        model_provider: "local_insight".into(),
+        model_name: "daily-brief-local-v1".into(),
+        prompt_version: "daily-brief-v1".into(),
+        status: "complete".into(),
+        descriptive_stats: sample_daily_stats(),
+        hourly_metrics: vec![sample_hourly_metric(9, 1800, vec![11, 12])],
+        comparison: DailyComparison {
+            baseline_days: 7,
+            compared_dates: vec!["2026-06-02".into()],
+            active_seconds_delta: 600,
+            switches_per_hour_delta: -0.5,
+            input_chars_delta: 120,
+            screenshot_coverage_delta: 0.2,
+            dominant_category_shift: Some("research -> coding".into()),
+            start_time_shift_minutes: Some(-15),
+            end_time_shift_minutes: Some(30),
+            explanation: "编码窗口较前一日增加。".into(),
+        },
+        five_hour_report_ids: vec![11, 12],
+        daily_summary_text: "今日桌面记录显示编码和阅读交替出现。".into(),
+        action_trajectory: "上午以编码为主，随后出现阅读材料窗口。".into(),
+        raw_summary_json: serde_json::json!({
+            "dailySummaryText": "今日桌面记录显示编码和阅读交替出现。",
+            "actionTrajectory": "上午以编码为主，随后出现阅读材料窗口。"
+        }),
+        error: None,
+    };
+
+    let id = store.insert_daily_brief(&brief).unwrap();
+    let loaded = store
+        .get_daily_brief_by_date("2026-06-03", "23:40")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(loaded.id, id);
+    assert_eq!(loaded.status, "complete");
+    assert_eq!(loaded.descriptive_stats.active_seconds, 3600);
+    assert_eq!(loaded.hourly_metrics[0].five_hour_report_ids, vec![11, 12]);
+    assert_eq!(loaded.comparison.explanation, "编码窗口较前一日增加。");
+    assert_eq!(
+        loaded.action_trajectory,
+        "上午以编码为主，随后出现阅读材料窗口。"
+    );
+}
+
+#[test]
 fn persists_lifecycle_events_in_order() {
     let mut store = Store::open_memory().unwrap();
     store.init().unwrap();
@@ -812,6 +915,80 @@ fn screenshot_reads_and_success_summary_ignore_skip_rows() {
 
     let stats = store.get_db_stats().unwrap();
     assert_eq!(stats.screenshots, 1);
+}
+
+fn sample_insight_report(start: &str, end: &str, summary: &str) -> InsightReport {
+    InsightReport {
+        id: 0,
+        period_start: ts(start),
+        period_end: ts(end),
+        generated_at: ts(end),
+        report_kind: "5h".into(),
+        model_provider: "local_insight".into(),
+        model_name: "trajectory-v1".into(),
+        summary_text: summary.into(),
+        category_mix: vec![ActivityCategoryCount {
+            activity_category: ActivityCategory::Coding,
+            count: 1,
+        }],
+        project_hints: vec!["Time State Recorder".into()],
+        evidence_count: 1,
+        error: None,
+    }
+}
+
+fn sample_daily_stats() -> DailyActivityStats {
+    DailyActivityStats {
+        date: "2026-06-03".into(),
+        period_start: ts("2026-06-03T00:00:00Z"),
+        period_end: ts("2026-06-04T00:00:00Z"),
+        active_seconds: 3600,
+        active_hours: 1.0,
+        window_event_count: 3,
+        switch_count: 2,
+        distinct_app_count: 2,
+        top_apps: vec![DailyAppActivity {
+            process_name: "Code.exe".into(),
+            active_seconds: 3000,
+            share: 0.83,
+        }],
+        category_mix: vec![ActivityCategoryCount {
+            activity_category: ActivityCategory::Coding,
+            count: 2,
+        }],
+        input_chars: 120,
+        input_events: 140,
+        screenshot_count: 4,
+        high_res_screenshot_count: 2,
+        visual_window_count: 3,
+        five_hour_report_count: 2,
+        first_activity_at: Some(ts("2026-06-03T09:00:00Z")),
+        last_activity_at: Some(ts("2026-06-03T18:00:00Z")),
+    }
+}
+
+fn sample_hourly_metric(
+    hour: u8,
+    active_seconds: i64,
+    report_ids: Vec<i64>,
+) -> HourlyActivityMetric {
+    HourlyActivityMetric {
+        hour,
+        start_at: ts("2026-06-03T09:00:00Z"),
+        end_at: ts("2026-06-03T10:00:00Z"),
+        active_seconds,
+        active_ratio: active_seconds as f64 / 3600.0,
+        window_event_count: 2,
+        switch_count: 1,
+        distinct_app_count: 2,
+        dominant_app: Some("Code.exe".into()),
+        dominant_category: ActivityCategory::Coding,
+        input_chars: 60,
+        screenshot_count: 2,
+        high_res_screenshot_count: 1,
+        visual_window_count: 1,
+        five_hour_report_ids: report_ids,
+    }
 }
 
 fn ts(value: &str) -> DateTime<Utc> {

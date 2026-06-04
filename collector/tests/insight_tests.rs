@@ -1,13 +1,14 @@
 use chrono::{DateTime, Utc};
 use tsr_collector::{
     insights::{
-        MiniMaxInsightConfig, MiniMaxInsightReporter, build_five_hour_report,
-        build_five_hour_report_from_window_summaries, observation_from_visual_summary,
-        select_insight_report_provider,
+        LocalDailyBriefReporter, MiniMaxInsightConfig, MiniMaxInsightReporter,
+        build_five_hour_report, build_five_hour_report_from_window_summaries,
+        observation_from_visual_summary, select_insight_report_provider,
     },
     models::{
-        ActivityCategory, HighResScreenshotMeta, VisualObservation, VisualSummary,
-        VisualTrajectoryPoint, VisualWindowSummary,
+        ActivityCategory, ActivityCategoryCount, DailyActivityStats, DailyAppActivity,
+        DailyComparison, HighResScreenshotMeta, HourlyActivityMetric, InsightReport,
+        VisualObservation, VisualSummary, VisualTrajectoryPoint, VisualWindowSummary,
     },
     visual_analysis::{
         MiniMaxAnalyzer, MiniMaxConfig, WindowVisualAnalysisInput, WindowVisualAnalysisSample,
@@ -323,6 +324,61 @@ fn builds_five_hour_report_from_visual_window_summaries() {
 }
 
 #[test]
+fn local_daily_brief_builds_neutral_action_trajectory_from_five_hour_reports() {
+    let reporter = LocalDailyBriefReporter;
+    let reports = vec![
+        sample_insight_report(
+            11,
+            "2026-06-03T05:00:00Z",
+            "2026-06-03T10:00:00Z",
+            "上午先处理课程邮件，随后进入 Overpayment do-file 编码。",
+        ),
+        sample_insight_report(
+            12,
+            "2026-06-03T10:00:00Z",
+            "2026-06-03T15:00:00Z",
+            "中午继续检查 R formal analysis 输出并阅读 AMR 论文。",
+        ),
+    ];
+    let stats = sample_daily_stats();
+    let hourly = vec![sample_hourly_metric(9, 1800, vec![11])];
+    let comparison = DailyComparison {
+        baseline_days: 7,
+        compared_dates: vec!["2026-06-02".into()],
+        active_seconds_delta: 600,
+        switches_per_hour_delta: 0.2,
+        input_chars_delta: 120,
+        screenshot_coverage_delta: 0.1,
+        dominant_category_shift: Some("research -> coding".into()),
+        start_time_shift_minutes: Some(-20),
+        end_time_shift_minutes: Some(15),
+        explanation: "编码相关窗口较前一日增加。".into(),
+    };
+
+    let brief = reporter
+        .report(
+            "2026-06-03",
+            ts("2026-06-03T00:00:00Z"),
+            ts("2026-06-04T00:00:00Z"),
+            "23:40",
+            &stats,
+            &hourly,
+            &comparison,
+            &reports,
+            ts("2026-06-03T15:40:00Z"),
+        )
+        .unwrap();
+
+    assert_eq!(brief.status, "complete");
+    assert_eq!(brief.five_hour_report_ids, vec![11, 12]);
+    assert!(brief.daily_summary_text.contains("1.0 小时"));
+    assert!(brief.action_trajectory.contains("课程邮件"));
+    assert!(brief.action_trajectory.contains("AMR 论文"));
+    assert!(!brief.action_trajectory.contains("高效"));
+    assert!(!brief.action_trajectory.contains("浪费"));
+}
+
+#[test]
 fn minimax_insight_report_request_uses_window_summaries() {
     let windows = vec![sample_window_summary(
         1,
@@ -483,6 +539,80 @@ fn sample_window_summary(
         raw_summary_json: serde_json::json!({ "summaryText": summary_text }),
         created_at: ts(window_end),
         error: None,
+    }
+}
+
+fn sample_insight_report(id: i64, start: &str, end: &str, summary: &str) -> InsightReport {
+    InsightReport {
+        id,
+        period_start: ts(start),
+        period_end: ts(end),
+        generated_at: ts(end),
+        report_kind: "5h".into(),
+        model_provider: "local_insight".into(),
+        model_name: "trajectory-v1".into(),
+        summary_text: summary.into(),
+        category_mix: vec![ActivityCategoryCount {
+            activity_category: ActivityCategory::Coding,
+            count: 1,
+        }],
+        project_hints: vec!["Overpayment".into()],
+        evidence_count: 1,
+        error: None,
+    }
+}
+
+fn sample_daily_stats() -> DailyActivityStats {
+    DailyActivityStats {
+        date: "2026-06-03".into(),
+        period_start: ts("2026-06-03T00:00:00Z"),
+        period_end: ts("2026-06-04T00:00:00Z"),
+        active_seconds: 3600,
+        active_hours: 1.0,
+        window_event_count: 6,
+        switch_count: 4,
+        distinct_app_count: 3,
+        top_apps: vec![DailyAppActivity {
+            process_name: "Code.exe".into(),
+            active_seconds: 2400,
+            share: 0.67,
+        }],
+        category_mix: vec![ActivityCategoryCount {
+            activity_category: ActivityCategory::Coding,
+            count: 2,
+        }],
+        input_chars: 120,
+        input_events: 140,
+        screenshot_count: 6,
+        high_res_screenshot_count: 3,
+        visual_window_count: 4,
+        five_hour_report_count: 2,
+        first_activity_at: Some(ts("2026-06-03T05:00:00Z")),
+        last_activity_at: Some(ts("2026-06-03T15:00:00Z")),
+    }
+}
+
+fn sample_hourly_metric(
+    hour: u8,
+    active_seconds: i64,
+    report_ids: Vec<i64>,
+) -> HourlyActivityMetric {
+    HourlyActivityMetric {
+        hour,
+        start_at: ts("2026-06-03T09:00:00Z"),
+        end_at: ts("2026-06-03T10:00:00Z"),
+        active_seconds,
+        active_ratio: active_seconds as f64 / 3600.0,
+        window_event_count: 2,
+        switch_count: 1,
+        distinct_app_count: 2,
+        dominant_app: Some("Code.exe".into()),
+        dominant_category: ActivityCategory::Coding,
+        input_chars: 60,
+        screenshot_count: 2,
+        high_res_screenshot_count: 1,
+        visual_window_count: 1,
+        five_hour_report_ids: report_ids,
     }
 }
 

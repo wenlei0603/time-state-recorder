@@ -11,6 +11,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityReview } from "./ActivityReview";
 import { CollectorMonitor } from "./CollectorMonitor";
+import { DailyBriefPanel } from "./DailyBriefPanel";
 import { DailyTracking } from "./DailyTracking";
 import { Dashboard } from "./Dashboard";
 import { InputActivity } from "./InputActivity";
@@ -23,6 +24,7 @@ import { feature2SampleSegments, feature2SampleSummary } from "./data/feature2Sa
 import { feature3SampleScreenshots, feature3SampleSummary } from "./data/feature3Sample";
 import { visualSummarySample } from "./data/visualSummarySample";
 import { fetchActivityBuckets, fetchTimeEvents } from "./lib/api";
+import { fetchDailyBrief } from "./lib/dailyBrief";
 import { currentCollectorDate } from "./lib/dateQuery";
 import { fetchCollectorHealth } from "./lib/health";
 import { fetchInputSummary, fetchTextSegments } from "./lib/input";
@@ -47,6 +49,7 @@ import type {
   ActivityBucket,
   AnalysisStatus,
   CollectorHealth,
+  DailyBriefResponse,
   InsightReport,
   ScreenshotMeta,
   ScreenshotSummary,
@@ -83,6 +86,8 @@ export function App() {
     undefined
   );
   const [insightReports, setInsightReports] = useState<InsightReport[]>([]);
+  const [dailyBriefResponse, setDailyBriefResponse] =
+    useState<DailyBriefResponse | undefined>(undefined);
   const [health, setHealth] = useState<CollectorHealth | undefined>(undefined);
   const [collectorStatus, setCollectorStatus] = useState<CollectorStatus>("sample");
   const [collectorError, setCollectorError] = useState<string | null>(null);
@@ -98,6 +103,7 @@ export function App() {
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [dailyBriefError, setDailyBriefError] = useState<string | null>(null);
   const [visualSummaryError, setVisualSummaryError] = useState<string | null>(null);
   const [analyzingScreenshotId, setAnalyzingScreenshotId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("today");
@@ -134,7 +140,10 @@ export function App() {
       return;
     }
     const intervalId = window.setInterval(() => {
-      void refreshAnalysisFeedback();
+      void refreshAnalysisFeedback(
+        collectorRequestGeneration.current,
+        latestRefreshContext.current.date
+      );
     }, 15_000);
     return () => window.clearInterval(intervalId);
   }, [sourceMode]);
@@ -150,6 +159,7 @@ export function App() {
     setScreenshotSummary(feature3SampleSummary);
     setAnalysisStatus(undefined);
     setInsightReports([]);
+    setDailyBriefResponse(undefined);
     setHealth(undefined);
     setSourceMode("sample");
     setActivityStatus("sample");
@@ -165,6 +175,7 @@ export function App() {
     setInputError(null);
     setScreenshotError(null);
     setAnalysisError(null);
+    setDailyBriefError(null);
     setVisualSummaryError(null);
     setAnalyzingScreenshotId(null);
   }
@@ -192,6 +203,7 @@ export function App() {
     setInputError(null);
     setScreenshotError(null);
     setAnalysisError(null);
+    setDailyBriefError(null);
     setVisualSummaryError(null);
     const isCurrentRequest = () =>
       requestGeneration === collectorRequestGeneration.current;
@@ -234,7 +246,7 @@ export function App() {
           }
         });
 
-      void refreshAnalysisFeedback(requestGeneration);
+      void refreshAnalysisFeedback(requestGeneration, effectiveDate);
 
       void fetchActivityBuckets(effectiveDate, 180)
         .then((result) => {
@@ -358,6 +370,7 @@ export function App() {
         setInputError(errorMessage(error));
         setScreenshotError(errorMessage(error));
         setAnalysisError(errorMessage(error));
+        setDailyBriefError(errorMessage(error));
         setVisualSummaryError(errorMessage(error));
         setActivityLoading(false);
         setInputLoading(false);
@@ -368,32 +381,46 @@ export function App() {
   }
 
   async function refreshAnalysisFeedback(
-    requestGeneration = collectorRequestGeneration.current
+    requestGeneration = collectorRequestGeneration.current,
+    date = latestRefreshContext.current.date
   ) {
     setAnalysisLoading(true);
     setAnalysisError(null);
-    const [statusResult, reportsResult] = await Promise.allSettled([
+    setDailyBriefError(null);
+    const [statusResult, reportsResult, dailyBriefResult] = await Promise.allSettled([
       fetchAnalysisStatus(),
-      fetchInsightReports(5)
+      fetchInsightReports({ date, kind: "5h", limit: 20 }),
+      fetchDailyBrief(date)
     ]);
     if (requestGeneration !== collectorRequestGeneration.current) {
       return;
     }
+    if (latestRefreshContext.current.date !== date) {
+      return;
+    }
 
-    const errors: string[] = [];
+    const reviewErrors: string[] = [];
+    let dailyError: string | null = null;
     if (statusResult.status === "fulfilled") {
       setAnalysisStatus(statusResult.value);
     } else {
-      errors.push(errorMessage(statusResult.reason));
+      reviewErrors.push(errorMessage(statusResult.reason));
     }
 
     if (reportsResult.status === "fulfilled") {
       setInsightReports(reportsResult.value);
     } else {
-      errors.push(errorMessage(reportsResult.reason));
+      reviewErrors.push(errorMessage(reportsResult.reason));
     }
 
-    setAnalysisError(errors.length > 0 ? errors.join(" / ") : null);
+    if (dailyBriefResult.status === "fulfilled") {
+      setDailyBriefResponse(dailyBriefResult.value);
+    } else {
+      dailyError = errorMessage(dailyBriefResult.reason);
+    }
+
+    setAnalysisError(reviewErrors.length > 0 ? reviewErrors.join(" / ") : null);
+    setDailyBriefError(dailyError);
     setAnalysisLoading(false);
   }
 
@@ -582,6 +609,12 @@ export function App() {
           {analysisError}
         </p>
       )}
+      {dailyBriefError && (
+        <p className="sampleNotice" role="status">
+          Daily Brief unavailable. Keeping current daily brief state visible:{" "}
+          {dailyBriefError}
+        </p>
+      )}
       {visualSummaryError && (
         <p className="sampleNotice" role="status">
           Visual summary layer unavailable. Keeping current summary state visible:{" "}
@@ -598,6 +631,13 @@ export function App() {
             sourceMode={sourceMode}
             loading={analysisLoading}
             error={analysisError}
+          />
+          <DailyBriefPanel
+            response={dailyBriefResponse}
+            sourceMode={sourceMode}
+            privacyMode={privacyMode}
+            loading={analysisLoading}
+            error={dailyBriefError}
           />
           <TodayFlowBoard
             events={events}
@@ -638,6 +678,8 @@ export function App() {
           screenshotsVisible={layers.screenshots}
           privacyMode={privacyMode}
           visualSummaries={visualSummaries}
+          dailyBriefResponse={dailyBriefResponse}
+          dailyBriefError={dailyBriefError}
           analyzingScreenshotId={analyzingScreenshotId}
           analysisError={visualSummaryError}
           onAnalyzeScreenshot={(screenshotId) => {

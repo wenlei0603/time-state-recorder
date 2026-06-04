@@ -403,6 +403,95 @@ pub struct InsightReport {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyAppActivity {
+    pub process_name: String,
+    pub active_seconds: i64,
+    pub share: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyActivityStats {
+    pub date: String,
+    pub period_start: DateTime<Utc>,
+    pub period_end: DateTime<Utc>,
+    pub active_seconds: i64,
+    pub active_hours: f64,
+    pub window_event_count: usize,
+    pub switch_count: usize,
+    pub distinct_app_count: usize,
+    pub top_apps: Vec<DailyAppActivity>,
+    pub category_mix: Vec<ActivityCategoryCount>,
+    pub input_chars: usize,
+    pub input_events: usize,
+    pub screenshot_count: usize,
+    pub high_res_screenshot_count: usize,
+    pub visual_window_count: usize,
+    pub five_hour_report_count: usize,
+    pub first_activity_at: Option<DateTime<Utc>>,
+    pub last_activity_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HourlyActivityMetric {
+    pub hour: u8,
+    pub start_at: DateTime<Utc>,
+    pub end_at: DateTime<Utc>,
+    pub active_seconds: i64,
+    pub active_ratio: f64,
+    pub window_event_count: usize,
+    pub switch_count: usize,
+    pub distinct_app_count: usize,
+    pub dominant_app: Option<String>,
+    pub dominant_category: ActivityCategory,
+    pub input_chars: usize,
+    pub screenshot_count: usize,
+    pub high_res_screenshot_count: usize,
+    pub visual_window_count: usize,
+    pub five_hour_report_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyComparison {
+    pub baseline_days: usize,
+    pub compared_dates: Vec<String>,
+    pub active_seconds_delta: i64,
+    pub switches_per_hour_delta: f64,
+    pub input_chars_delta: i64,
+    pub screenshot_coverage_delta: f64,
+    pub dominant_category_shift: Option<String>,
+    pub start_time_shift_minutes: Option<i64>,
+    pub end_time_shift_minutes: Option<i64>,
+    pub explanation: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyBrief {
+    pub id: i64,
+    pub date: String,
+    pub period_start: DateTime<Utc>,
+    pub period_end: DateTime<Utc>,
+    pub generated_at: DateTime<Utc>,
+    pub scheduled_for_local: String,
+    pub model_provider: String,
+    pub model_name: String,
+    pub prompt_version: String,
+    pub status: String,
+    pub descriptive_stats: DailyActivityStats,
+    pub hourly_metrics: Vec<HourlyActivityMetric>,
+    pub comparison: DailyComparison,
+    pub five_hour_report_ids: Vec<i64>,
+    pub daily_summary_text: String,
+    pub action_trajectory: String,
+    pub raw_summary_json: serde_json::Value,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScreenshotSummary {

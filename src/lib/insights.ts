@@ -3,6 +3,10 @@ import type {
   ActivityCategoryCount,
   AnalysisStatus,
   AnalysisWorkerStatus,
+  DailyActivityStats,
+  DailyBrief,
+  DailyComparison,
+  HourlyActivityMetric,
   InsightReport,
   VisualObservation,
   VisualTrajectoryPoint,
@@ -10,6 +14,11 @@ import type {
 } from "../types";
 
 type Fetcher = (input: string) => Promise<Pick<Response, "ok" | "status" | "statusText" | "json">>;
+type InsightReportsQuery = number | {
+  date?: string;
+  kind?: string;
+  limit?: number;
+};
 
 export async function fetchAnalysisStatus(
   fetcher: Fetcher = fetch,
@@ -36,14 +45,16 @@ export async function fetchAnalysisStatus(
       toVisualWindowSummary,
     ),
     latestReport: readOptionalRecord(body, "latestReport", toInsightReport),
+    daily: readOptionalRecord(body, "daily", toWorkerStatus),
+    latestDailyBrief: readOptionalRecord(body, "latestDailyBrief", toDailyBrief),
   };
 }
 
 export async function fetchInsightReports(
-  limit = 5,
+  query: InsightReportsQuery = 5,
   fetcher: Fetcher = fetch,
 ): Promise<InsightReport[]> {
-  const response = await fetcher(`/api/insight-reports?limit=${limit}`);
+  const response = await fetcher(insightReportsPath(query));
   if (!response.ok) {
     throw new Error(
       `Collector API failed: ${response.status} ${response.statusText}`.trim(),
@@ -56,6 +67,25 @@ export async function fetchInsightReports(
   }
 
   return body.reports.map(toInsightReport);
+}
+
+function insightReportsPath(query: InsightReportsQuery): string {
+  if (typeof query === "number") {
+    return `/api/insight-reports?limit=${query}`;
+  }
+  const params = new URLSearchParams();
+  if (query.date) {
+    params.set("date", query.date);
+    params.set("tzOffsetMinutes", String(timezoneOffsetMinutes(query.date)));
+  }
+  if (query.kind) {
+    params.set("kind", query.kind);
+  }
+  if (query.limit !== undefined) {
+    params.set("limit", String(query.limit));
+  }
+  const text = params.toString();
+  return text ? `/api/insight-reports?${text}` : "/api/insight-reports";
 }
 
 export async function fetchVisualObservations(
@@ -112,7 +142,10 @@ function timezoneOffsetMinutes(date: string): number {
   return new Date().getTimezoneOffset();
 }
 
-function toWorkerStatus(value: Record<string, unknown>): AnalysisWorkerStatus {
+function toWorkerStatus(value: unknown): AnalysisWorkerStatus {
+  if (!isRecord(value)) {
+    throw new Error("Collector API returned an invalid worker status row");
+  }
   return {
     status: readString(value, "status"),
     lastStartedAt: readOptionalString(value, "lastStartedAt"),
@@ -202,6 +235,33 @@ function toInsightReport(value: unknown): InsightReport {
   };
 }
 
+function toDailyBrief(value: unknown): DailyBrief {
+  if (!isRecord(value)) {
+    throw new Error("Collector API returned an invalid daily brief row");
+  }
+
+  return {
+    id: readNumber(value, "id"),
+    date: readString(value, "date"),
+    periodStart: readString(value, "periodStart"),
+    periodEnd: readString(value, "periodEnd"),
+    generatedAt: readString(value, "generatedAt"),
+    scheduledForLocal: readString(value, "scheduledForLocal"),
+    modelProvider: readString(value, "modelProvider"),
+    modelName: readString(value, "modelName"),
+    promptVersion: readString(value, "promptVersion"),
+    status: readString(value, "status"),
+    descriptiveStats: readDailyActivityStats(value, "descriptiveStats"),
+    hourlyMetrics: readHourlyMetrics(value, "hourlyMetrics"),
+    comparison: readDailyComparison(value, "comparison"),
+    fiveHourReportIds: readNumberArray(value, "fiveHourReportIds"),
+    dailySummaryText: readString(value, "dailySummaryText"),
+    actionTrajectory: readString(value, "actionTrajectory"),
+    rawSummaryJson: value.rawSummaryJson ?? null,
+    error: readOptionalString(value, "error"),
+  };
+}
+
 function readOptionalRecord<T>(
   record: Record<string, unknown>,
   key: string,
@@ -272,6 +332,107 @@ function readStringArray(record: Record<string, unknown>, key: string): string[]
     throw new Error(`API row has invalid ${key}`);
   }
   return value;
+}
+
+function readDailyActivityStats(
+  record: Record<string, unknown>,
+  key: string,
+): DailyActivityStats {
+  const value = record[key];
+  if (!isRecord(value)) {
+    throw new Error(`API row has invalid ${key}`);
+  }
+  return {
+    date: readString(value, "date"),
+    periodStart: readString(value, "periodStart"),
+    periodEnd: readString(value, "periodEnd"),
+    activeSeconds: readNumber(value, "activeSeconds"),
+    activeHours: readNumber(value, "activeHours"),
+    windowEventCount: readNumber(value, "windowEventCount"),
+    switchCount: readNumber(value, "switchCount"),
+    distinctAppCount: readNumber(value, "distinctAppCount"),
+    topApps: readTopApps(value, "topApps"),
+    categoryMix: readCategoryMix(value, "categoryMix"),
+    inputChars: readNumber(value, "inputChars"),
+    inputEvents: readNumber(value, "inputEvents"),
+    screenshotCount: readNumber(value, "screenshotCount"),
+    highResScreenshotCount: readNumber(value, "highResScreenshotCount"),
+    visualWindowCount: readNumber(value, "visualWindowCount"),
+    fiveHourReportCount: readNumber(value, "fiveHourReportCount"),
+    firstActivityAt: readOptionalString(value, "firstActivityAt"),
+    lastActivityAt: readOptionalString(value, "lastActivityAt"),
+  };
+}
+
+function readTopApps(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    throw new Error(`API row has invalid ${key}`);
+  }
+  return value.map((item) => {
+    if (!isRecord(item)) {
+      throw new Error("topApps row is not a record");
+    }
+    return {
+      processName: readString(item, "processName"),
+      activeSeconds: readNumber(item, "activeSeconds"),
+      share: readNumber(item, "share"),
+    };
+  });
+}
+
+function readHourlyMetrics(
+  record: Record<string, unknown>,
+  key: string,
+): HourlyActivityMetric[] {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    throw new Error(`API row has invalid ${key}`);
+  }
+  return value.map((item) => {
+    if (!isRecord(item)) {
+      throw new Error("hourlyMetrics row is not a record");
+    }
+    return {
+      hour: readNumber(item, "hour"),
+      startAt: readString(item, "startAt"),
+      endAt: readString(item, "endAt"),
+      activeSeconds: readNumber(item, "activeSeconds"),
+      activeRatio: readNumber(item, "activeRatio"),
+      windowEventCount: readNumber(item, "windowEventCount"),
+      switchCount: readNumber(item, "switchCount"),
+      distinctAppCount: readNumber(item, "distinctAppCount"),
+      dominantApp: readOptionalString(item, "dominantApp"),
+      dominantCategory: readActivityCategory(item, "dominantCategory"),
+      inputChars: readNumber(item, "inputChars"),
+      screenshotCount: readNumber(item, "screenshotCount"),
+      highResScreenshotCount: readNumber(item, "highResScreenshotCount"),
+      visualWindowCount: readNumber(item, "visualWindowCount"),
+      fiveHourReportIds: readNumberArray(item, "fiveHourReportIds"),
+    };
+  });
+}
+
+function readDailyComparison(
+  record: Record<string, unknown>,
+  key: string,
+): DailyComparison {
+  const value = record[key];
+  if (!isRecord(value)) {
+    throw new Error(`API row has invalid ${key}`);
+  }
+  return {
+    baselineDays: readNumber(value, "baselineDays"),
+    comparedDates: readStringArray(value, "comparedDates"),
+    activeSecondsDelta: readNumber(value, "activeSecondsDelta"),
+    switchesPerHourDelta: readNumber(value, "switchesPerHourDelta"),
+    inputCharsDelta: readNumber(value, "inputCharsDelta"),
+    screenshotCoverageDelta: readNumber(value, "screenshotCoverageDelta"),
+    dominantCategoryShift: readOptionalString(value, "dominantCategoryShift"),
+    startTimeShiftMinutes: readOptionalNumber(value, "startTimeShiftMinutes"),
+    endTimeShiftMinutes: readOptionalNumber(value, "endTimeShiftMinutes"),
+    explanation: readString(value, "explanation"),
+  };
 }
 
 function readCategoryMix(
