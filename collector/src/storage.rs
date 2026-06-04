@@ -1512,7 +1512,8 @@ impl Store {
         end: DateTime<Utc>,
         five_hour_reports: &[InsightReport],
     ) -> Result<DailyActivityStats> {
-        let slices = self.window_activity_slices(start, end)?;
+        let activity_end = end.min(Utc::now());
+        let slices = self.window_activity_slices(start, activity_end)?;
         let mut app_seconds: HashMap<String, i64> = HashMap::new();
         let mut distinct_apps = HashSet::new();
         let mut first_activity_at: Option<DateTime<Utc>> = None;
@@ -1589,7 +1590,8 @@ impl Store {
         end: DateTime<Utc>,
         five_hour_reports: &[InsightReport],
     ) -> Result<Vec<HourlyActivityMetric>> {
-        let slices = self.window_activity_slices(start, end)?;
+        let activity_end = end.min(Utc::now());
+        let slices = self.window_activity_slices(start, activity_end)?;
         let mut metrics = Vec::with_capacity(24);
         for hour in 0..24 {
             let hour_start = start + chrono::Duration::hours(hour);
@@ -1701,9 +1703,11 @@ impl Store {
               w.process_name,
               w.exe_path_hash,
               w.window_title,
-              w.capture_status
+              w.capture_status,
+              c.ended_at
             FROM raw_events r
             JOIN window_events w ON w.raw_event_id = r.id
+            JOIN capture_sessions c ON c.id = r.session_id
             WHERE r.event_type = 'window_focus'
               AND r.event_ts < ?1
             ORDER BY r.session_id ASC, r.event_ts ASC, r.id ASC
@@ -1712,17 +1716,21 @@ impl Store {
         let rows = statement.query_map(params![end.to_rfc3339()], |row| {
             let event_ts: String = row.get(2)?;
             let capture_status: String = row.get(8)?;
-            Ok(StoredWindowEvent {
-                raw_event_id: row.get(0)?,
-                session_id: row.get(1)?,
-                event_ts: parse_ts(&event_ts)?,
-                hwnd: row.get(3)?,
-                pid: row.get(4)?,
-                process_name: row.get(5)?,
-                exe_path_hash: row.get(6)?,
-                window_title: row.get(7)?,
-                capture_status: CaptureStatus::from_db(&capture_status),
-            })
+            let session_ended_at: Option<String> = row.get(9)?;
+            Ok((
+                StoredWindowEvent {
+                    raw_event_id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    event_ts: parse_ts(&event_ts)?,
+                    hwnd: row.get(3)?,
+                    pid: row.get(4)?,
+                    process_name: row.get(5)?,
+                    exe_path_hash: row.get(6)?,
+                    window_title: row.get(7)?,
+                    capture_status: CaptureStatus::from_db(&capture_status),
+                },
+                session_ended_at.as_deref().map(parse_ts).transpose()?,
+            ))
         })?;
         let mut events = Vec::new();
         for row in rows {
@@ -1730,18 +1738,24 @@ impl Store {
         }
 
         let mut slices = Vec::new();
-        for (index, event) in events.iter().enumerate() {
+        for (index, (event, session_ended_at)) in events.iter().enumerate() {
             if event.capture_status != CaptureStatus::Ok {
                 continue;
             }
             let next_at = events
                 .iter()
                 .skip(index + 1)
+                .map(|(candidate, _)| candidate)
                 .find(|candidate| candidate.session_id == event.session_id)
-                .map(|candidate| candidate.event_ts)
-                .unwrap_or(end);
+                .map(|candidate| candidate.event_ts);
+            let inferred_end = match (next_at, *session_ended_at) {
+                (Some(next_at), Some(ended_at)) => next_at.min(ended_at),
+                (Some(next_at), None) => next_at,
+                (None, Some(ended_at)) => ended_at,
+                (None, None) => end,
+            };
             let slice_start = event.event_ts.max(start);
-            let slice_end = next_at.min(end);
+            let slice_end = inferred_end.min(end);
             if slice_end > slice_start {
                 slices.push(ActivitySlice {
                     start: slice_start,

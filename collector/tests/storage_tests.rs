@@ -620,6 +620,114 @@ fn daily_brief_round_trips_with_hourly_metrics_and_report_ids() {
 }
 
 #[test]
+fn daily_activity_stats_do_not_extend_closed_sessions_into_selected_day() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let old_session = store.create_session("0.1.0", "old").unwrap();
+    store
+        .insert_window_focus(
+            &old_session,
+            &WindowSnapshot {
+                captured_at: ts("2026-06-03T10:00:00Z"),
+                hwnd: 10,
+                pid: 10,
+                process_name: "OldApp.exe".into(),
+                exe_path_hash: None,
+                window_title: Some("old work".into()),
+                capture_status: CaptureStatus::Ok,
+            },
+        )
+        .unwrap();
+    store
+        .close_session(&old_session, ts("2026-06-03T10:10:00Z"), "service_stop")
+        .unwrap();
+
+    let current_session = store.create_session("0.1.0", "current").unwrap();
+    store
+        .insert_window_focus(
+            &current_session,
+            &WindowSnapshot {
+                captured_at: ts("2026-06-04T00:00:00Z"),
+                hwnd: 20,
+                pid: 20,
+                process_name: "Code.exe".into(),
+                exe_path_hash: None,
+                window_title: Some("current work".into()),
+                capture_status: CaptureStatus::Ok,
+            },
+        )
+        .unwrap();
+    store
+        .insert_window_focus(
+            &current_session,
+            &WindowSnapshot {
+                captured_at: ts("2026-06-04T00:30:00Z"),
+                hwnd: 21,
+                pid: 21,
+                process_name: "Browser.exe".into(),
+                exe_path_hash: None,
+                window_title: Some("current reading".into()),
+                capture_status: CaptureStatus::Ok,
+            },
+        )
+        .unwrap();
+    store
+        .close_session(&current_session, ts("2026-06-04T01:00:00Z"), "service_stop")
+        .unwrap();
+
+    let stats = store
+        .build_daily_activity_stats(
+            "2026-06-04",
+            ts("2026-06-04T00:00:00Z"),
+            ts("2026-06-05T00:00:00Z"),
+            &[],
+        )
+        .unwrap();
+
+    assert_eq!(stats.active_seconds, 3600);
+    assert_eq!(stats.distinct_app_count, 2);
+    assert!(
+        !stats
+            .top_apps
+            .iter()
+            .any(|app| app.process_name == "OldApp.exe")
+    );
+}
+
+#[test]
+fn daily_activity_stats_do_not_extend_open_sessions_into_future_hours() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "future").unwrap();
+    store
+        .insert_window_focus(
+            &session_id,
+            &WindowSnapshot {
+                captured_at: ts("2099-01-01T00:00:00Z"),
+                hwnd: 30,
+                pid: 30,
+                process_name: "FutureApp.exe".into(),
+                exe_path_hash: None,
+                window_title: Some("future work".into()),
+                capture_status: CaptureStatus::Ok,
+            },
+        )
+        .unwrap();
+
+    let stats = store
+        .build_daily_activity_stats(
+            "2099-01-01",
+            ts("2099-01-01T00:00:00Z"),
+            ts("2099-01-02T00:00:00Z"),
+            &[],
+        )
+        .unwrap();
+
+    assert_eq!(stats.active_seconds, 0);
+    assert_eq!(stats.active_hours, 0.0);
+}
+
+#[test]
 fn persists_lifecycle_events_in_order() {
     let mut store = Store::open_memory().unwrap();
     store.init().unwrap();
