@@ -48,6 +48,50 @@ Today should become the primary research desk:
   - Evidence drawer as a side reading pane.
   - Redacted mode should look intentional, not like missing data.
 
+### Review Notes / Summary
+
+The current summary area is the highest-priority redesign target. It must stop looking like a raw model dump. The UI should turn backend insight JSON into readable research notes with a clear information hierarchy.
+
+Structure:
+
+- Use a single "Review Notes" section with two adjacent notes at desktop width: "Window note" and "Session report".
+- On narrow screens, stack the notes with the window note first.
+- Each note uses a quiet header row: title, time range, cadence, status, and model/provider metadata. Status is small text or a compact neutral badge, not a large green pill.
+- Do not render two large heavy cards filled with paragraph text. Notes should use paper-like sections, hairline dividers, and bounded content height.
+
+Window note:
+
+- Lead with a two-to-three-line thesis from `summaryText` or `taskIntent`.
+- Render the 1/3/5 minute cadence as three small timeline cells. Each cell should show a concise observation, app/context label, and confidence marker if available.
+- Render `primaryActivity`, confidence, switching evidence, and risk flags as quiet metadata below the thesis, not as headline pills.
+- Show project hints as a capped inline list with an overflow count.
+
+Session report:
+
+- Convert the long report into structured sections:
+  - "Main thread" for the core work narrative.
+  - "Phases" for time-bounded work segments.
+  - "Switching / risks" for interruptions, uncertainty, or context switching.
+  - "Projects" for project hints and named workstreams.
+  - "Evidence" for evidence count and cadence metadata.
+- The first screen of the note should show only the main thread and the first few phases.
+- Full report text belongs behind a "Show full report" disclosure.
+- Paragraph text should use normal weight, readable line height, and a capped measure. Avoid all-bold paragraphs.
+
+Raw and malformed summary handling:
+
+- The default UI must never show JSON-looking strings, Markdown code fences, escaped quotes, or raw object syntax as prose.
+- If `summaryText` contains a serialized JSON object or a fenced JSON block, the presentation layer should extract known fields before rendering.
+- Known extractable fields include `summaryText`, `taskIntent`, `continuity`, `primaryActivity`, `projectHints`, `trajectory`, `visibleApps`, `riskFlags`, `confidence`, and provider metadata.
+- Unknown fields can be hidden by default and exposed only in a collapsible monospace "Raw JSON" detail for debugging.
+- If extraction fails, show a polished fallback note: "Summary generated, details unavailable", plus the timestamp/status metadata. Do not show parser errors in the note body.
+
+Redacted mode:
+
+- In redacted mode, Review Notes should show status, time range, cadence, and evidence count only.
+- Textual summaries, visible text hints, screenshots, and raw JSON remain hidden.
+- The empty state should read as an intentional privacy state, not as a failed render.
+
 ### Dashboard / Monitor
 
 The dashboard should read as an operational appendix:
@@ -139,6 +183,8 @@ Presentation:
 - `trajectory` renders as a short sequence of minute-mark observations.
 - `visibleApps` and `projectHints` render as quiet chips.
 - `rawSummaryJson` is not shown by default. If exposed, it must be in a collapsible monospace "Raw JSON" detail block.
+- If `summaryText` itself contains JSON-like content, normalize it before rendering. The UI should not display code fences, escaped JSON, or object syntax in the main note.
+- Normalization should prefer structured values in this order: parsed `summaryText`, `taskIntent`, `continuity`, `primaryActivity`, `trajectory`, and `riskFlags`.
 
 ### `InsightReport`
 
@@ -155,8 +201,12 @@ Fields:
 Presentation:
 
 - Render as a research note, not an AI card.
+- Render `summaryText` as sections, not as one dense paragraph.
+- Identify phase-like text from numbered segments or time ranges when the backend provides them, and display those phases as compact rows.
 - `categoryMix` becomes a compact distribution row or list.
+- `projectHints` renders as a capped list with overflow count.
 - `evidenceCount` is evidence metadata.
+- Full raw report text is available only behind a disclosure.
 
 ### Activity, Screenshot, and Input JSON
 
@@ -194,11 +244,14 @@ Do not use a large hero illustration, stock-like background, or decorative blobs
 - The first viewport looks like a polished macOS academic workspace, not a generated dashboard.
 - The palette is clearly deep green plus sage green, with neutral paper/ink support.
 - "AI" is not the dominant visible framing.
+- The summary area is reorganized into readable Review Notes with short thesis text, timeline/phase structure, and collapsible full details.
+- Raw JSON-looking summary strings are parsed or hidden; they are never shown as the default note body.
 - Backend JSON fields listed above render correctly or fall back intentionally.
 - Redacted mode still hides raw screenshots and text rows.
 - Playwright screenshots at desktop and mobile widths show no text overlap.
 - Verification commands:
   - `npm test`
   - `npm run build`
+  - targeted tests for JSON-like summary normalization and Review Notes rendering
   - Playwright screenshot review for desktop and mobile
   - `git diff --check`
