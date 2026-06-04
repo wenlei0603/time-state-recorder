@@ -61,7 +61,9 @@ function readDbStats(
       inputEvents: 0,
       textSegments: 0,
       screenshots: 0,
+      highResScreenshots: 0,
       blockerHits: 0,
+      imageRetention: defaultImageRetention(),
     };
   }
   return {
@@ -70,7 +72,37 @@ function readDbStats(
     inputEvents: readNumber(value, "inputEvents", 0),
     textSegments: readNumber(value, "textSegments", 0),
     screenshots: readNumber(value, "screenshots", 0),
+    highResScreenshots: readNumber(value, "highResScreenshots", 0),
     blockerHits: readNumber(value, "blockerHits", 0),
+    imageRetention: readImageRetention(value, "imageRetention"),
+  };
+}
+
+function readImageRetention(
+  record: Record<string, unknown>,
+  key: string,
+): DbStats["imageRetention"] {
+  const value = record[key];
+  if (!isRecord(value)) return defaultImageRetention();
+  return {
+    retentionDays: readNumber(value, "retentionDays", 30),
+    activeFiles: readNumber(value, "activeFiles", 0),
+    expiredFiles: readNumber(value, "expiredFiles", 0),
+    activeBytes: readNumber(value, "activeBytes", 0),
+    expiredBytes: readNumber(value, "expiredBytes", 0),
+    pendingGoogleDriveUpload: readBoolean(value, "pendingGoogleDriveUpload", false),
+    googleDriveMessage: readOptionalString(value, "googleDriveMessage"),
+  };
+}
+
+function defaultImageRetention(): DbStats["imageRetention"] {
+  return {
+    retentionDays: 30,
+    activeFiles: 0,
+    expiredFiles: 0,
+    activeBytes: 0,
+    expiredBytes: 0,
+    pendingGoogleDriveUpload: false,
   };
 }
 
@@ -122,6 +154,16 @@ function readNumber(
 ): number {
   const value = record[key];
   if (typeof value !== "number") return fallback;
+  return value;
+}
+
+function readBoolean(
+  record: Record<string, unknown>,
+  key: string,
+  fallback: boolean,
+): boolean {
+  const value = record[key];
+  if (typeof value !== "boolean") return fallback;
   return value;
 }
 

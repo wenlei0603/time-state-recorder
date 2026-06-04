@@ -18,6 +18,19 @@ function formatTime(value: string): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  }
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${bytes} B`;
+}
+
 function SubsystemRow({ name, health, icon }: {
   name: string;
   health: SubsystemHealth;
@@ -190,10 +203,47 @@ export function CollectorMonitor() {
             <strong>{health!.dbStats.screenshots.toLocaleString()}</strong>
           </div>
           <div className="dbStatRow">
+            <span>High-res screenshots</span>
+            <strong>{health!.dbStats.highResScreenshots.toLocaleString()}</strong>
+          </div>
+          <div className="dbStatRow">
             <span>Blocker Hits</span>
             <strong>{health!.dbStats.blockerHits.toLocaleString()}</strong>
           </div>
         </div>
+      </div>
+
+      <div className="monitorSection">
+        <div className="monitorSectionHeader">
+          <Database aria-hidden="true" size={16} />
+          <h3>Image Retention</h3>
+          <span className="retentionBadge">
+            {health!.dbStats.imageRetention.retentionDays} days local
+          </span>
+        </div>
+        <div className="dbStatList">
+          <div className="dbStatRow">
+            <span>Active files</span>
+            <strong>{health!.dbStats.imageRetention.activeFiles.toLocaleString()}</strong>
+          </div>
+          <div className="dbStatRow">
+            <span>Active size</span>
+            <strong>{formatBytes(health!.dbStats.imageRetention.activeBytes)}</strong>
+          </div>
+          <div className="dbStatRow">
+            <span>Expired files</span>
+            <strong>{health!.dbStats.imageRetention.expiredFiles.toLocaleString()}</strong>
+          </div>
+        </div>
+        {health!.dbStats.imageRetention.pendingGoogleDriveUpload && (
+          <div className="retentionNotice">
+            <AlertTriangle aria-hidden="true" size={16} />
+            <p>
+              {health!.dbStats.imageRetention.googleDriveMessage ??
+                "Local screenshots are temporary. Upload older evidence to Google Drive before cleanup."}
+            </p>
+          </div>
+        )}
       </div>
 
       {anyError && (

@@ -536,5 +536,48 @@ pub struct DbStats {
     pub input_events: usize,
     pub text_segments: usize,
     pub screenshots: usize,
+    pub high_res_screenshots: usize,
     pub blocker_hits: usize,
+    pub image_retention: ImageRetentionStats,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageRetentionStats {
+    pub retention_days: u32,
+    pub active_files: usize,
+    pub expired_files: usize,
+    pub active_bytes: u64,
+    pub expired_bytes: u64,
+    pub pending_google_drive_upload: bool,
+    pub google_drive_message: Option<String>,
+}
+
+impl ImageRetentionStats {
+    pub fn inactive(retention_days: u32) -> Self {
+        Self {
+            retention_days,
+            active_files: 0,
+            expired_files: 0,
+            active_bytes: 0,
+            expired_bytes: 0,
+            pending_google_drive_upload: false,
+            google_drive_message: None,
+        }
+    }
+}
+
+impl DbStats {
+    pub fn empty(retention_days: u32) -> Self {
+        Self {
+            window_events: 0,
+            lifecycle_events: 0,
+            input_events: 0,
+            text_segments: 0,
+            screenshots: 0,
+            high_res_screenshots: 0,
+            blocker_hits: 0,
+            image_retention: ImageRetentionStats::inactive(retention_days),
+        }
+    }
 }

@@ -7,13 +7,37 @@ use uuid::Uuid;
 
 use crate::models::{
     ActivityCategory, ActivityCategoryCount, AppScreenshotCount, BlockerHit, CaptureStatus,
-    HighResScreenshotMeta, InsightReport, LifecycleEvent, LifecycleType, ScreenshotMeta,
-    ScreenshotSkippedReasonCount, ScreenshotSummary, StoredWindowEvent, VisualObservation,
-    VisualSummary, VisualTrajectoryPoint, VisualWindowSummary, WindowSnapshot,
+    HighResScreenshotMeta, ImageRetentionStats, InsightReport, LifecycleEvent, LifecycleType,
+    ScreenshotMeta, ScreenshotSkippedReasonCount, ScreenshotSummary, StoredWindowEvent,
+    VisualObservation, VisualSummary, VisualTrajectoryPoint, VisualWindowSummary, WindowSnapshot,
 };
 
 pub struct Store {
     conn: Connection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenshotStoreKind {
+    Thumbnail,
+    HighRes,
+}
+
+impl ScreenshotStoreKind {
+    fn table_name(self) -> &'static str {
+        match self {
+            Self::Thumbnail => "screenshot_thumbnails",
+            Self::HighRes => "high_res_screenshots",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredScreenshotFile {
+    pub kind: ScreenshotStoreKind,
+    pub id: i64,
+    pub captured_at: DateTime<Utc>,
+    pub file_path: String,
+    pub file_size_bytes: u64,
 }
 
 impl Store {
@@ -104,6 +128,8 @@ impl Store {
               process_name TEXT,
               window_title TEXT,
               capture_status TEXT NOT NULL DEFAULT 'ok',
+              file_size_bytes INTEGER NOT NULL DEFAULT 0,
+              expired_at TEXT,
               session_id TEXT NOT NULL,
               FOREIGN KEY(session_id) REFERENCES capture_sessions(id)
             );
@@ -139,6 +165,8 @@ impl Store {
               process_name TEXT,
               window_title TEXT,
               capture_status TEXT NOT NULL DEFAULT 'ok',
+              file_size_bytes INTEGER NOT NULL DEFAULT 0,
+              expired_at TEXT,
               session_id TEXT NOT NULL,
               FOREIGN KEY(session_id) REFERENCES capture_sessions(id)
             );
@@ -247,6 +275,18 @@ impl Store {
             "#,
         )?;
         self.ensure_column("capture_sessions", "ended_reason", "TEXT")?;
+        self.ensure_column(
+            "screenshot_thumbnails",
+            "file_size_bytes",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        self.ensure_column("screenshot_thumbnails", "expired_at", "TEXT")?;
+        self.ensure_column(
+            "high_res_screenshots",
+            "file_size_bytes",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        self.ensure_column("high_res_screenshots", "expired_at", "TEXT")?;
         Ok(())
     }
 
@@ -580,13 +620,23 @@ impl Store {
     }
 
     pub fn insert_screenshot(&mut self, session_id: &str, meta: &ScreenshotMeta) -> Result<i64> {
+        self.insert_screenshot_with_file_size(session_id, meta, 0)
+    }
+
+    pub fn insert_screenshot_with_file_size(
+        &mut self,
+        session_id: &str,
+        meta: &ScreenshotMeta,
+        file_size_bytes: u64,
+    ) -> Result<i64> {
         let tx = self.conn.transaction()?;
         ensure_session_open_tx(&tx, session_id)?;
         tx.execute(
             r#"
             INSERT INTO screenshot_thumbnails
-              (captured_at, file_path, width, height, process_name, window_title, capture_status, session_id)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+              (captured_at, file_path, width, height, process_name, window_title, capture_status,
+               file_size_bytes, session_id)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             "#,
             params![
                 meta.captured_at.to_rfc3339(),
@@ -596,6 +646,7 @@ impl Store {
                 meta.process_name,
                 meta.window_title,
                 meta.capture_status,
+                file_size_bytes as i64,
                 session_id,
             ],
         )?;
@@ -768,13 +819,23 @@ impl Store {
         session_id: &str,
         meta: &HighResScreenshotMeta,
     ) -> Result<i64> {
+        self.insert_high_res_screenshot_with_file_size(session_id, meta, 0)
+    }
+
+    pub fn insert_high_res_screenshot_with_file_size(
+        &mut self,
+        session_id: &str,
+        meta: &HighResScreenshotMeta,
+        file_size_bytes: u64,
+    ) -> Result<i64> {
         let tx = self.conn.transaction()?;
         ensure_session_open_tx(&tx, session_id)?;
         tx.execute(
             r#"
             INSERT INTO high_res_screenshots
-              (captured_at, file_path, width, height, process_name, window_title, capture_status, session_id)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+              (captured_at, file_path, width, height, process_name, window_title, capture_status,
+               file_size_bytes, session_id)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
             "#,
             params![
                 meta.captured_at.to_rfc3339(),
@@ -784,6 +845,7 @@ impl Store {
                 meta.process_name,
                 meta.window_title,
                 meta.capture_status,
+                file_size_bytes as i64,
                 session_id,
             ],
         )?;
@@ -1425,7 +1487,78 @@ impl Store {
         })
     }
 
+    pub fn list_expirable_screenshot_files(
+        &self,
+        cutoff: DateTime<Utc>,
+    ) -> Result<Vec<StoredScreenshotFile>> {
+        let mut files = Vec::new();
+        self.collect_expirable_screenshot_files(
+            ScreenshotStoreKind::Thumbnail,
+            cutoff,
+            &mut files,
+        )?;
+        self.collect_expirable_screenshot_files(ScreenshotStoreKind::HighRes, cutoff, &mut files)?;
+        Ok(files)
+    }
+
+    fn collect_expirable_screenshot_files(
+        &self,
+        kind: ScreenshotStoreKind,
+        cutoff: DateTime<Utc>,
+        files: &mut Vec<StoredScreenshotFile>,
+    ) -> Result<()> {
+        let sql = format!(
+            r#"
+            SELECT id, captured_at, file_path, file_size_bytes
+            FROM {}
+            WHERE captured_at < ?1
+              AND capture_status = 'ok'
+              AND file_path <> ''
+            ORDER BY captured_at ASC, id ASC
+            "#,
+            kind.table_name()
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![cutoff.to_rfc3339()], |row| {
+            let captured_at: String = row.get(1)?;
+            let file_size_bytes: i64 = row.get(3)?;
+            Ok(StoredScreenshotFile {
+                kind,
+                id: row.get(0)?,
+                captured_at: parse_ts(&captured_at)?,
+                file_path: row.get(2)?,
+                file_size_bytes: file_size_bytes.max(0) as u64,
+            })
+        })?;
+        for row in rows {
+            files.push(row?);
+        }
+        Ok(())
+    }
+
+    pub fn mark_screenshot_file_expired(
+        &mut self,
+        kind: ScreenshotStoreKind,
+        id: i64,
+        expired_at: DateTime<Utc>,
+    ) -> Result<()> {
+        let sql = format!(
+            "UPDATE {} SET capture_status = 'expired', expired_at = ?1 WHERE id = ?2",
+            kind.table_name()
+        );
+        self.conn
+            .execute(&sql, params![expired_at.to_rfc3339(), id])?;
+        Ok(())
+    }
+
     pub fn get_db_stats(&self) -> Result<crate::models::DbStats> {
+        self.get_db_stats_with_retention(30)
+    }
+
+    pub fn get_db_stats_with_retention(
+        &self,
+        retention_days: u32,
+    ) -> Result<crate::models::DbStats> {
         let window_events: usize =
             self.conn
                 .query_row("SELECT COUNT(*) FROM window_events", [], |r| r.get(0))?;
@@ -1443,9 +1576,51 @@ impl Store {
             [],
             |r| r.get(0),
         )?;
+        let high_res_screenshots: usize = self.conn.query_row(
+            "SELECT COUNT(*) FROM high_res_screenshots WHERE capture_status = 'ok'",
+            [],
+            |r| r.get(0),
+        )?;
         let blocker_hits: usize =
             self.conn
                 .query_row("SELECT COUNT(*) FROM blocker_hits", [], |r| r.get(0))?;
+        let expired_thumbnail_files: usize = self.conn.query_row(
+            "SELECT COUNT(*) FROM screenshot_thumbnails WHERE capture_status = 'expired'",
+            [],
+            |r| r.get(0),
+        )?;
+        let expired_high_res_files: usize = self.conn.query_row(
+            "SELECT COUNT(*) FROM high_res_screenshots WHERE capture_status = 'expired'",
+            [],
+            |r| r.get(0),
+        )?;
+        let active_thumbnail_bytes: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(file_size_bytes), 0) FROM screenshot_thumbnails WHERE capture_status = 'ok'",
+            [],
+            |r| r.get(0),
+        )?;
+        let active_high_res_bytes: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(file_size_bytes), 0) FROM high_res_screenshots WHERE capture_status = 'ok'",
+            [],
+            |r| r.get(0),
+        )?;
+        let expired_thumbnail_bytes: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(file_size_bytes), 0) FROM screenshot_thumbnails WHERE capture_status = 'expired'",
+            [],
+            |r| r.get(0),
+        )?;
+        let expired_high_res_bytes: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(file_size_bytes), 0) FROM high_res_screenshots WHERE capture_status = 'expired'",
+            [],
+            |r| r.get(0),
+        )?;
+        let active_files = screenshots + high_res_screenshots;
+        let pending_google_drive_upload = active_files > 0;
+        let google_drive_message = pending_google_drive_upload.then(|| {
+            format!(
+                "Local screenshots are temporary for {retention_days} days. Upload older evidence to Google Drive before cleanup."
+            )
+        });
 
         Ok(crate::models::DbStats {
             window_events,
@@ -1453,7 +1628,17 @@ impl Store {
             input_events,
             text_segments,
             screenshots,
+            high_res_screenshots,
             blocker_hits,
+            image_retention: ImageRetentionStats {
+                retention_days,
+                active_files,
+                expired_files: expired_thumbnail_files + expired_high_res_files,
+                active_bytes: (active_thumbnail_bytes + active_high_res_bytes).max(0) as u64,
+                expired_bytes: (expired_thumbnail_bytes + expired_high_res_bytes).max(0) as u64,
+                pending_google_drive_upload,
+                google_drive_message,
+            },
         })
     }
 

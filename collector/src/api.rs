@@ -21,6 +21,7 @@ use tower_http::services::ServeDir;
 use crate::{
     activity::{ActivityBucketQuery, build_activity_buckets},
     blocker::BlockerEngine,
+    image_retention::{ImageRetentionPolicy, cleanup_expired_images},
     input,
     insights::ConfiguredInsightReporter,
     interval::build_time_events_with_lifecycle,
@@ -217,6 +218,8 @@ const THUMBNAIL_SCREENSHOT_MAX_WIDTH: u32 = 960;
 const THUMBNAIL_SCREENSHOT_QUALITY: u8 = 82;
 const HIGH_RES_SCREENSHOT_MAX_WIDTH: u32 = 1600;
 const HIGH_RES_SCREENSHOT_QUALITY: u8 = 88;
+const DEFAULT_IMAGE_RETENTION_DAYS: u32 = 30;
+const IMAGE_RETENTION_SCAN_INTERVAL: u64 = 12 * 60 * 60;
 const VISUAL_ANALYSIS_SCAN_INTERVAL: u64 = 30;
 const INSIGHT_REPORT_INTERVAL: u64 = 5 * 60 * 60;
 const INSIGHT_REPORT_CHECK_INTERVAL: u64 = 5 * 60;
@@ -248,6 +251,7 @@ struct ScreenshotCaptureProfile {
 struct ScreenshotCaptureRecord {
     captured_at: DateTime<Utc>,
     file_path: String,
+    file_size_bytes: u64,
     width: u32,
     height: u32,
     process_name: Option<String>,
@@ -309,14 +313,7 @@ fn default_state(
                 last_capture_status: None,
                 last_skip_reason: None,
             },
-            db_stats: DbStats {
-                window_events: 0,
-                lifecycle_events: 0,
-                input_events: 0,
-                text_segments: 0,
-                screenshots: 0,
-                blocker_hits: 0,
-            },
+            db_stats: DbStats::empty(DEFAULT_IMAGE_RETENTION_DAYS),
         })),
         analysis_status: Arc::new(Mutex::new(AnalysisStatus::default())),
         shutdown_tx: Arc::new(Mutex::new(shutdown_tx)),
@@ -443,7 +440,7 @@ fn insert_screenshot_capture(
     record: &ScreenshotCaptureRecord,
 ) -> Result<i64> {
     match kind {
-        ScreenshotCaptureKind::Thumbnail => store.insert_screenshot(
+        ScreenshotCaptureKind::Thumbnail => store.insert_screenshot_with_file_size(
             session_id,
             &ScreenshotMeta {
                 id: 0,
@@ -455,8 +452,9 @@ fn insert_screenshot_capture(
                 window_title: record.window_title.clone(),
                 capture_status: record.capture_status.clone(),
             },
+            record.file_size_bytes,
         ),
-        ScreenshotCaptureKind::HighRes => store.insert_high_res_screenshot(
+        ScreenshotCaptureKind::HighRes => store.insert_high_res_screenshot_with_file_size(
             session_id,
             &HighResScreenshotMeta {
                 id: 0,
@@ -468,6 +466,7 @@ fn insert_screenshot_capture(
                 window_title: record.window_title.clone(),
                 capture_status: record.capture_status.clone(),
             },
+            record.file_size_bytes,
         ),
     }
 }
@@ -506,6 +505,7 @@ pub async fn serve(
     );
     let visual_analysis_collector = spawn_visual_analysis_loop(state.clone());
     let insight_report_collector = spawn_insight_report_loop(state.clone());
+    let image_retention_collector = spawn_image_retention_loop(state.clone());
     let input_collector = input::spawn_input_collector(state.store.clone(), state.health.clone());
 
     let app = router_from_state(state.clone());
@@ -518,12 +518,14 @@ pub async fn serve(
     high_res_screenshot_collector.abort();
     visual_analysis_collector.abort();
     insight_report_collector.abort();
+    image_retention_collector.abort();
     input_collector.abort();
     let _ = window_collector.await;
     let _ = screenshot_collector.await;
     let _ = high_res_screenshot_collector.await;
     let _ = visual_analysis_collector.await;
     let _ = insight_report_collector.await;
+    let _ = image_retention_collector.await;
     let _ = input_collector.await;
 
     if let Ok(mut store) = state.store.lock() {
@@ -739,6 +741,7 @@ fn record_screenshot_skip(
             &ScreenshotCaptureRecord {
                 captured_at: now,
                 file_path: String::new(),
+                file_size_bytes: 0,
                 width: 0,
                 height: 0,
                 process_name,
@@ -879,6 +882,7 @@ fn spawn_screenshot_loop(
                     &ScreenshotCaptureRecord {
                         captured_at: now,
                         file_path: relative_path,
+                        file_size_bytes: bytes.len() as u64,
                         width: w,
                         height: h,
                         process_name: Some(snapshot.process_name.clone()),
@@ -914,6 +918,54 @@ fn spawn_screenshot_loop(
                     );
                 }
             }
+        }
+    })
+}
+
+fn spawn_image_retention_loop(state: AppState) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            let cleanup_result = match state.store.lock() {
+                Ok(mut store) => cleanup_expired_images(
+                    &mut store,
+                    &state.screenshot_dir,
+                    &state.high_res_screenshot_dir,
+                    Utc::now(),
+                    ImageRetentionPolicy {
+                        retention_days: DEFAULT_IMAGE_RETENTION_DAYS,
+                    },
+                ),
+                Err(_) => Err(anyhow::anyhow!("store lock poisoned")),
+            };
+
+            match cleanup_result {
+                Ok(result) => {
+                    if result.deleted_files > 0 {
+                        eprintln!(
+                            "image retention expired {} files, {} bytes",
+                            result.deleted_files, result.deleted_bytes
+                        );
+                    }
+                    if result.failed_files > 0 {
+                        if let Ok(mut h) = state.health.lock() {
+                            h.screenshot_collector.error_count += 1;
+                            h.screenshot_collector.last_error = Some(format!(
+                                "image retention failed for {} files",
+                                result.failed_files
+                            ));
+                        }
+                    }
+                }
+                Err(err) => {
+                    eprintln!("image retention cleanup failed: {err:#}");
+                    if let Ok(mut h) = state.health.lock() {
+                        h.screenshot_collector.error_count += 1;
+                        h.screenshot_collector.last_error = Some(format!("{err:#}"));
+                    }
+                }
+            }
+
+            time::sleep(Duration::from_secs(IMAGE_RETENTION_SCAN_INTERVAL)).await;
         }
     })
 }
@@ -1160,25 +1212,11 @@ async fn health(State(state): State<AppState>) -> impl IntoResponse {
     };
 
     let db_stats = match state.store.lock() {
-        Ok(store) => match store.get_db_stats() {
+        Ok(store) => match store.get_db_stats_with_retention(DEFAULT_IMAGE_RETENTION_DAYS) {
             Ok(stats) => stats,
-            Err(_) => DbStats {
-                window_events: 0,
-                lifecycle_events: 0,
-                input_events: 0,
-                text_segments: 0,
-                screenshots: 0,
-                blocker_hits: 0,
-            },
+            Err(_) => DbStats::empty(DEFAULT_IMAGE_RETENTION_DAYS),
         },
-        Err(_) => DbStats {
-            window_events: 0,
-            lifecycle_events: 0,
-            input_events: 0,
-            text_segments: 0,
-            screenshots: 0,
-            blocker_hits: 0,
-        },
+        Err(_) => DbStats::empty(DEFAULT_IMAGE_RETENTION_DAYS),
     };
 
     Json(CollectorHealth {
@@ -1763,6 +1801,7 @@ mod tests {
             &ScreenshotCaptureRecord {
                 captured_at: ts("2026-05-25T09:05:00Z"),
                 file_path: "2026-05-25/09-05-00.jpg".into(),
+                file_size_bytes: 1024,
                 width: 1440,
                 height: 900,
                 process_name: Some("Code.exe".into()),

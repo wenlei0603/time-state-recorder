@@ -328,7 +328,19 @@ export type DbStats = {
   inputEvents: number;
   textSegments: number;
   screenshots: number;
+  highResScreenshots: number;
   blockerHits: number;
+  imageRetention: ImageRetentionStats;
+};
+
+export type ImageRetentionStats = {
+  retentionDays: number;
+  activeFiles: number;
+  expiredFiles: number;
+  activeBytes: number;
+  expiredBytes: number;
+  pendingGoogleDriveUpload: boolean;
+  googleDriveMessage?: string;
 };
 
 export type CollectorHealth = {

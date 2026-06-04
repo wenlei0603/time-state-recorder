@@ -577,6 +577,34 @@ textarea {
   font-size: 0.82rem;
 }
 
+.retentionBadge {
+  margin-left: auto;
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: #e7eef7;
+  color: #315172;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.retentionNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 9px 10px;
+  border-radius: 6px;
+  background: #fef3cf;
+  color: #6f5a12;
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.retentionNotice p {
+  margin: 0;
+}
+
 .errorBanner {
   display: flex;
   align-items: flex-start;
