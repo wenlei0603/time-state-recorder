@@ -192,6 +192,41 @@ export type VisualObservation = {
   error?: string;
 };
 
+export type VisualTrajectoryPoint = {
+  minuteMark: number;
+  screenshotId: number;
+  observation: string;
+  activityCategory: ActivityCategory;
+};
+
+export type VisualWindowSummary = {
+  id: number;
+  windowStart: string;
+  windowEnd: string;
+  sampledScreenshotIds: number[];
+  previousSummaryId?: number;
+  modelProvider: string;
+  modelName: string;
+  promptVersion: string;
+  summaryText: string;
+  continuity: string;
+  primaryActivity: ActivityCategory;
+  projectHints: string[];
+  taskIntent: string;
+  trajectory: VisualTrajectoryPoint[];
+  switchingLevel: string;
+  switchingEvidence: string;
+  loafingLevel: string;
+  loafingEvidence: string;
+  visibleApps: string[];
+  visibleTextHints: string[];
+  riskFlags: string[];
+  confidence: number;
+  rawSummaryJson: unknown;
+  createdAt: string;
+  error?: string;
+};
+
 export type ActivityCategoryCount = {
   activityCategory: ActivityCategory;
   count: number;
@@ -224,6 +259,7 @@ export type AnalysisStatus = {
   visual: AnalysisWorkerStatus;
   report: AnalysisWorkerStatus;
   latestObservation?: VisualObservation;
+  latestWindowSummary?: VisualWindowSummary;
   latestReport?: InsightReport;
 };
 

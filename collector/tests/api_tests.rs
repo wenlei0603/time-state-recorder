@@ -7,7 +7,7 @@ use tsr_collector::{
     models::{
         ActivityCategory, ActivityCategoryCount, CaptureStatus, HighResScreenshotMeta,
         InsightReport, LifecycleType, ScreenshotMeta, VisualObservation, VisualSummary,
-        WindowSnapshot,
+        VisualTrajectoryPoint, VisualWindowSummary, WindowSnapshot,
     },
     storage::Store,
 };
@@ -891,6 +891,72 @@ async fn serves_visual_observations_for_date() {
 }
 
 #[tokio::test]
+async fn serves_visual_window_summaries_for_date() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let summary_id = store
+        .insert_visual_window_summary(&VisualWindowSummary {
+            id: 0,
+            window_start: ts("2026-05-24T10:00:00Z"),
+            window_end: ts("2026-05-24T10:05:00Z"),
+            sampled_screenshot_ids: vec![1, 3, 5],
+            previous_summary_id: None,
+            model_provider: "minimax".into(),
+            model_name: "MiniMax-M3".into(),
+            prompt_version: "visual-window-minimax-m3-v1".into(),
+            summary_text: "5 分钟内持续实现视觉窗口摘要。".into(),
+            continuity: "continued_focus".into(),
+            primary_activity: ActivityCategory::Coding,
+            project_hints: vec!["Time State Recorder".into()],
+            task_intent: "实现窗口摘要 API".into(),
+            trajectory: vec![VisualTrajectoryPoint {
+                minute_mark: 1,
+                screenshot_id: 1,
+                observation: "编辑 Rust API".into(),
+                activity_category: ActivityCategory::Coding,
+            }],
+            switching_level: "low".into(),
+            switching_evidence: "窗口切换少。".into(),
+            loafing_level: "none".into(),
+            loafing_evidence: "未见无关内容。".into(),
+            visible_apps: vec!["Code.exe".into()],
+            visible_text_hints: vec!["visual-window-summaries".into()],
+            risk_flags: vec![],
+            confidence: 0.84,
+            raw_summary_json: serde_json::json!({ "summaryText": "5 分钟内持续实现视觉窗口摘要。" }),
+            created_at: ts("2026-05-24T10:05:10Z"),
+            error: None,
+        })
+        .unwrap();
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!(
+        "http://{addr}/api/visual-window-summaries?date=2026-05-24"
+    ))
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["summaries"][0]["id"], summary_id);
+    assert_eq!(
+        body["summaries"][0]["sampledScreenshotIds"],
+        serde_json::json!([1, 3, 5])
+    );
+    assert_eq!(body["summaries"][0]["trajectory"][0]["minuteMark"], 1);
+    assert_eq!(body["summaries"][0]["switchingLevel"], "low");
+    assert_eq!(body["summaries"][0]["loafingLevel"], "none");
+
+    server.abort();
+}
+
+#[tokio::test]
 async fn serves_insight_reports() {
     let mut store = Store::open_memory().unwrap();
     store.init().unwrap();
@@ -957,6 +1023,7 @@ async fn serves_analysis_status_feedback() {
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["visual"]["status"], "idle");
     assert_eq!(body["report"]["status"], "idle");
+    assert!(body["latestWindowSummary"].is_null());
 
     server.abort();
 }

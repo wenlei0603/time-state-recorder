@@ -2,18 +2,44 @@ use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine as _, engine::general_purpose};
-use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use chrono::{DateTime, Duration, Utc};
+use serde::{Deserialize, Serialize};
 
-use crate::models::{ActivityCategory, ScreenshotMeta, VisualSummary};
+use crate::models::{
+    ActivityCategory, HighResScreenshotMeta, ScreenshotMeta, VisualSummary, VisualTrajectoryPoint,
+    VisualWindowSummary,
+};
 
 const MINIMAX_PROMPT_VERSION: &str = "visual-summary-minimax-m3-v1";
+const MINIMAX_WINDOW_PROMPT_VERSION: &str = "visual-window-minimax-m3-v1";
+const WINDOW_SAMPLE_MARKS: [u8; 3] = [1, 3, 5];
 const MAX_INLINE_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]
 pub struct VisualAnalysisInput<'a> {
     pub screenshot: &'a ScreenshotMeta,
     pub image_path: Option<&'a Path>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindowScreenshotSample {
+    pub minute_mark: u8,
+    pub screenshot: HighResScreenshotMeta,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct WindowVisualAnalysisSample<'a> {
+    pub minute_mark: u8,
+    pub screenshot: &'a HighResScreenshotMeta,
+    pub image_path: &'a Path,
+}
+
+#[derive(Debug, Clone)]
+pub struct WindowVisualAnalysisInput<'a> {
+    pub window_start: DateTime<Utc>,
+    pub window_end: DateTime<Utc>,
+    pub samples: Vec<WindowVisualAnalysisSample<'a>>,
+    pub previous_summary: Option<&'a VisualWindowSummary>,
 }
 
 pub trait VisualAnalyzer {
@@ -59,6 +85,59 @@ impl ConfiguredVisualAnalyzer {
             Self::MiniMax(analyzer) => analyzer.analyze(input, created_at).await,
         }
     }
+
+    pub async fn analyze_window(
+        &self,
+        input: &WindowVisualAnalysisInput<'_>,
+        created_at: DateTime<Utc>,
+    ) -> Result<VisualWindowSummary> {
+        match self {
+            Self::Local(_) => Ok(local_stub_visual_window_summary(
+                input.window_start,
+                input.window_end,
+                &owned_window_samples(input),
+                input.previous_summary.map(|summary| summary.id),
+                created_at,
+            )),
+            Self::MiniMax(analyzer) => analyzer.analyze_window(input, created_at).await,
+        }
+    }
+}
+
+pub fn select_window_samples(
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+    screenshots: &[HighResScreenshotMeta],
+) -> Result<Vec<WindowScreenshotSample>> {
+    let mut selected = Vec::new();
+    for minute_mark in WINDOW_SAMPLE_MARKS {
+        let slot_start = window_start + Duration::minutes(i64::from(minute_mark) - 1);
+        let slot_end = std::cmp::min(slot_start + Duration::minutes(1), window_end);
+        let screenshot = screenshots
+            .iter()
+            .find(|screenshot| {
+                screenshot.capture_status == "ok"
+                    && !screenshot.file_path.is_empty()
+                    && screenshot.captured_at >= slot_start
+                    && screenshot.captured_at < slot_end
+                    && !selected.iter().any(|sample: &WindowScreenshotSample| {
+                        sample.screenshot.id == screenshot.id
+                    })
+            })
+            .cloned()
+            .with_context(|| {
+                format!(
+                    "missing high-res screenshot for minute {minute_mark} in {}..{}",
+                    window_start.to_rfc3339(),
+                    window_end.to_rfc3339()
+                )
+            })?;
+        selected.push(WindowScreenshotSample {
+            minute_mark,
+            screenshot,
+        });
+    }
+    Ok(selected)
 }
 
 pub fn select_visual_analyzer_provider<'a>(
@@ -228,6 +307,50 @@ impl MiniMaxAnalyzer {
         }))
     }
 
+    pub fn build_window_chat_completions_request(
+        &self,
+        input: &WindowVisualAnalysisInput<'_>,
+    ) -> Result<serde_json::Value> {
+        ensure_window_sample_marks(&input.samples)?;
+        let mut content = vec![serde_json::json!({
+            "type": "text",
+            "text": window_summary_prompt(input),
+        })];
+
+        for sample in &input.samples {
+            let image_url = image_file_to_data_url(sample.image_path)?;
+            let mut image_url_block = serde_json::json!({
+                "url": image_url,
+                "detail": self.config.image_detail,
+            });
+            if let Some(max_long_side_pixel) = self.config.max_long_side_pixel {
+                image_url_block["max_long_side_pixel"] = serde_json::json!(max_long_side_pixel);
+            }
+            content.push(serde_json::json!({
+                "type": "image_url",
+                "image_url": image_url_block
+            }));
+        }
+
+        Ok(serde_json::json!({
+            "model": self.config.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You analyze three screenshots from a 5-minute personal work window. Return compact JSON only."
+                },
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ],
+            "temperature": 0.2,
+            "top_p": 0.95,
+            "max_completion_tokens": self.config.max_completion_tokens,
+            "thinking": { "type": "disabled" }
+        }))
+    }
+
     pub async fn analyze(
         &self,
         input: &VisualAnalysisInput<'_>,
@@ -252,6 +375,40 @@ impl MiniMaxAnalyzer {
         }
         let content = parse_chat_completion_content(&response_text)?;
         Self::summary_from_response_text(input.screenshot, created_at, &self.config.model, &content)
+    }
+
+    pub async fn analyze_window(
+        &self,
+        input: &WindowVisualAnalysisInput<'_>,
+        created_at: DateTime<Utc>,
+    ) -> Result<VisualWindowSummary> {
+        let body = self.build_window_chat_completions_request(input)?;
+        let response = self
+            .client
+            .post(self.config.chat_completions_url())
+            .bearer_auth(&self.config.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context("MiniMax window visual analysis request failed")?;
+        let status = response.status();
+        let response_text = response
+            .text()
+            .await
+            .context("MiniMax window visual response body read failed")?;
+        if !status.is_success() {
+            bail!("MiniMax window visual analysis returned {status}: {response_text}");
+        }
+        let content = parse_chat_completion_content(&response_text)?;
+        Self::window_summary_from_response_text(
+            input.window_start,
+            input.window_end,
+            &owned_window_samples(input),
+            input.previous_summary.map(|summary| summary.id),
+            created_at,
+            &self.config.model,
+            &content,
+        )
     }
 
     pub fn summary_from_response_text(
@@ -305,6 +462,107 @@ impl MiniMaxAnalyzer {
             error: None,
         })
     }
+
+    pub fn window_summary_from_response_text(
+        window_start: DateTime<Utc>,
+        window_end: DateTime<Utc>,
+        samples: &[WindowScreenshotSample],
+        previous_summary_id: Option<i64>,
+        created_at: DateTime<Utc>,
+        model_name: &str,
+        content: &str,
+    ) -> Result<VisualWindowSummary> {
+        let raw_summary_json =
+            parse_model_window_summary_value(content).unwrap_or_else(|| serde_json::json!({}));
+        let parsed =
+            serde_json::from_value::<ModelWindowSummaryJson>(raw_summary_json.clone()).ok();
+        let local = local_stub_visual_window_summary(
+            window_start,
+            window_end,
+            samples,
+            previous_summary_id,
+            created_at,
+        );
+
+        let primary_activity = parsed
+            .as_ref()
+            .and_then(|value| ActivityCategory::from_db(value.primary_activity.as_deref()?))
+            .unwrap_or_else(|| local.primary_activity.clone());
+        let trajectory = parsed
+            .as_ref()
+            .and_then(|value| value.trajectory.clone())
+            .map(|items| model_trajectory_to_points(&items, samples))
+            .filter(|items| !items.is_empty())
+            .unwrap_or(local.trajectory);
+
+        Ok(VisualWindowSummary {
+            id: 0,
+            window_start,
+            window_end,
+            sampled_screenshot_ids: samples
+                .iter()
+                .map(|sample| sample.screenshot.id)
+                .collect::<Vec<_>>(),
+            previous_summary_id,
+            model_provider: "minimax".to_string(),
+            model_name: model_name.to_string(),
+            prompt_version: MINIMAX_WINDOW_PROMPT_VERSION.to_string(),
+            summary_text: parsed
+                .as_ref()
+                .and_then(|value| value.summary_text.clone())
+                .unwrap_or_else(|| content.trim().to_string()),
+            continuity: parsed
+                .as_ref()
+                .and_then(|value| value.continuity.clone())
+                .unwrap_or_else(|| local.continuity.clone()),
+            primary_activity,
+            project_hints: parsed
+                .as_ref()
+                .and_then(|value| value.project_hints.clone())
+                .unwrap_or(local.project_hints),
+            task_intent: parsed
+                .as_ref()
+                .and_then(|value| value.task_intent.clone())
+                .unwrap_or(local.task_intent),
+            trajectory,
+            switching_level: parsed
+                .as_ref()
+                .and_then(|value| value.switching_level.clone())
+                .unwrap_or(local.switching_level),
+            switching_evidence: parsed
+                .as_ref()
+                .and_then(|value| value.switching_evidence.clone())
+                .unwrap_or(local.switching_evidence),
+            loafing_level: parsed
+                .as_ref()
+                .and_then(|value| value.loafing_level.clone())
+                .unwrap_or(local.loafing_level),
+            loafing_evidence: parsed
+                .as_ref()
+                .and_then(|value| value.loafing_evidence.clone())
+                .unwrap_or(local.loafing_evidence),
+            visible_apps: parsed
+                .as_ref()
+                .and_then(|value| value.visible_apps.clone())
+                .unwrap_or(local.visible_apps),
+            visible_text_hints: parsed
+                .as_ref()
+                .and_then(|value| value.visible_text_hints.clone())
+                .unwrap_or(local.visible_text_hints),
+            risk_flags: parsed
+                .as_ref()
+                .and_then(|value| value.risk_flags.clone())
+                .unwrap_or(local.risk_flags),
+            confidence: parsed
+                .as_ref()
+                .and_then(|value| value.confidence)
+                .unwrap_or(0.5)
+                .clamp(0.0, 1.0),
+            raw_summary_json,
+            created_at,
+            error: None,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -317,6 +575,33 @@ struct ModelSummaryJson {
     visible_text_hints: Option<Vec<String>>,
     risk_flags: Option<Vec<String>>,
     confidence: Option<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelWindowSummaryJson {
+    summary_text: Option<String>,
+    continuity: Option<String>,
+    primary_activity: Option<String>,
+    project_hints: Option<Vec<String>>,
+    task_intent: Option<String>,
+    trajectory: Option<Vec<ModelTrajectoryPointJson>>,
+    switching_level: Option<String>,
+    switching_evidence: Option<String>,
+    loafing_level: Option<String>,
+    loafing_evidence: Option<String>,
+    visible_apps: Option<Vec<String>>,
+    visible_text_hints: Option<Vec<String>>,
+    risk_flags: Option<Vec<String>>,
+    confidence: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelTrajectoryPointJson {
+    minute_mark: u8,
+    observation: String,
+    activity_category: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -347,6 +632,11 @@ fn parse_chat_completion_content(response_text: &str) -> Result<String> {
 }
 
 fn parse_model_summary_json(content: &str) -> Option<ModelSummaryJson> {
+    let trimmed = strip_json_fence(content.trim());
+    serde_json::from_str(trimmed).ok()
+}
+
+fn parse_model_window_summary_value(content: &str) -> Option<serde_json::Value> {
     let trimmed = strip_json_fence(content.trim());
     serde_json::from_str(trimmed).ok()
 }
@@ -405,6 +695,46 @@ fn visual_summary_prompt(screenshot: &ScreenshotMeta) -> String {
     )
 }
 
+fn window_summary_prompt(input: &WindowVisualAnalysisInput<'_>) -> String {
+    let samples_json = input
+        .samples
+        .iter()
+        .map(|sample| {
+            serde_json::json!({
+                "minuteMark": sample.minute_mark,
+                "highResScreenshotId": sample.screenshot.id,
+                "capturedAt": sample.screenshot.captured_at,
+                "processName": sample.screenshot.process_name,
+                "windowTitle": sample.screenshot.window_title,
+                "dimensions": format!("{}x{}", sample.screenshot.width, sample.screenshot.height)
+            })
+        })
+        .collect::<Vec<_>>();
+    let previous_summary = input.previous_summary.map(|summary| {
+        serde_json::json!({
+            "id": summary.id,
+            "windowStart": summary.window_start,
+            "windowEnd": summary.window_end,
+            "summaryText": summary.summary_text,
+            "primaryActivity": summary.primary_activity.as_str(),
+            "projectHints": summary.project_hints,
+            "taskIntent": summary.task_intent,
+            "switchingLevel": summary.switching_level,
+            "loafingLevel": summary.loafing_level,
+        })
+    });
+
+    format!(
+        "Analyze this 5-minute work window using exactly three screenshots from minute marks 1, 3, and 5. Use the previous window summary only as continuity context, not as evidence for the current window. Return JSON only with keys: summaryText, continuity, primaryActivity, projectHints, taskIntent, trajectory, switchingLevel, switchingEvidence, loafingLevel, loafingEvidence, visibleApps, visibleTextHints, riskFlags, confidence. primaryActivity and each trajectory.activityCategory must be one of project_work, research, writing, coding, communication, meeting, admin, learning, planning, loafing, personal, idle, unknown. trajectory must include one object per image with minuteMark, observation, activityCategory. switchingLevel must be low, medium, or high. loafingLevel must be none, possible, or clear. Be concise and write summaryText, taskIntent, evidence fields in Chinese. windowStart={}, windowEnd={}, previousWindowSummary={}, samples={}",
+        input.window_start.to_rfc3339(),
+        input.window_end.to_rfc3339(),
+        previous_summary
+            .map(|value| serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string()))
+            .unwrap_or_else(|| "null".to_string()),
+        serde_json::to_string(&samples_json).unwrap_or_else(|_| "[]".to_string())
+    )
+}
+
 fn local_stub_visual_summary(
     screenshot: &ScreenshotMeta,
     created_at: DateTime<Utc>,
@@ -459,6 +789,194 @@ fn local_stub_visual_summary(
         created_at,
         error: None,
     }
+}
+
+fn local_stub_visual_window_summary(
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+    samples: &[WindowScreenshotSample],
+    previous_summary_id: Option<i64>,
+    created_at: DateTime<Utc>,
+) -> VisualWindowSummary {
+    let trajectory = samples
+        .iter()
+        .map(|sample| {
+            let app = sample
+                .screenshot
+                .process_name
+                .clone()
+                .unwrap_or_else(|| "Unknown app".to_string());
+            let title = sample
+                .screenshot
+                .window_title
+                .clone()
+                .unwrap_or_else(|| "Untitled window".to_string());
+            VisualTrajectoryPoint {
+                minute_mark: sample.minute_mark,
+                screenshot_id: sample.screenshot.id,
+                observation: format!(
+                    "Metadata-only observation: minute {} shows {app} focused on {title}.",
+                    sample.minute_mark
+                ),
+                activity_category: categorize_screenshot_metadata(
+                    &app,
+                    &title,
+                    &sample.screenshot.capture_status,
+                ),
+            }
+        })
+        .collect::<Vec<_>>();
+    let primary_activity = dominant_activity(&trajectory);
+    let visible_apps = dedupe_strings(
+        samples
+            .iter()
+            .filter_map(|sample| sample.screenshot.process_name.clone())
+            .collect(),
+    );
+    let visible_text_hints = dedupe_strings(
+        samples
+            .iter()
+            .filter_map(|sample| sample.screenshot.window_title.clone())
+            .collect(),
+    );
+    let project_hints = dedupe_strings(
+        samples
+            .iter()
+            .flat_map(|sample| {
+                let app = sample.screenshot.process_name.clone().unwrap_or_default();
+                let title = sample.screenshot.window_title.clone().unwrap_or_default();
+                project_hints_from_metadata(&app, &title)
+            })
+            .collect(),
+    );
+    let risk_flags = if samples.len() == WINDOW_SAMPLE_MARKS.len() {
+        Vec::new()
+    } else {
+        vec!["incomplete_window_samples".to_string()]
+    };
+
+    VisualWindowSummary {
+        id: 0,
+        window_start,
+        window_end,
+        sampled_screenshot_ids: samples
+            .iter()
+            .map(|sample| sample.screenshot.id)
+            .collect::<Vec<_>>(),
+        previous_summary_id,
+        model_provider: "local_stub".to_string(),
+        model_name: "metadata-window-v1".to_string(),
+        prompt_version: "visual-window-summary-v1".to_string(),
+        summary_text: format!(
+            "Metadata-only 5-minute window summary from {} to {} with {} screenshots.",
+            window_start.to_rfc3339(),
+            window_end.to_rfc3339(),
+            samples.len()
+        ),
+        continuity: if previous_summary_id.is_some() {
+            "continued_or_unknown".to_string()
+        } else {
+            "new_or_unknown".to_string()
+        },
+        primary_activity,
+        project_hints,
+        task_intent: "Metadata-only task intent is uncertain.".to_string(),
+        trajectory,
+        switching_level: "unknown".to_string(),
+        switching_evidence: "Metadata-only fallback cannot judge visual switching.".to_string(),
+        loafing_level: "unknown".to_string(),
+        loafing_evidence: "Metadata-only fallback cannot judge loafing.".to_string(),
+        visible_apps,
+        visible_text_hints,
+        risk_flags,
+        confidence: 0.35,
+        raw_summary_json: serde_json::json!({}),
+        created_at,
+        error: None,
+    }
+}
+
+fn ensure_window_sample_marks(samples: &[WindowVisualAnalysisSample<'_>]) -> Result<()> {
+    let marks = samples
+        .iter()
+        .map(|sample| sample.minute_mark)
+        .collect::<Vec<_>>();
+    if marks == WINDOW_SAMPLE_MARKS {
+        Ok(())
+    } else {
+        bail!(
+            "window visual analysis requires minute marks {:?}",
+            WINDOW_SAMPLE_MARKS
+        )
+    }
+}
+
+fn owned_window_samples(input: &WindowVisualAnalysisInput<'_>) -> Vec<WindowScreenshotSample> {
+    input
+        .samples
+        .iter()
+        .map(|sample| WindowScreenshotSample {
+            minute_mark: sample.minute_mark,
+            screenshot: sample.screenshot.clone(),
+        })
+        .collect()
+}
+
+fn model_trajectory_to_points(
+    items: &[ModelTrajectoryPointJson],
+    samples: &[WindowScreenshotSample],
+) -> Vec<VisualTrajectoryPoint> {
+    items
+        .iter()
+        .filter_map(|item| {
+            let sample = samples
+                .iter()
+                .find(|sample| sample.minute_mark == item.minute_mark)?;
+            Some(VisualTrajectoryPoint {
+                minute_mark: item.minute_mark,
+                screenshot_id: sample.screenshot.id,
+                observation: item.observation.clone(),
+                activity_category: item
+                    .activity_category
+                    .as_deref()
+                    .and_then(ActivityCategory::from_db)
+                    .unwrap_or(ActivityCategory::Unknown),
+            })
+        })
+        .collect()
+}
+
+fn dominant_activity(points: &[VisualTrajectoryPoint]) -> ActivityCategory {
+    let mut counts: Vec<(ActivityCategory, usize)> = Vec::new();
+    for point in points {
+        if let Some((_, count)) = counts
+            .iter_mut()
+            .find(|(activity, _)| activity == &point.activity_category)
+        {
+            *count += 1;
+        } else {
+            counts.push((point.activity_category.clone(), 1));
+        }
+    }
+    counts
+        .into_iter()
+        .max_by(|left, right| {
+            left.1
+                .cmp(&right.1)
+                .then_with(|| right.0.as_str().cmp(left.0.as_str()))
+        })
+        .map(|(activity, _)| activity)
+        .unwrap_or(ActivityCategory::Unknown)
+}
+
+fn dedupe_strings(values: Vec<String>) -> Vec<String> {
+    let mut deduped = Vec::new();
+    for value in values {
+        if !value.trim().is_empty() && !deduped.contains(&value) {
+            deduped.push(value);
+        }
+    }
+    deduped
 }
 
 fn categorize_screenshot_metadata(

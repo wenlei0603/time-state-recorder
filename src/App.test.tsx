@@ -61,6 +61,52 @@ function analysisStatusResponse() {
       createdAt: "2026-05-24T10:00:04Z",
       error: null
     },
+    latestWindowSummary: {
+      id: 9,
+      windowStart: "2026-05-24T10:00:00Z",
+      windowEnd: "2026-05-24T10:05:00Z",
+      sampledScreenshotIds: [1, 3, 5],
+      previousSummaryId: null,
+      modelProvider: "minimax",
+      modelName: "MiniMax-M3",
+      promptVersion: "visual-window-minimax-m3-v1",
+      summaryText: "持续实现窗口级视觉分析。",
+      continuity: "continued_focus",
+      primaryActivity: "coding",
+      projectHints: ["Time State Recorder"],
+      taskIntent: "实现三图摘要",
+      trajectory: [
+        {
+          minuteMark: 1,
+          screenshotId: 1,
+          observation: "编辑 Rust worker",
+          activityCategory: "coding"
+        },
+        {
+          minuteMark: 3,
+          screenshotId: 3,
+          observation: "检查 MiniMax 请求体",
+          activityCategory: "coding"
+        },
+        {
+          minuteMark: 5,
+          screenshotId: 5,
+          observation: "确认前端反馈",
+          activityCategory: "coding"
+        }
+      ],
+      switchingLevel: "low",
+      switchingEvidence: "同一项目内轻微切换。",
+      loafingLevel: "none",
+      loafingEvidence: "未见无关内容。",
+      visibleApps: ["Code"],
+      visibleTextHints: ["visual_window_summaries"],
+      riskFlags: [],
+      confidence: 0.86,
+      rawSummaryJson: { summaryText: "持续实现窗口级视觉分析。" },
+      createdAt: "2026-05-24T10:05:04Z",
+      error: null
+    },
     latestReport: {
       id: 2,
       periodStart: "2026-05-24T05:00:00Z",
@@ -384,13 +430,16 @@ describe("App", () => {
       await screen.findByRole("region", { name: /ai insight feedback/i })
     ).toBeInTheDocument();
     expect(screen.getByText("AI 工作洞察")).toBeInTheDocument();
-    expect(screen.getByText(/12 screenshots/i)).toBeInTheDocument();
+    expect(screen.getByText(/12 windows/i)).toBeInTheDocument();
+    expect(screen.queryByText("持续实现窗口级视觉分析。")).not.toBeInTheDocument();
     expect(screen.queryByText("Focused coding work.")).not.toBeInTheDocument();
     expect(screen.queryByText("Five-hour trajectory summary.")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
 
-    expect(await screen.findByText("Focused coding work.")).toBeInTheDocument();
+    expect(await screen.findByText("持续实现窗口级视觉分析。")).toBeInTheDocument();
+    expect(await screen.findByText(/第 1 分钟/)).toBeInTheDocument();
+    expect(await screen.findByText(/低切换/)).toBeInTheDocument();
     expect(await screen.findByText("Five-hour trajectory summary.")).toBeInTheDocument();
   });
 

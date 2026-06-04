@@ -2,9 +2,17 @@ use chrono::{DateTime, Utc};
 use tsr_collector::{
     insights::{
         MiniMaxInsightConfig, MiniMaxInsightReporter, build_five_hour_report,
-        observation_from_visual_summary, select_insight_report_provider,
+        build_five_hour_report_from_window_summaries, observation_from_visual_summary,
+        select_insight_report_provider,
     },
-    models::{ActivityCategory, HighResScreenshotMeta, VisualObservation, VisualSummary},
+    models::{
+        ActivityCategory, HighResScreenshotMeta, VisualObservation, VisualSummary,
+        VisualTrajectoryPoint, VisualWindowSummary,
+    },
+    visual_analysis::{
+        MiniMaxAnalyzer, MiniMaxConfig, WindowVisualAnalysisInput, WindowVisualAnalysisSample,
+        select_window_samples,
+    },
 };
 
 #[test]
@@ -129,6 +137,220 @@ fn minimax_insight_response_maps_to_five_hour_report() {
 }
 
 #[test]
+fn selects_first_third_and_fifth_minute_screenshots_for_window() {
+    let screenshots = vec![
+        high_res_screenshot(1, "2026-06-03T10:00:10Z", "Code.exe"),
+        high_res_screenshot(2, "2026-06-03T10:01:00Z", "Terminal.exe"),
+        high_res_screenshot(3, "2026-06-03T10:02:05Z", "Code.exe"),
+        high_res_screenshot(4, "2026-06-03T10:03:00Z", "msedge.exe"),
+        high_res_screenshot(5, "2026-06-03T10:04:15Z", "Code.exe"),
+    ];
+
+    let samples = select_window_samples(
+        ts("2026-06-03T10:00:00Z"),
+        ts("2026-06-03T10:05:00Z"),
+        &screenshots,
+    )
+    .unwrap();
+
+    assert_eq!(
+        samples
+            .iter()
+            .map(|sample| (sample.minute_mark, sample.screenshot.id))
+            .collect::<Vec<_>>(),
+        vec![(1, 1), (3, 3), (5, 5)]
+    );
+}
+
+#[test]
+fn minimax_window_analysis_request_sends_three_images_and_previous_summary() {
+    let dir = tempfile::tempdir().unwrap();
+    let image_paths = [1, 3, 5]
+        .iter()
+        .map(|mark| {
+            let path = dir.path().join(format!("minute-{mark}.jpg"));
+            std::fs::write(&path, [0xff, 0xd8, 0xff, 0xd9]).unwrap();
+            path
+        })
+        .collect::<Vec<_>>();
+    let screenshots = vec![
+        high_res_screenshot(1, "2026-06-03T10:00:10Z", "Code.exe"),
+        high_res_screenshot(3, "2026-06-03T10:02:05Z", "Code.exe"),
+        high_res_screenshot(5, "2026-06-03T10:04:15Z", "msedge.exe"),
+    ];
+    let previous = sample_window_summary(
+        40,
+        "2026-06-03T09:55:00Z",
+        "2026-06-03T10:00:00Z",
+        vec![31, 33, 35],
+        "上一个窗口在查 MiniMax 文档。",
+    );
+    let input = WindowVisualAnalysisInput {
+        window_start: ts("2026-06-03T10:00:00Z"),
+        window_end: ts("2026-06-03T10:05:00Z"),
+        samples: vec![
+            WindowVisualAnalysisSample {
+                minute_mark: 1,
+                screenshot: &screenshots[0],
+                image_path: image_paths[0].as_path(),
+            },
+            WindowVisualAnalysisSample {
+                minute_mark: 3,
+                screenshot: &screenshots[1],
+                image_path: image_paths[1].as_path(),
+            },
+            WindowVisualAnalysisSample {
+                minute_mark: 5,
+                screenshot: &screenshots[2],
+                image_path: image_paths[2].as_path(),
+            },
+        ],
+        previous_summary: Some(&previous),
+    };
+    let analyzer = MiniMaxAnalyzer::new(MiniMaxConfig::new(
+        "test-key",
+        "https://api.minimax.test/v1",
+        "MiniMax-M3",
+    ));
+
+    let request = analyzer
+        .build_window_chat_completions_request(&input)
+        .unwrap();
+    let content = request["messages"][1]["content"].as_array().unwrap();
+    let text = content[0]["text"].as_str().unwrap();
+    let image_blocks = content
+        .iter()
+        .filter(|block| block["type"] == "image_url")
+        .collect::<Vec<_>>();
+
+    assert!(text.contains("previousWindowSummary"));
+    assert!(text.contains("上一个窗口在查 MiniMax 文档"));
+    assert!(text.contains("minuteMark"));
+    assert_eq!(image_blocks.len(), 3);
+    assert!(
+        image_blocks
+            .iter()
+            .all(|block| block["image_url"]["max_long_side_pixel"].is_null())
+    );
+}
+
+#[test]
+fn minimax_window_analysis_response_maps_to_structured_window_summary() {
+    let samples = vec![
+        high_res_screenshot(1, "2026-06-03T10:00:10Z", "Code.exe"),
+        high_res_screenshot(3, "2026-06-03T10:02:05Z", "Code.exe"),
+        high_res_screenshot(5, "2026-06-03T10:04:15Z", "msedge.exe"),
+    ];
+
+    let summary = MiniMaxAnalyzer::window_summary_from_response_text(
+        ts("2026-06-03T10:00:00Z"),
+        ts("2026-06-03T10:05:00Z"),
+        &select_window_samples(
+            ts("2026-06-03T10:00:00Z"),
+            ts("2026-06-03T10:05:00Z"),
+            &samples,
+        )
+        .unwrap(),
+        Some(40),
+        ts("2026-06-03T10:05:30Z"),
+        "MiniMax-M3",
+        r#"{
+          "summaryText": "持续实现 Time State Recorder 的视觉分析 worker。",
+          "continuity": "continued_focus",
+          "primaryActivity": "coding",
+          "projectHints": ["Time State Recorder"],
+          "taskIntent": "实现窗口级三图摘要",
+          "trajectory": [
+            {"minuteMark": 1, "observation": "编辑 Rust worker", "activityCategory": "coding"},
+            {"minuteMark": 3, "observation": "查看 MiniMax 请求体", "activityCategory": "coding"},
+            {"minuteMark": 5, "observation": "检查前端反馈", "activityCategory": "coding"}
+          ],
+          "switchingLevel": "low",
+          "switchingEvidence": "都围绕同一项目。",
+          "loafingLevel": "none",
+          "loafingEvidence": "没有娱乐内容。",
+          "visibleApps": ["Code.exe", "msedge.exe"],
+          "visibleTextHints": ["visual_window_summaries"],
+          "riskFlags": [],
+          "confidence": 0.86
+        }"#,
+    )
+    .unwrap();
+
+    assert_eq!(summary.previous_summary_id, Some(40));
+    assert_eq!(summary.sampled_screenshot_ids, vec![1, 3, 5]);
+    assert_eq!(summary.primary_activity, ActivityCategory::Coding);
+    assert_eq!(summary.trajectory.len(), 3);
+    assert_eq!(summary.trajectory[2].minute_mark, 5);
+    assert_eq!(summary.switching_level, "low");
+    assert_eq!(summary.loafing_level, "none");
+    assert!(summary.raw_summary_json["summaryText"].is_string());
+}
+
+#[test]
+fn builds_five_hour_report_from_visual_window_summaries() {
+    let windows = vec![
+        sample_window_summary(
+            1,
+            "2026-06-03T05:00:00Z",
+            "2026-06-03T05:05:00Z",
+            vec![1, 3, 5],
+            "开始实现窗口级视觉分析 worker。",
+        ),
+        sample_window_summary(
+            2,
+            "2026-06-03T05:05:00Z",
+            "2026-06-03T05:10:00Z",
+            vec![6, 8, 10],
+            "继续调试 MiniMax 三图请求。",
+        ),
+    ];
+
+    let report = build_five_hour_report_from_window_summaries(
+        ts("2026-06-03T05:00:00Z"),
+        ts("2026-06-03T10:00:00Z"),
+        &windows,
+    );
+
+    assert_eq!(report.report_kind, "5h");
+    assert_eq!(report.evidence_count, 2);
+    assert_eq!(
+        report.category_mix[0].activity_category,
+        ActivityCategory::Coding
+    );
+    assert!(report.summary_text.contains("窗口摘要"));
+    assert!(report.summary_text.contains("继续调试 MiniMax 三图请求"));
+}
+
+#[test]
+fn minimax_insight_report_request_uses_window_summaries() {
+    let windows = vec![sample_window_summary(
+        1,
+        "2026-06-03T05:00:00Z",
+        "2026-06-03T05:05:00Z",
+        vec![1, 3, 5],
+        "开始实现窗口级视觉分析 worker。",
+    )];
+    let reporter = MiniMaxInsightReporter::new(MiniMaxInsightConfig::new(
+        "test-key",
+        "https://api.minimax.test/v1",
+        "MiniMax-M3",
+    ));
+
+    let request = reporter.build_window_summary_chat_completions_request(
+        ts("2026-06-03T05:00:00Z"),
+        ts("2026-06-03T10:00:00Z"),
+        &windows,
+    );
+    let prompt = request["messages"][1]["content"].as_str().unwrap();
+
+    assert!(prompt.contains("windowSummaries="));
+    assert!(!prompt.contains("observations="));
+    assert!(prompt.contains("switchingLevel"));
+    assert!(prompt.contains("loafingLevel"));
+}
+
+#[test]
 fn insight_report_provider_defaults_to_minimax_when_credentials_exist() {
     assert_eq!(
         select_insight_report_provider(None, Some("secret"), Some("https://api.minimax.test")),
@@ -215,6 +437,51 @@ fn visual_summary(
         risk_flags: vec![],
         confidence: 0.82,
         created_at: ts(captured_at),
+        error: None,
+    }
+}
+
+fn sample_window_summary(
+    id: i64,
+    window_start: &str,
+    window_end: &str,
+    sampled_screenshot_ids: Vec<i64>,
+    summary_text: &str,
+) -> VisualWindowSummary {
+    VisualWindowSummary {
+        id,
+        window_start: ts(window_start),
+        window_end: ts(window_end),
+        sampled_screenshot_ids: sampled_screenshot_ids.clone(),
+        previous_summary_id: None,
+        model_provider: "minimax".into(),
+        model_name: "MiniMax-M3".into(),
+        prompt_version: "visual-window-minimax-m3-v1".into(),
+        summary_text: summary_text.into(),
+        continuity: "continued_focus".into(),
+        primary_activity: ActivityCategory::Coding,
+        project_hints: vec!["Time State Recorder".into()],
+        task_intent: "实现窗口级视觉分析".into(),
+        trajectory: sampled_screenshot_ids
+            .iter()
+            .zip([1_u8, 3, 5])
+            .map(|(screenshot_id, minute_mark)| VisualTrajectoryPoint {
+                minute_mark,
+                screenshot_id: *screenshot_id,
+                observation: format!("minute {minute_mark}"),
+                activity_category: ActivityCategory::Coding,
+            })
+            .collect(),
+        switching_level: "low".into(),
+        switching_evidence: "窗口切换少。".into(),
+        loafing_level: "none".into(),
+        loafing_evidence: "未见无关内容。".into(),
+        visible_apps: vec!["Code.exe".into()],
+        visible_text_hints: vec![],
+        risk_flags: vec![],
+        confidence: 0.8,
+        raw_summary_json: serde_json::json!({ "summaryText": summary_text }),
+        created_at: ts(window_end),
         error: None,
     }
 }

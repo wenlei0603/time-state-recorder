@@ -5,7 +5,7 @@ use tsr_collector::{
     models::{
         ActivityCategory, ActivityCategoryCount, CaptureStatus, HighResScreenshotMeta,
         InsightReport, LifecycleType, ScreenshotMeta, VisualObservation, VisualSummary,
-        WindowSnapshot,
+        VisualTrajectoryPoint, VisualWindowSummary, WindowSnapshot,
     },
     storage::Store,
 };
@@ -138,6 +138,92 @@ fn persists_high_res_screenshot_metadata_by_date_without_skip_rows() {
     assert_eq!(rows[0].width, 1920);
     assert_eq!(rows[0].height, 1080);
     assert_eq!(rows[0].capture_status, "ok");
+}
+
+#[test]
+fn visual_window_summaries_round_trip_by_window() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "test-config").unwrap();
+
+    let mut screenshot_ids = Vec::new();
+    for (minute, mark) in [("00", 1), ("02", 3), ("04", 5)] {
+        let id = store
+            .insert_high_res_screenshot(
+                &session_id,
+                &HighResScreenshotMeta {
+                    id: 0,
+                    captured_at: ts(&format!("2026-06-03T10:{minute}:00Z")),
+                    file_path: format!("2026-06-03/10-{minute}-00.jpg"),
+                    width: 1600,
+                    height: 1000,
+                    process_name: Some("Code.exe".into()),
+                    window_title: Some(format!("activity minute {mark}")),
+                    capture_status: "ok".into(),
+                },
+            )
+            .unwrap();
+        screenshot_ids.push((id, mark));
+    }
+
+    let mut summary = VisualWindowSummary {
+        id: 0,
+        window_start: ts("2026-06-03T10:00:00Z"),
+        window_end: ts("2026-06-03T10:05:00Z"),
+        sampled_screenshot_ids: screenshot_ids.iter().map(|(id, _)| *id).collect(),
+        previous_summary_id: None,
+        model_provider: "minimax".into(),
+        model_name: "MiniMax-M3".into(),
+        prompt_version: "visual-window-minimax-m3-v1".into(),
+        summary_text: "5 分钟内持续实现后端 worker，并检查前端反馈。".into(),
+        continuity: "continued_focus".into(),
+        primary_activity: ActivityCategory::Coding,
+        project_hints: vec!["Time State Recorder".into()],
+        task_intent: "实现窗口级视觉分析链路".into(),
+        trajectory: screenshot_ids
+            .iter()
+            .map(|(id, mark)| VisualTrajectoryPoint {
+                minute_mark: *mark,
+                screenshot_id: *id,
+                observation: format!("第 {mark} 分钟仍在处理 Rust/React 代码"),
+                activity_category: ActivityCategory::Coding,
+            })
+            .collect(),
+        switching_level: "low".into(),
+        switching_evidence: "三张图都围绕同一项目代码窗口。".into(),
+        loafing_level: "none".into(),
+        loafing_evidence: "未看到娱乐或无关浏览内容。".into(),
+        visible_apps: vec!["Code.exe".into(), "msedge.exe".into()],
+        visible_text_hints: vec!["visual_window_summaries".into()],
+        risk_flags: vec![],
+        confidence: 0.82,
+        raw_summary_json: serde_json::json!({
+            "summaryText": "5 分钟内持续实现后端 worker，并检查前端反馈。"
+        }),
+        created_at: ts("2026-06-03T10:05:15Z"),
+        error: None,
+    };
+
+    summary.id = store.insert_visual_window_summary(&summary).unwrap();
+    let rows = store
+        .list_visual_window_summaries_between(
+            ts("2026-06-03T10:00:00Z"),
+            ts("2026-06-03T10:10:00Z"),
+            10,
+        )
+        .unwrap();
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0], summary);
+    assert_eq!(rows[0].sampled_screenshot_ids.len(), 3);
+    assert_eq!(
+        rows[0]
+            .trajectory
+            .iter()
+            .map(|point| point.minute_mark)
+            .collect::<Vec<_>>(),
+        vec![1, 3, 5]
+    );
 }
 
 #[test]

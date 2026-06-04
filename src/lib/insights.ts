@@ -5,6 +5,8 @@ import type {
   AnalysisWorkerStatus,
   InsightReport,
   VisualObservation,
+  VisualTrajectoryPoint,
+  VisualWindowSummary,
 } from "../types";
 
 type Fetcher = (input: string) => Promise<Pick<Response, "ok" | "status" | "statusText" | "json">>;
@@ -28,6 +30,11 @@ export async function fetchAnalysisStatus(
     visual: toWorkerStatus(body.visual),
     report: toWorkerStatus(body.report),
     latestObservation: readOptionalRecord(body, "latestObservation", toVisualObservation),
+    latestWindowSummary: readOptionalRecord(
+      body,
+      "latestWindowSummary",
+      toVisualWindowSummary,
+    ),
     latestReport: readOptionalRecord(body, "latestReport", toInsightReport),
   };
 }
@@ -68,6 +75,25 @@ export async function fetchVisualObservations(
   }
 
   return body.observations.map(toVisualObservation);
+}
+
+export async function fetchVisualWindowSummaries(
+  date: string,
+  fetcher: Fetcher = fetch,
+): Promise<VisualWindowSummary[]> {
+  const response = await fetcher(dateQuery("/api/visual-window-summaries", date));
+  if (!response.ok) {
+    throw new Error(
+      `Collector API failed: ${response.status} ${response.statusText}`.trim(),
+    );
+  }
+
+  const body: unknown = await response.json();
+  if (!isRecord(body) || !Array.isArray(body.summaries)) {
+    throw new Error("Collector API returned an invalid visual-window-summaries response");
+  }
+
+  return body.summaries.map(toVisualWindowSummary);
 }
 
 function dateQuery(path: string, date: string): string {
@@ -116,6 +142,40 @@ function toVisualObservation(value: unknown): VisualObservation {
     visibleTextHints: readStringArray(value, "visibleTextHints"),
     riskFlags: readStringArray(value, "riskFlags"),
     confidence: readNumber(value, "confidence"),
+    createdAt: readString(value, "createdAt"),
+    error: readOptionalString(value, "error"),
+  };
+}
+
+function toVisualWindowSummary(value: unknown): VisualWindowSummary {
+  if (!isRecord(value)) {
+    throw new Error("Collector API returned an invalid visual window summary row");
+  }
+
+  return {
+    id: readNumber(value, "id"),
+    windowStart: readString(value, "windowStart"),
+    windowEnd: readString(value, "windowEnd"),
+    sampledScreenshotIds: readNumberArray(value, "sampledScreenshotIds"),
+    previousSummaryId: readOptionalNumber(value, "previousSummaryId"),
+    modelProvider: readString(value, "modelProvider"),
+    modelName: readString(value, "modelName"),
+    promptVersion: readString(value, "promptVersion"),
+    summaryText: readString(value, "summaryText"),
+    continuity: readString(value, "continuity"),
+    primaryActivity: readActivityCategory(value, "primaryActivity"),
+    projectHints: readStringArray(value, "projectHints"),
+    taskIntent: readString(value, "taskIntent"),
+    trajectory: readTrajectory(value, "trajectory"),
+    switchingLevel: readString(value, "switchingLevel"),
+    switchingEvidence: readString(value, "switchingEvidence"),
+    loafingLevel: readString(value, "loafingLevel"),
+    loafingEvidence: readString(value, "loafingEvidence"),
+    visibleApps: readStringArray(value, "visibleApps"),
+    visibleTextHints: readStringArray(value, "visibleTextHints"),
+    riskFlags: readStringArray(value, "riskFlags"),
+    confidence: readNumber(value, "confidence"),
+    rawSummaryJson: value.rawSummaryJson ?? null,
     createdAt: readString(value, "createdAt"),
     error: readOptionalString(value, "error"),
   };
@@ -184,6 +244,28 @@ function readNumber(record: Record<string, unknown>, key: string): number {
   return value;
 }
 
+function readOptionalNumber(
+  record: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = record[key];
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "number") {
+    throw new Error(`API row has invalid ${key}`);
+  }
+  return value;
+}
+
+function readNumberArray(record: Record<string, unknown>, key: string): number[] {
+  const value = record[key];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "number")) {
+    throw new Error(`API row has invalid ${key}`);
+  }
+  return value;
+}
+
 function readStringArray(record: Record<string, unknown>, key: string): string[] {
   const value = record[key];
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
@@ -207,6 +289,27 @@ function readCategoryMix(
     return {
       activityCategory: readActivityCategory(item, "activityCategory"),
       count: readNumber(item, "count"),
+    };
+  });
+}
+
+function readTrajectory(
+  record: Record<string, unknown>,
+  key: string,
+): VisualTrajectoryPoint[] {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    throw new Error(`API row has invalid ${key}`);
+  }
+  return value.map((item) => {
+    if (!isRecord(item)) {
+      throw new Error("trajectory row is not a record");
+    }
+    return {
+      minuteMark: readNumber(item, "minuteMark"),
+      screenshotId: readNumber(item, "screenshotId"),
+      observation: readString(item, "observation"),
+      activityCategory: readActivityCategory(item, "activityCategory"),
     };
   });
 }

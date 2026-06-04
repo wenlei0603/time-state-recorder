@@ -9,7 +9,7 @@ use crate::models::{
     ActivityCategory, ActivityCategoryCount, AppScreenshotCount, BlockerHit, CaptureStatus,
     HighResScreenshotMeta, InsightReport, LifecycleEvent, LifecycleType, ScreenshotMeta,
     ScreenshotSkippedReasonCount, ScreenshotSummary, StoredWindowEvent, VisualObservation,
-    VisualSummary, WindowSnapshot,
+    VisualSummary, VisualTrajectoryPoint, VisualWindowSummary, WindowSnapshot,
 };
 
 pub struct Store {
@@ -164,6 +164,39 @@ impl Store {
               FOREIGN KEY(high_res_screenshot_id) REFERENCES high_res_screenshots(id)
             );
             CREATE INDEX IF NOT EXISTS idx_visual_observations_at ON visual_observations(captured_at);
+
+            CREATE TABLE IF NOT EXISTS visual_window_summaries (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              window_start TEXT NOT NULL,
+              window_end TEXT NOT NULL,
+              sampled_screenshot_ids_json TEXT NOT NULL,
+              previous_summary_id INTEGER,
+              model_provider TEXT NOT NULL,
+              model_name TEXT NOT NULL,
+              prompt_version TEXT NOT NULL,
+              summary_text TEXT NOT NULL,
+              continuity TEXT NOT NULL,
+              primary_activity TEXT NOT NULL,
+              project_hints_json TEXT NOT NULL,
+              task_intent TEXT NOT NULL,
+              trajectory_json TEXT NOT NULL,
+              switching_level TEXT NOT NULL,
+              switching_evidence TEXT NOT NULL,
+              loafing_level TEXT NOT NULL,
+              loafing_evidence TEXT NOT NULL,
+              visible_apps_json TEXT NOT NULL,
+              visible_text_hints_json TEXT NOT NULL,
+              risk_flags_json TEXT NOT NULL,
+              confidence REAL NOT NULL,
+              raw_summary_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              error TEXT,
+              FOREIGN KEY(previous_summary_id) REFERENCES visual_window_summaries(id)
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_visual_window_summaries_window
+              ON visual_window_summaries(window_start, window_end);
+            CREATE INDEX IF NOT EXISTS idx_visual_window_summaries_start
+              ON visual_window_summaries(window_start);
 
             CREATE TABLE IF NOT EXISTS insight_reports (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -997,6 +1030,133 @@ impl Store {
         Ok(items)
     }
 
+    pub fn insert_visual_window_summary(&mut self, summary: &VisualWindowSummary) -> Result<i64> {
+        self.conn.execute(
+            r#"
+            INSERT INTO visual_window_summaries
+              (window_start, window_end, sampled_screenshot_ids_json, previous_summary_id,
+               model_provider, model_name, prompt_version, summary_text, continuity,
+               primary_activity, project_hints_json, task_intent, trajectory_json,
+               switching_level, switching_evidence, loafing_level, loafing_evidence,
+               visible_apps_json, visible_text_hints_json, risk_flags_json, confidence,
+               raw_summary_json, created_at, error)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                    ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)
+            "#,
+            params![
+                summary.window_start.to_rfc3339(),
+                summary.window_end.to_rfc3339(),
+                serde_json::to_string(&summary.sampled_screenshot_ids)?,
+                summary.previous_summary_id,
+                &summary.model_provider,
+                &summary.model_name,
+                &summary.prompt_version,
+                &summary.summary_text,
+                &summary.continuity,
+                summary.primary_activity.as_str(),
+                serde_json::to_string(&summary.project_hints)?,
+                &summary.task_intent,
+                serde_json::to_string(&summary.trajectory)?,
+                &summary.switching_level,
+                &summary.switching_evidence,
+                &summary.loafing_level,
+                &summary.loafing_evidence,
+                serde_json::to_string(&summary.visible_apps)?,
+                serde_json::to_string(&summary.visible_text_hints)?,
+                serde_json::to_string(&summary.risk_flags)?,
+                summary.confidence,
+                serde_json::to_string(&summary.raw_summary_json)?,
+                summary.created_at.to_rfc3339(),
+                summary.error.as_deref(),
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn list_visual_window_summaries_between(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        limit: usize,
+    ) -> Result<Vec<VisualWindowSummary>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT id, window_start, window_end, sampled_screenshot_ids_json, previous_summary_id,
+                   model_provider, model_name, prompt_version, summary_text, continuity,
+                   primary_activity, project_hints_json, task_intent, trajectory_json,
+                   switching_level, switching_evidence, loafing_level, loafing_evidence,
+                   visible_apps_json, visible_text_hints_json, risk_flags_json, confidence,
+                   raw_summary_json, created_at, error
+            FROM visual_window_summaries
+            WHERE window_start >= ?1 AND window_start < ?2
+            ORDER BY window_start ASC, id ASC
+            LIMIT ?3
+            "#,
+        )?;
+
+        let rows = statement.query_map(
+            params![start.to_rfc3339(), end.to_rfc3339(), limit as i64],
+            map_visual_window_summary_row,
+        )?;
+
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row?);
+        }
+        Ok(items)
+    }
+
+    pub fn list_visual_window_summaries(&self, limit: usize) -> Result<Vec<VisualWindowSummary>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT id, window_start, window_end, sampled_screenshot_ids_json, previous_summary_id,
+                   model_provider, model_name, prompt_version, summary_text, continuity,
+                   primary_activity, project_hints_json, task_intent, trajectory_json,
+                   switching_level, switching_evidence, loafing_level, loafing_evidence,
+                   visible_apps_json, visible_text_hints_json, risk_flags_json, confidence,
+                   raw_summary_json, created_at, error
+            FROM visual_window_summaries
+            ORDER BY window_start DESC, id DESC
+            LIMIT ?1
+            "#,
+        )?;
+
+        let rows = statement.query_map(params![limit as i64], map_visual_window_summary_row)?;
+
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row?);
+        }
+        Ok(items)
+    }
+
+    pub fn latest_visual_window_summary_before(
+        &self,
+        before: DateTime<Utc>,
+    ) -> Result<Option<VisualWindowSummary>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT id, window_start, window_end, sampled_screenshot_ids_json, previous_summary_id,
+                   model_provider, model_name, prompt_version, summary_text, continuity,
+                   primary_activity, project_hints_json, task_intent, trajectory_json,
+                   switching_level, switching_evidence, loafing_level, loafing_evidence,
+                   visible_apps_json, visible_text_hints_json, risk_flags_json, confidence,
+                   raw_summary_json, created_at, error
+            FROM visual_window_summaries
+            WHERE window_end <= ?1
+            ORDER BY window_end DESC, id DESC
+            LIMIT 1
+            "#,
+        )?;
+
+        let mut rows =
+            statement.query_map(params![before.to_rfc3339()], map_visual_window_summary_row)?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn insert_insight_report(&mut self, report: &InsightReport) -> Result<i64> {
         self.conn.execute(
             r#"
@@ -1410,6 +1570,58 @@ fn map_visual_observation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Visua
     })
 }
 
+fn map_visual_window_summary_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VisualWindowSummary> {
+    let window_start: String = row.get(1)?;
+    let window_end: String = row.get(2)?;
+    let sampled_screenshot_ids_json: String = row.get(3)?;
+    let primary_activity: String = row.get(10)?;
+    let project_hints_json: String = row.get(11)?;
+    let trajectory_json: String = row.get(13)?;
+    let visible_apps_json: String = row.get(18)?;
+    let visible_text_hints_json: String = row.get(19)?;
+    let risk_flags_json: String = row.get(20)?;
+    let raw_summary_json: String = row.get(22)?;
+    let created_at: String = row.get(23)?;
+    let primary_activity = ActivityCategory::from_db(&primary_activity).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            10,
+            Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unknown primary_activity: {primary_activity}"),
+            )),
+        )
+    })?;
+
+    Ok(VisualWindowSummary {
+        id: row.get(0)?,
+        window_start: parse_ts(&window_start)?,
+        window_end: parse_ts(&window_end)?,
+        sampled_screenshot_ids: parse_i64_vec(&sampled_screenshot_ids_json)?,
+        previous_summary_id: row.get(4)?,
+        model_provider: row.get(5)?,
+        model_name: row.get(6)?,
+        prompt_version: row.get(7)?,
+        summary_text: row.get(8)?,
+        continuity: row.get(9)?,
+        primary_activity,
+        project_hints: parse_string_vec(&project_hints_json)?,
+        task_intent: row.get(12)?,
+        trajectory: parse_visual_trajectory(&trajectory_json)?,
+        switching_level: row.get(14)?,
+        switching_evidence: row.get(15)?,
+        loafing_level: row.get(16)?,
+        loafing_evidence: row.get(17)?,
+        visible_apps: parse_string_vec(&visible_apps_json)?,
+        visible_text_hints: parse_string_vec(&visible_text_hints_json)?,
+        risk_flags: parse_string_vec(&risk_flags_json)?,
+        confidence: row.get(21)?,
+        raw_summary_json: parse_json(&raw_summary_json)?,
+        created_at: parse_ts(&created_at)?,
+        error: row.get(24)?,
+    })
+}
+
 fn map_insight_report_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InsightReport> {
     let period_start: String = row.get(1)?;
     let period_end: String = row.get(2)?;
@@ -1461,6 +1673,16 @@ fn parse_json(value: &str) -> rusqlite::Result<serde_json::Value> {
 }
 
 fn parse_string_vec(value: &str) -> rusqlite::Result<Vec<String>> {
+    serde_json::from_str(value)
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))
+}
+
+fn parse_i64_vec(value: &str) -> rusqlite::Result<Vec<i64>> {
+    serde_json::from_str(value)
+        .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))
+}
+
+fn parse_visual_trajectory(value: &str) -> rusqlite::Result<Vec<VisualTrajectoryPoint>> {
     serde_json::from_str(value)
         .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))
 }

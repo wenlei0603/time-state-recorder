@@ -13,6 +13,8 @@ import type {
   AnalysisWorkerStatus,
   InsightReport,
   VisualObservation,
+  VisualTrajectoryPoint,
+  VisualWindowSummary,
 } from "./types";
 
 type InsightFeedbackProps = {
@@ -32,6 +34,7 @@ export function InsightFeedback({
   loading,
   error,
 }: InsightFeedbackProps) {
+  const latestWindowSummary = analysisStatus?.latestWindowSummary;
   const latestObservation = analysisStatus?.latestObservation;
   const latestReport = analysisStatus?.latestReport ?? reports[0];
   const visualStatus = analysisStatus?.visual;
@@ -46,7 +49,7 @@ export function InsightFeedback({
           <h2>AI 工作洞察</h2>
           <p>
             {sourceMode === "live"
-              ? "高分辨率截图每 5 分钟分析一次，5 小时生成一次轨迹报告"
+              ? "每分钟保留高分辨率原图，5 分钟窗口选 1/3/5 分钟三张图分析，5 小时汇总轨迹"
               : "等待 Live collector 后开始反馈"}
           </p>
         </div>
@@ -64,12 +67,13 @@ export function InsightFeedback({
       <div className="aiInsightGrid">
         <InsightBlock
           icon={<Camera aria-hidden="true" size={18} />}
-          title="截图摘要"
+          title="5 分钟窗口摘要"
           status={visualStatus}
-          cadence="5 min"
+          cadence="1/3/5 min samples"
         >
-          <ObservationContent
-            observation={latestObservation}
+          <WindowSummaryContent
+            summary={latestWindowSummary}
+            fallbackObservation={latestObservation}
             canShowText={canShowText}
           />
         </InsightBlock>
@@ -132,17 +136,74 @@ function InsightBlock({
   );
 }
 
-function ObservationContent({
+function WindowSummaryContent({
+  summary,
+  fallbackObservation,
+  canShowText,
+}: {
+  summary?: VisualWindowSummary;
+  fallbackObservation?: VisualObservation;
+  canShowText: boolean;
+}) {
+  if (!summary) {
+    if (fallbackObservation) {
+      return (
+        <LegacyObservationContent
+          observation={fallbackObservation}
+          canShowText={canShowText}
+        />
+      );
+    }
+    return <p className="emptyState">还没有可展示的 5 分钟窗口分析结果。</p>;
+  }
+
+  return (
+    <div className="aiInsightBody">
+      <div className="aiInsightFacts">
+        <span>{formatRange(summary.windowStart, summary.windowEnd)}</span>
+        <span>{categoryLabel(summary.primaryActivity)}</span>
+        <span>{Math.round(summary.confidence * 100)}% confidence</span>
+      </div>
+      {canShowText ? (
+        <>
+          <p>{summary.summaryText}</p>
+          <div className="categoryMix" aria-label="Window insight labels">
+            <span>{switchingLabel(summary.switchingLevel)}</span>
+            <span>{loafingLabel(summary.loafingLevel)}</span>
+            {summary.projectHints.slice(0, 2).map((hint) => (
+              <span key={hint}>{hint}</span>
+            ))}
+          </div>
+          {summary.taskIntent ? (
+            <p className="aiInsightHints">任务意图：{summary.taskIntent}</p>
+          ) : null}
+          <TrajectoryList trajectory={summary.trajectory} />
+          <p className="aiInsightHints">
+            切换：{summary.switchingEvidence} 摸鱼：{summary.loafingEvidence}
+          </p>
+        </>
+      ) : (
+        <p className="redactedText insightRedacted">
+          5 分钟窗口摘要已生成，内容在 Redacted 模式隐藏。
+        </p>
+      )}
+      {summary.error ? (
+        <p className="aiInsightError">
+          <AlertCircle aria-hidden="true" size={15} />
+          <span>{summary.error}</span>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function LegacyObservationContent({
   observation,
   canShowText,
 }: {
-  observation?: VisualObservation;
+  observation: VisualObservation;
   canShowText: boolean;
 }) {
-  if (!observation) {
-    return <p className="emptyState">还没有可展示的截图分析结果。</p>;
-  }
-
   return (
     <div className="aiInsightBody">
       <div className="aiInsightFacts">
@@ -154,16 +215,27 @@ function ObservationContent({
         <p>{observation.summaryText}</p>
       ) : (
         <p className="redactedText insightRedacted">
-          模型摘要已生成，内容在 Redacted 模式隐藏。
+          旧版单张截图摘要已生成，内容在 Redacted 模式隐藏。
         </p>
       )}
-      {observation.error ? (
-        <p className="aiInsightError">
-          <AlertCircle aria-hidden="true" size={15} />
-          <span>{observation.error}</span>
-        </p>
-      ) : null}
     </div>
+  );
+}
+
+function TrajectoryList({ trajectory }: { trajectory: VisualTrajectoryPoint[] }) {
+  if (trajectory.length === 0) {
+    return null;
+  }
+
+  return (
+    <ol className="windowTrajectory" aria-label="1 3 5 minute trajectory">
+      {trajectory.map((point) => (
+        <li key={`${point.minuteMark}-${point.screenshotId}`}>
+          <strong>第 {point.minuteMark} 分钟</strong>
+          <span>{point.observation}</span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -182,7 +254,7 @@ function ReportContent({
     <div className="aiInsightBody">
       <div className="aiInsightFacts">
         <span>{formatRange(report.periodStart, report.periodEnd)}</span>
-        <span>{report.evidenceCount} screenshots</span>
+        <span>{report.evidenceCount} windows</span>
         <span>{report.modelProvider}</span>
       </div>
       {report.categoryMix.length > 0 ? (
@@ -267,6 +339,32 @@ function formatDateTime(value: string): string {
 
 function formatRange(start: string, end: string): string {
   return `${formatTime(start)} - ${formatTime(end)}`;
+}
+
+function switchingLabel(level: string): string {
+  switch (level) {
+    case "low":
+      return "低切换";
+    case "medium":
+      return "中切换";
+    case "high":
+      return "高切换";
+    default:
+      return "切换未知";
+  }
+}
+
+function loafingLabel(level: string): string {
+  switch (level) {
+    case "none":
+      return "无摸鱼";
+    case "possible":
+      return "可能摸鱼";
+    case "clear":
+      return "明显摸鱼";
+    default:
+      return "摸鱼未知";
+  }
 }
 
 function categoryLabel(category: ActivityCategory): string {

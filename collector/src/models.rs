@@ -340,6 +340,45 @@ pub struct VisualObservation {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualTrajectoryPoint {
+    pub minute_mark: u8,
+    pub screenshot_id: i64,
+    pub observation: String,
+    pub activity_category: ActivityCategory,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualWindowSummary {
+    pub id: i64,
+    pub window_start: DateTime<Utc>,
+    pub window_end: DateTime<Utc>,
+    pub sampled_screenshot_ids: Vec<i64>,
+    pub previous_summary_id: Option<i64>,
+    pub model_provider: String,
+    pub model_name: String,
+    pub prompt_version: String,
+    pub summary_text: String,
+    pub continuity: String,
+    pub primary_activity: ActivityCategory,
+    pub project_hints: Vec<String>,
+    pub task_intent: String,
+    pub trajectory: Vec<VisualTrajectoryPoint>,
+    pub switching_level: String,
+    pub switching_evidence: String,
+    pub loafing_level: String,
+    pub loafing_evidence: String,
+    pub visible_apps: Vec<String>,
+    pub visible_text_hints: Vec<String>,
+    pub risk_flags: Vec<String>,
+    pub confidence: f64,
+    pub raw_summary_json: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivityCategoryCount {

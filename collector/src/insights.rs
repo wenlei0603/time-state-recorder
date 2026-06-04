@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::models::{
     ActivityCategory, ActivityCategoryCount, HighResScreenshotMeta, InsightReport,
-    VisualObservation, VisualSummary,
+    VisualObservation, VisualSummary, VisualWindowSummary,
 };
 
 const LOCAL_REPORT_PROMPT_VERSION: &str = "trajectory-v1";
@@ -58,6 +58,31 @@ pub fn build_five_hour_report(
     }
 }
 
+pub fn build_five_hour_report_from_window_summaries(
+    period_start: DateTime<Utc>,
+    period_end: DateTime<Utc>,
+    window_summaries: &[VisualWindowSummary],
+) -> InsightReport {
+    let category_mix = category_mix_from_window_summaries(window_summaries);
+    let project_hints = top_project_hints_from_window_summaries(window_summaries);
+    let summary_text = window_report_summary_text(window_summaries, &category_mix);
+
+    InsightReport {
+        id: 0,
+        period_start,
+        period_end,
+        generated_at: Utc::now(),
+        report_kind: "5h".into(),
+        model_provider: "local_insight".into(),
+        model_name: LOCAL_REPORT_PROMPT_VERSION.into(),
+        summary_text,
+        category_mix,
+        project_hints,
+        evidence_count: window_summaries.len(),
+        error: None,
+    }
+}
+
 fn category_mix(observations: &[VisualObservation]) -> Vec<ActivityCategoryCount> {
     let mut counts: Vec<ActivityCategoryCount> = Vec::new();
     for observation in observations {
@@ -99,6 +124,51 @@ fn top_project_hints(observations: &[VisualObservation]) -> Vec<String> {
     counts.into_iter().take(5).map(|(hint, _)| hint).collect()
 }
 
+fn category_mix_from_window_summaries(
+    window_summaries: &[VisualWindowSummary],
+) -> Vec<ActivityCategoryCount> {
+    let mut counts: Vec<ActivityCategoryCount> = Vec::new();
+    for summary in window_summaries {
+        if let Some(existing) = counts
+            .iter_mut()
+            .find(|item| item.activity_category == summary.primary_activity)
+        {
+            existing.count += 1;
+        } else {
+            counts.push(ActivityCategoryCount {
+                activity_category: summary.primary_activity.clone(),
+                count: 1,
+            });
+        }
+    }
+    counts.sort_by(|left, right| {
+        right.count.cmp(&left.count).then_with(|| {
+            left.activity_category
+                .as_str()
+                .cmp(right.activity_category.as_str())
+        })
+    });
+    counts
+}
+
+fn top_project_hints_from_window_summaries(
+    window_summaries: &[VisualWindowSummary],
+) -> Vec<String> {
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for hint in window_summaries
+        .iter()
+        .flat_map(|summary| summary.project_hints.iter())
+    {
+        if let Some((_, count)) = counts.iter_mut().find(|(value, _)| value == hint) {
+            *count += 1;
+        } else {
+            counts.push((hint.clone(), 1));
+        }
+    }
+    counts.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    counts.into_iter().take(5).map(|(hint, _)| hint).collect()
+}
+
 fn report_summary_text(
     observations: &[VisualObservation],
     category_mix: &[ActivityCategoryCount],
@@ -123,6 +193,36 @@ fn report_summary_text(
     format!(
         "这 5 小时内共分析 {} 张屏幕图像，主要活动类型是 {}。起点：{}。最近状态：{}。",
         observations.len(),
+        dominant,
+        first,
+        last
+    )
+}
+
+fn window_report_summary_text(
+    window_summaries: &[VisualWindowSummary],
+    category_mix: &[ActivityCategoryCount],
+) -> String {
+    if window_summaries.is_empty() {
+        return "过去 5 小时内没有可用的 5 分钟窗口摘要，暂时无法推断工作轨迹。".into();
+    }
+
+    let dominant = category_mix
+        .first()
+        .map(|item| item.activity_category.as_str())
+        .unwrap_or(ActivityCategory::Unknown.as_str());
+    let first = window_summaries
+        .first()
+        .map(|item| item.summary_text.as_str())
+        .unwrap_or("");
+    let last = window_summaries
+        .last()
+        .map(|item| item.summary_text.as_str())
+        .unwrap_or("");
+
+    format!(
+        "过去 5 小时内共分析 {} 条 5 分钟窗口摘要，主要活动类型是 {}。起点：{}。最近状态：{}。",
+        window_summaries.len(),
         dominant,
         first,
         last
@@ -170,6 +270,29 @@ impl ConfiguredInsightReporter {
             }
         }
     }
+
+    pub async fn report_from_window_summaries(
+        &self,
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+        window_summaries: &[VisualWindowSummary],
+    ) -> Result<InsightReport> {
+        match self {
+            Self::Local(reporter) => {
+                reporter.report_from_window_summaries(period_start, period_end, window_summaries)
+            }
+            Self::MiniMax(reporter) => {
+                reporter
+                    .report_from_window_summaries(
+                        period_start,
+                        period_end,
+                        window_summaries,
+                        Utc::now(),
+                    )
+                    .await
+            }
+        }
+    }
 }
 
 pub fn select_insight_report_provider<'a>(
@@ -208,6 +331,19 @@ impl LocalInsightReporter {
             period_start,
             period_end,
             observations,
+        ))
+    }
+
+    pub fn report_from_window_summaries(
+        &self,
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+        window_summaries: &[VisualWindowSummary],
+    ) -> Result<InsightReport> {
+        Ok(build_five_hour_report_from_window_summaries(
+            period_start,
+            period_end,
+            window_summaries,
         ))
     }
 }
@@ -311,6 +447,31 @@ impl MiniMaxInsightReporter {
         })
     }
 
+    pub fn build_window_summary_chat_completions_request(
+        &self,
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+        window_summaries: &[VisualWindowSummary],
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "model": self.config.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You infer a personal work trajectory from structured 5-minute screenshot-window summaries. Return compact JSON only."
+                },
+                {
+                    "role": "user",
+                    "content": window_summary_report_prompt(period_start, period_end, window_summaries)
+                }
+            ],
+            "temperature": 0.2,
+            "top_p": 0.95,
+            "max_completion_tokens": self.config.max_completion_tokens,
+            "thinking": { "type": "disabled" }
+        })
+    }
+
     pub async fn report(
         &self,
         period_start: DateTime<Utc>,
@@ -346,6 +507,45 @@ impl MiniMaxInsightReporter {
         )
     }
 
+    pub async fn report_from_window_summaries(
+        &self,
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+        window_summaries: &[VisualWindowSummary],
+        generated_at: DateTime<Utc>,
+    ) -> Result<InsightReport> {
+        let body = self.build_window_summary_chat_completions_request(
+            period_start,
+            period_end,
+            window_summaries,
+        );
+        let response = self
+            .client
+            .post(self.config.chat_completions_url())
+            .bearer_auth(&self.config.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context("MiniMax insight report request failed")?;
+        let status = response.status();
+        let response_text = response
+            .text()
+            .await
+            .context("MiniMax insight response body read failed")?;
+        if !status.is_success() {
+            bail!("MiniMax insight report returned {status}: {response_text}");
+        }
+        let content = parse_chat_completion_content(&response_text)?;
+        Self::report_from_window_summary_response_text(
+            period_start,
+            period_end,
+            window_summaries,
+            generated_at,
+            &self.config.model,
+            &content,
+        )
+    }
+
     pub fn report_from_response_text(
         period_start: DateTime<Utc>,
         period_end: DateTime<Utc>,
@@ -374,6 +574,42 @@ impl MiniMaxInsightReporter {
                 .and_then(|value| value.project_hints.clone())
                 .unwrap_or(local.project_hints),
             evidence_count: observations.len(),
+            error: None,
+        })
+    }
+
+    pub fn report_from_window_summary_response_text(
+        period_start: DateTime<Utc>,
+        period_end: DateTime<Utc>,
+        window_summaries: &[VisualWindowSummary],
+        generated_at: DateTime<Utc>,
+        model_name: &str,
+        content: &str,
+    ) -> Result<InsightReport> {
+        let local = build_five_hour_report_from_window_summaries(
+            period_start,
+            period_end,
+            window_summaries,
+        );
+        let parsed = parse_model_report_json(content);
+        Ok(InsightReport {
+            id: 0,
+            period_start,
+            period_end,
+            generated_at,
+            report_kind: "5h".into(),
+            model_provider: "minimax".into(),
+            model_name: model_name.into(),
+            summary_text: parsed
+                .as_ref()
+                .and_then(|value| value.summary_text.clone())
+                .unwrap_or_else(|| content.trim().to_string()),
+            category_mix: local.category_mix,
+            project_hints: parsed
+                .as_ref()
+                .and_then(|value| value.project_hints.clone())
+                .unwrap_or(local.project_hints),
+            evidence_count: window_summaries.len(),
             error: None,
         })
     }
@@ -426,6 +662,43 @@ fn report_prompt(
         period_start.to_rfc3339(),
         period_end.to_rfc3339(),
         serde_json::to_string(&observations_json).unwrap_or_else(|_| "[]".to_string())
+    )
+}
+
+fn window_summary_report_prompt(
+    period_start: DateTime<Utc>,
+    period_end: DateTime<Utc>,
+    window_summaries: &[VisualWindowSummary],
+) -> String {
+    let summaries_json = window_summaries
+        .iter()
+        .map(|summary| {
+            serde_json::json!({
+                "windowStart": summary.window_start,
+                "windowEnd": summary.window_end,
+                "summaryText": summary.summary_text,
+                "continuity": summary.continuity,
+                "primaryActivity": summary.primary_activity.as_str(),
+                "projectHints": summary.project_hints,
+                "taskIntent": summary.task_intent,
+                "trajectory": summary.trajectory,
+                "switchingLevel": summary.switching_level,
+                "switchingEvidence": summary.switching_evidence,
+                "loafingLevel": summary.loafing_level,
+                "loafingEvidence": summary.loafing_evidence,
+                "visibleApps": summary.visible_apps,
+                "visibleTextHints": summary.visible_text_hints,
+                "riskFlags": summary.risk_flags,
+                "confidence": summary.confidence
+            })
+        })
+        .collect::<Vec<_>>();
+
+    format!(
+        "Infer the user's work trajectory for this 5-hour window from 5-minute structured summaries. Return JSON only with keys summaryText and projectHints. summaryText must be concise Chinese and cover: chronological work path, project-based focus, possible loafing, switching frequency, long-run pattern, and uncertainty. periodStart={}, periodEnd={}, windowSummaries={}",
+        period_start.to_rfc3339(),
+        period_end.to_rfc3339(),
+        serde_json::to_string(&summaries_json).unwrap_or_else(|_| "[]".to_string())
     )
 }
 

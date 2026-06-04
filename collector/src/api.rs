@@ -22,16 +22,19 @@ use crate::{
     activity::{ActivityBucketQuery, build_activity_buckets},
     blocker::BlockerEngine,
     input,
-    insights::{ConfiguredInsightReporter, observation_from_visual_summary},
+    insights::ConfiguredInsightReporter,
     interval::build_time_events_with_lifecycle,
     models::{
         ActivityBucket, BlockerHit, CollectorHealth, DbStats, HighResScreenshotMeta, InsightReport,
         LifecycleEvent, LifecycleType, ScreenshotMeta, SubsystemHealth, TimeEvent,
-        VisualObservation, VisualSummary, WindowSnapshot,
+        VisualObservation, VisualSummary, VisualWindowSummary, WindowSnapshot,
     },
     screenshot,
     storage::Store,
-    visual_analysis::{ConfiguredVisualAnalyzer, VisualAnalysisInput},
+    visual_analysis::{
+        ConfiguredVisualAnalyzer, VisualAnalysisInput, WindowScreenshotSample,
+        WindowVisualAnalysisInput, WindowVisualAnalysisSample, select_window_samples,
+    },
     window::sample_foreground_window,
 };
 
@@ -123,6 +126,12 @@ struct VisualObservationsResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct VisualWindowSummariesResponse {
+    summaries: Vec<VisualWindowSummary>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct InsightReportsResponse {
     reports: Vec<InsightReport>,
 }
@@ -133,6 +142,7 @@ struct AnalysisStatus {
     visual: AnalysisWorkerStatus,
     report: AnalysisWorkerStatus,
     latest_observation: Option<VisualObservation>,
+    latest_window_summary: Option<VisualWindowSummary>,
     latest_report: Option<InsightReport>,
 }
 
@@ -152,6 +162,7 @@ impl Default for AnalysisStatus {
             visual: AnalysisWorkerStatus::idle(),
             report: AnalysisWorkerStatus::idle(),
             latest_observation: None,
+            latest_window_summary: None,
             latest_report: None,
         }
     }
@@ -200,8 +211,8 @@ struct TextSegmentsResponse {
 const DEFAULT_SCREENSHOT_INTERVAL: u64 = 60;
 const DEFAULT_IDLE_THRESHOLD: u64 = 120;
 const DEFAULT_SCREENSHOT_LIMIT: usize = 1440;
-const DEFAULT_HIGH_RES_SCREENSHOT_LIMIT: usize = 288;
-const DEFAULT_HIGH_RES_SCREENSHOT_INTERVAL: u64 = 300;
+const DEFAULT_HIGH_RES_SCREENSHOT_LIMIT: usize = 1440;
+const DEFAULT_HIGH_RES_SCREENSHOT_INTERVAL: u64 = 60;
 const THUMBNAIL_SCREENSHOT_MAX_WIDTH: u32 = 960;
 const THUMBNAIL_SCREENSHOT_QUALITY: u8 = 82;
 const HIGH_RES_SCREENSHOT_MAX_WIDTH: u32 = 1600;
@@ -209,6 +220,8 @@ const HIGH_RES_SCREENSHOT_QUALITY: u8 = 88;
 const VISUAL_ANALYSIS_SCAN_INTERVAL: u64 = 30;
 const INSIGHT_REPORT_INTERVAL: u64 = 5 * 60 * 60;
 const INSIGHT_REPORT_CHECK_INTERVAL: u64 = 5 * 60;
+const VISUAL_WINDOW_INTERVAL: i64 = 5 * 60;
+const VISUAL_WINDOW_LOOKBACK_HOURS: i64 = 6;
 
 #[derive(Debug, Clone)]
 struct DateWindow {
@@ -325,6 +338,7 @@ fn router_from_state(state: AppState) -> Router {
         .route("/api/high-res-screenshots", get(high_res_screenshots))
         .route("/api/visual-summaries", get(visual_summaries))
         .route("/api/visual-observations", get(visual_observations))
+        .route("/api/visual-window-summaries", get(visual_window_summaries))
         .route("/api/insight-reports", get(insight_reports))
         .route("/api/analysis-status", get(analysis_status))
         .route("/api/screenshots/{id}/analyze", post(analyze_screenshot))
@@ -547,14 +561,14 @@ fn update_visual_analysis_success(
     state: &AppState,
     finished_at: DateTime<Utc>,
     next_run_at: DateTime<Utc>,
-    observation: VisualObservation,
+    window_summary: VisualWindowSummary,
 ) {
     if let Ok(mut status) = state.analysis_status.lock() {
         status.visual.status = "idle".into();
         status.visual.last_finished_at = Some(finished_at);
         status.visual.next_run_at = Some(next_run_at);
         status.visual.last_error = None;
-        status.latest_observation = Some(observation);
+        status.latest_window_summary = Some(window_summary);
     }
 }
 
@@ -911,9 +925,9 @@ fn spawn_visual_analysis_loop(state: AppState) -> tokio::task::JoinHandle<()> {
             let next_run_at =
                 started_at + chrono::Duration::seconds(VISUAL_ANALYSIS_SCAN_INTERVAL as i64);
             update_visual_analysis_running(&state, started_at);
-            match process_next_visual_observation(&state).await {
-                Ok(Some(observation)) => {
-                    update_visual_analysis_success(&state, Utc::now(), next_run_at, observation);
+            match process_next_visual_window_summary(&state).await {
+                Ok(Some(window_summary)) => {
+                    update_visual_analysis_success(&state, Utc::now(), next_run_at, window_summary);
                 }
                 Ok(None) => {
                     if let Ok(mut status) = state.analysis_status.lock() {
@@ -936,61 +950,118 @@ fn spawn_visual_analysis_loop(state: AppState) -> tokio::task::JoinHandle<()> {
     })
 }
 
-async fn process_next_visual_observation(state: &AppState) -> Result<Option<VisualObservation>> {
-    let high_res = {
+async fn process_next_visual_window_summary(
+    state: &AppState,
+) -> Result<Option<VisualWindowSummary>> {
+    let pending_window = {
         let store = state
             .store
             .lock()
             .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
-        store
-            .list_unobserved_high_res_screenshots(1)?
-            .into_iter()
-            .next()
+        find_next_pending_visual_window(&store, Utc::now())?
     };
-    let Some(high_res) = high_res else {
+    let Some(pending_window) = pending_window else {
         return Ok(None);
     };
 
-    let screenshot = high_res_to_screenshot_meta(&high_res);
-    let image_path = state.high_res_screenshot_dir.join(&high_res.file_path);
-    let input = VisualAnalysisInput {
-        screenshot: &screenshot,
-        image_path: Some(image_path.as_path()),
+    let image_paths = pending_window
+        .samples
+        .iter()
+        .map(|sample| {
+            state
+                .high_res_screenshot_dir
+                .join(&sample.screenshot.file_path)
+        })
+        .collect::<Vec<_>>();
+    let analysis_samples = pending_window
+        .samples
+        .iter()
+        .zip(image_paths.iter())
+        .map(|(sample, image_path)| WindowVisualAnalysisSample {
+            minute_mark: sample.minute_mark,
+            screenshot: &sample.screenshot,
+            image_path: image_path.as_path(),
+        })
+        .collect::<Vec<_>>();
+    let input = WindowVisualAnalysisInput {
+        window_start: pending_window.window_start,
+        window_end: pending_window.window_end,
+        samples: analysis_samples,
+        previous_summary: pending_window.previous_summary.as_ref(),
     };
     let created_at = Utc::now();
-    let summary = ConfiguredVisualAnalyzer::from_env()?
-        .analyze(&input, created_at)
+    let mut summary = ConfiguredVisualAnalyzer::from_env()?
+        .analyze_window(&input, created_at)
         .await
         .with_context(|| {
             format!(
-                "visual analysis failed for high_res_screenshot_id={}",
-                high_res.id
+                "visual window analysis failed for {}..{}",
+                pending_window.window_start.to_rfc3339(),
+                pending_window.window_end.to_rfc3339()
             )
         })?;
-    let mut observation = observation_from_visual_summary(&high_res, &summary);
 
-    let observation_id = {
+    let summary_id = {
         let mut store = state
             .store
             .lock()
             .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
-        store.insert_visual_observation(&observation)?
+        store.insert_visual_window_summary(&summary)?
     };
-    observation.id = observation_id;
-    Ok(Some(observation))
+    summary.id = summary_id;
+    Ok(Some(summary))
 }
 
-fn high_res_to_screenshot_meta(high_res: &HighResScreenshotMeta) -> ScreenshotMeta {
-    ScreenshotMeta {
-        id: high_res.id,
-        captured_at: high_res.captured_at,
-        file_path: high_res.file_path.clone(),
-        width: high_res.width,
-        height: high_res.height,
-        process_name: high_res.process_name.clone(),
-        window_title: high_res.window_title.clone(),
-        capture_status: high_res.capture_status.clone(),
+#[derive(Debug)]
+struct PendingVisualWindow {
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+    samples: Vec<WindowScreenshotSample>,
+    previous_summary: Option<VisualWindowSummary>,
+}
+
+fn find_next_pending_visual_window(
+    store: &Store,
+    now: DateTime<Utc>,
+) -> Result<Option<PendingVisualWindow>> {
+    let latest_summary = store.list_visual_window_summaries(1)?.into_iter().next();
+    let mut window_start = latest_summary
+        .as_ref()
+        .map(|summary| summary.window_end)
+        .unwrap_or_else(|| now - chrono::Duration::hours(VISUAL_WINDOW_LOOKBACK_HOURS));
+    window_start = floor_to_visual_window(window_start);
+    let latest_complete_end = floor_to_visual_window(now);
+
+    while window_start + chrono::Duration::seconds(VISUAL_WINDOW_INTERVAL) <= latest_complete_end {
+        let window_end = window_start + chrono::Duration::seconds(VISUAL_WINDOW_INTERVAL);
+        let already_summarized = !store
+            .list_visual_window_summaries_between(window_start, window_end, 1)?
+            .is_empty();
+        if !already_summarized {
+            let screenshots =
+                store.list_high_res_screenshots_between(window_start, window_end, 20)?;
+            if let Ok(samples) = select_window_samples(window_start, window_end, &screenshots) {
+                let previous_summary = store.latest_visual_window_summary_before(window_start)?;
+                return Ok(Some(PendingVisualWindow {
+                    window_start,
+                    window_end,
+                    samples,
+                    previous_summary,
+                }));
+            }
+        }
+        window_start = window_end;
     }
+
+    Ok(None)
+}
+
+fn floor_to_visual_window(value: DateTime<Utc>) -> DateTime<Utc> {
+    let timestamp = value.timestamp();
+    let floored = timestamp - timestamp.rem_euclid(VISUAL_WINDOW_INTERVAL);
+    Utc.timestamp_opt(floored, 0)
+        .single()
+        .expect("floored timestamp must be valid")
 }
 
 fn spawn_insight_report_loop(state: AppState) -> tokio::task::JoinHandle<()> {
@@ -1027,7 +1098,7 @@ async fn maybe_generate_insight_report(
     period_end: DateTime<Utc>,
 ) -> Result<Option<InsightReport>> {
     let period_start = period_end - chrono::Duration::seconds(INSIGHT_REPORT_INTERVAL as i64);
-    let observations = {
+    let window_summaries = {
         let store = state
             .store
             .lock()
@@ -1041,17 +1112,17 @@ async fn maybe_generate_insight_report(
         }
 
         store
-            .list_visual_observations_between(period_start, period_end, 500)?
+            .list_visual_window_summaries_between(period_start, period_end, 1000)?
             .into_iter()
-            .filter(|observation| observation.error.is_none())
+            .filter(|summary| summary.error.is_none())
             .collect::<Vec<_>>()
     };
-    if observations.is_empty() {
+    if window_summaries.is_empty() {
         return Ok(None);
     }
 
     let mut report = ConfiguredInsightReporter::from_env()?
-        .report(period_start, period_end, &observations)
+        .report_from_window_summaries(period_start, period_end, &window_summaries)
         .await?;
     let report_id = {
         let mut store = state
@@ -1360,6 +1431,30 @@ async fn visual_observations(
     }
 }
 
+async fn visual_window_summaries(
+    State(state): State<AppState>,
+    Query(query): Query<DateQuery>,
+) -> impl IntoResponse {
+    let date_window = match date_window_from_query(&query) {
+        Ok(date_window) => date_window,
+        Err(message) => return bad_request(&message),
+    };
+    let limit = query.limit.unwrap_or(500).min(5_000);
+    let store = match state.store.lock() {
+        Ok(store) => store,
+        Err(_) => return internal_error("store lock poisoned"),
+    };
+
+    match store.list_visual_window_summaries_between(
+        date_window.start_utc,
+        date_window.end_utc,
+        limit,
+    ) {
+        Ok(summaries) => Json(VisualWindowSummariesResponse { summaries }).into_response(),
+        Err(err) => internal_error(err),
+    }
+}
+
 async fn insight_reports(
     State(state): State<AppState>,
     Query(query): Query<LimitQuery>,
@@ -1625,14 +1720,14 @@ mod tests {
     }
 
     #[test]
-    fn high_res_capture_profile_uses_prd_interval_and_resolution() {
+    fn high_res_capture_profile_uses_minute_interval_and_analysis_resolution() {
         let store = Store::open_memory().unwrap();
         store.init().unwrap();
         let state = default_state(store, None, None);
 
         let profile = screenshot_capture_profile(&state, ScreenshotCaptureKind::HighRes);
 
-        assert_eq!(profile.interval_secs, 300);
+        assert_eq!(profile.interval_secs, 60);
         assert_eq!(profile.max_width, 1600);
         assert_eq!(profile.quality, 88);
         assert_eq!(

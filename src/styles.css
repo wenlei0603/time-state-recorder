@@ -1461,6 +1461,37 @@ td:nth-child(2) {
   font-size: 0.8rem !important;
 }
 
+.windowTrajectory {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.windowTrajectory li {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+  color: #233028;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.windowTrajectory strong {
+  color: #356b63;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.windowTrajectory span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .insightRedacted {
   padding: 10px 12px;
   border-radius: 6px;
