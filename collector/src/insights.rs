@@ -519,7 +519,7 @@ impl MiniMaxDailyBriefReporter {
         comparison: &DailyComparison,
         reports: &[InsightReport],
     ) -> serde_json::Value {
-        serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.config.model,
             "messages": [
                 {
@@ -543,7 +543,13 @@ impl MiniMaxDailyBriefReporter {
             "top_p": 0.95,
             "max_completion_tokens": self.config.max_completion_tokens,
             "thinking": { "type": "disabled" }
-        })
+        });
+        if let Some(response_format) =
+            crate::llm_json::minimax_json_response_format(&self.config.model)
+        {
+            body["response_format"] = response_format;
+        }
+        body
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -645,8 +651,8 @@ impl MiniMaxDailyBriefReporter {
                 .as_ref()
                 .and_then(|value| value.action_trajectory.clone())
                 .unwrap_or(local.action_trajectory),
-            raw_summary_json: serde_json::from_str(strip_json_fence(content.trim()))
-                .unwrap_or_else(|_| serde_json::json!({ "content": content.trim() })),
+            raw_summary_json: crate::llm_json::parse_json_object(content)
+                .unwrap_or_else(|| serde_json::json!({ "content": content.trim() })),
             comparison,
             ..local
         })
@@ -752,7 +758,7 @@ impl MiniMaxInsightReporter {
         period_end: DateTime<Utc>,
         observations: &[VisualObservation],
     ) -> serde_json::Value {
-        serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.config.model,
             "messages": [
                 {
@@ -768,7 +774,13 @@ impl MiniMaxInsightReporter {
             "top_p": 0.95,
             "max_completion_tokens": self.config.max_completion_tokens,
             "thinking": { "type": "disabled" }
-        })
+        });
+        if let Some(response_format) =
+            crate::llm_json::minimax_json_response_format(&self.config.model)
+        {
+            body["response_format"] = response_format;
+        }
+        body
     }
 
     pub fn build_window_summary_chat_completions_request(
@@ -777,7 +789,7 @@ impl MiniMaxInsightReporter {
         period_end: DateTime<Utc>,
         window_summaries: &[VisualWindowSummary],
     ) -> serde_json::Value {
-        serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.config.model,
             "messages": [
                 {
@@ -793,7 +805,13 @@ impl MiniMaxInsightReporter {
             "top_p": 0.95,
             "max_completion_tokens": self.config.max_completion_tokens,
             "thinking": { "type": "disabled" }
-        })
+        });
+        if let Some(response_format) =
+            crate::llm_json::minimax_json_response_format(&self.config.model)
+        {
+            body["response_format"] = response_format;
+        }
+        body
     }
 
     pub async fn report(
@@ -1091,21 +1109,9 @@ fn parse_chat_completion_content(response_text: &str) -> Result<String> {
 }
 
 fn parse_model_report_json(content: &str) -> Option<ModelReportJson> {
-    let trimmed = strip_json_fence(content.trim());
-    serde_json::from_str(trimmed).ok()
+    crate::llm_json::parse_json_object_as(content)
 }
 
 fn parse_model_daily_brief_json(content: &str) -> Option<ModelDailyBriefJson> {
-    let trimmed = strip_json_fence(content.trim());
-    serde_json::from_str(trimmed).ok()
-}
-
-fn strip_json_fence(content: &str) -> &str {
-    if let Some(stripped) = content.strip_prefix("```json") {
-        return stripped.trim().trim_end_matches("```").trim();
-    }
-    if let Some(stripped) = content.strip_prefix("```") {
-        return stripped.trim().trim_end_matches("```").trim();
-    }
-    content
+    crate::llm_json::parse_json_object_as(content)
 }

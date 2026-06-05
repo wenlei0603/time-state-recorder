@@ -5,6 +5,7 @@ pub mod image_retention;
 pub mod input;
 pub mod insights;
 pub mod interval;
+pub mod llm_json;
 pub mod models;
 pub mod screenshot;
 pub mod storage;

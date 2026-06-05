@@ -279,7 +279,7 @@ impl MiniMaxAnalyzer {
             image_url_block["max_long_side_pixel"] = serde_json::json!(max_long_side_pixel);
         }
 
-        Ok(serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.config.model,
             "messages": [
                 {
@@ -304,7 +304,13 @@ impl MiniMaxAnalyzer {
             "top_p": 0.95,
             "max_completion_tokens": self.config.max_completion_tokens,
             "thinking": { "type": "disabled" }
-        }))
+        });
+        if let Some(response_format) =
+            crate::llm_json::minimax_json_response_format(&self.config.model)
+        {
+            body["response_format"] = response_format;
+        }
+        Ok(body)
     }
 
     pub fn build_window_chat_completions_request(
@@ -332,7 +338,7 @@ impl MiniMaxAnalyzer {
             }));
         }
 
-        Ok(serde_json::json!({
+        let mut body = serde_json::json!({
             "model": self.config.model,
             "messages": [
                 {
@@ -348,7 +354,13 @@ impl MiniMaxAnalyzer {
             "top_p": 0.95,
             "max_completion_tokens": self.config.max_completion_tokens,
             "thinking": { "type": "disabled" }
-        }))
+        });
+        if let Some(response_format) =
+            crate::llm_json::minimax_json_response_format(&self.config.model)
+        {
+            body["response_format"] = response_format;
+        }
+        Ok(body)
     }
 
     pub async fn analyze(
@@ -632,23 +644,11 @@ fn parse_chat_completion_content(response_text: &str) -> Result<String> {
 }
 
 fn parse_model_summary_json(content: &str) -> Option<ModelSummaryJson> {
-    let trimmed = strip_json_fence(content.trim());
-    serde_json::from_str(trimmed).ok()
+    crate::llm_json::parse_json_object_as(content)
 }
 
 fn parse_model_window_summary_value(content: &str) -> Option<serde_json::Value> {
-    let trimmed = strip_json_fence(content.trim());
-    serde_json::from_str(trimmed).ok()
-}
-
-fn strip_json_fence(content: &str) -> &str {
-    if let Some(stripped) = content.strip_prefix("```json") {
-        return stripped.trim().trim_end_matches("```").trim();
-    }
-    if let Some(stripped) = content.strip_prefix("```") {
-        return stripped.trim().trim_end_matches("```").trim();
-    }
-    content
+    crate::llm_json::parse_json_object(content)
 }
 
 fn image_file_to_data_url(path: &Path) -> Result<String> {
