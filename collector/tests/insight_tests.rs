@@ -488,6 +488,8 @@ fn visual_summary(
         summary_text: summary_text.into(),
         activity_category,
         project_hints: vec!["Time State Recorder".into()],
+        identity_tags: vec!["software_builder".into()],
+        routine_tags: vec!["coding_build".into()],
         visible_apps: vec!["Code.exe".into()],
         visible_text_hints: vec![],
         risk_flags: vec![],
@@ -517,6 +519,8 @@ fn sample_window_summary(
         continuity: "continued_focus".into(),
         primary_activity: ActivityCategory::Coding,
         project_hints: vec!["Time State Recorder".into()],
+        identity_tags: vec!["software_builder".into()],
+        routine_tags: vec!["coding_build".into()],
         task_intent: "实现窗口级视觉分析".into(),
         trajectory: sampled_screenshot_ids
             .iter()
@@ -526,6 +530,9 @@ fn sample_window_summary(
                 screenshot_id: *screenshot_id,
                 observation: format!("minute {minute_mark}"),
                 activity_category: ActivityCategory::Coding,
+                project_hints: vec!["Time State Recorder".into()],
+                identity_tags: vec!["software_builder".into()],
+                routine_tags: vec!["coding_build".into()],
             })
             .collect(),
         switching_level: "low".into(),

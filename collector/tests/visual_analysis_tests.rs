@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use tsr_collector::{
-    models::{ActivityCategory, ScreenshotMeta},
+    models::{ActivityCategory, HighResScreenshotMeta, ScreenshotMeta},
     visual_analysis::{
         LocalMetadataAnalyzer, MiniMaxAnalyzer, MiniMaxConfig, VisualAnalysisInput, VisualAnalyzer,
-        select_visual_analyzer_provider,
+        WindowScreenshotSample, select_visual_analyzer_provider,
     },
 };
 
@@ -133,6 +133,13 @@ fn minimax_request_uses_openai_chat_completions_image_content_block() {
     assert_eq!(request["model"], "MiniMax-M3");
     assert_eq!(request["messages"][1]["role"], "user");
     assert_eq!(request["messages"][1]["content"][0]["type"], "text");
+    let prompt = request["messages"][1]["content"][0]["text"]
+        .as_str()
+        .unwrap();
+    assert!(prompt.contains("identityTags"));
+    assert!(prompt.contains("routineTags"));
+    assert!(prompt.contains("software_builder"));
+    assert!(prompt.contains("coding_build"));
     assert_eq!(request["messages"][1]["content"][1]["type"], "image_url");
     assert_eq!(
         request["messages"][1]["content"][1]["image_url"]["detail"],
@@ -185,15 +192,19 @@ fn minimax_json_content_maps_to_visual_summary() {
         &screenshot,
         ts("2026-05-25T09:09:10Z"),
         "MiniMax-M3",
-        r#"{
+        r#"```json
+        {
           "summaryText": "正在编辑视觉分析模块。",
           "activityCategory": "coding",
           "projectHints": ["Time State Recorder"],
+          "identityTags": ["software_builder", "not_a_real_tag"],
+          "routineTags": ["coding_build"],
           "visibleApps": ["Code.exe"],
           "visibleTextHints": ["visual_analysis.rs"],
           "riskFlags": [],
           "confidence": 0.82
-        }"#,
+        }
+        ```"#,
     )
     .unwrap();
 
@@ -204,7 +215,127 @@ fn minimax_json_content_maps_to_visual_summary() {
     assert_eq!(summary.summary_text, "正在编辑视觉分析模块。");
     assert_eq!(summary.activity_category, ActivityCategory::Coding);
     assert_eq!(summary.project_hints, vec!["Time State Recorder"]);
+    assert_eq!(summary.identity_tags, vec!["software_builder"]);
+    assert_eq!(summary.routine_tags, vec!["coding_build"]);
     assert_eq!(summary.confidence, 0.82);
+}
+
+#[test]
+fn minimax_window_analysis_response_maps_identity_and_routine_tags() {
+    let samples = vec![
+        window_sample(
+            101,
+            1,
+            "2026-05-25T09:00:30Z",
+            "Code.exe",
+            "time-state-recorder models.rs",
+        ),
+        window_sample(
+            102,
+            3,
+            "2026-05-25T09:02:30Z",
+            "Code.exe",
+            "cargo test visual_analysis",
+        ),
+        window_sample(
+            103,
+            5,
+            "2026-05-25T09:04:30Z",
+            "msedge.exe",
+            "Rust async docs",
+        ),
+    ];
+
+    let summary = MiniMaxAnalyzer::window_summary_from_response_text(
+        ts("2026-05-25T09:00:00Z"),
+        ts("2026-05-25T09:05:00Z"),
+        &samples,
+        Some(7),
+        ts("2026-05-25T09:05:10Z"),
+        "MiniMax-M3",
+        r#"```json
+        {
+          "summaryText": "正在构建视觉标签功能。",
+          "continuity": "延续上一窗口的编码工作。",
+          "primaryActivity": "coding",
+          "projectHints": ["Time State Recorder"],
+          "identityTags": ["software_builder", "not_a_real_tag"],
+          "routineTags": ["coding_build"],
+          "taskIntent": "实现窗口级图片标签。",
+          "trajectory": [
+            {
+              "minuteMark": 1,
+              "observation": "正在编辑 Rust 模型。",
+              "activityCategory": "coding",
+              "projectHints": ["Time State Recorder"],
+              "identityTags": ["software_builder"],
+              "routineTags": ["coding_build"]
+            },
+            {
+              "minuteMark": 3,
+              "observation": "正在运行 cargo 测试。",
+              "activityCategory": "coding",
+              "projectHints": ["Time State Recorder"],
+              "identityTags": ["software_builder"],
+              "routineTags": ["coding_build"]
+            },
+            {
+              "minuteMark": 5,
+              "observation": "正在查看 Rust 文档。",
+              "activityCategory": "learning",
+              "projectHints": ["Rust"],
+              "identityTags": ["software_builder"],
+              "routineTags": ["learning_exploration", "not_a_real_tag"]
+            }
+          ],
+          "switchingLevel": "low",
+          "switchingEvidence": "三个采样点都围绕同一功能。",
+          "loafingLevel": "none",
+          "loafingEvidence": "没有看到娱乐或离开工作。",
+          "visibleApps": ["Code.exe", "msedge.exe"],
+          "visibleTextHints": ["models.rs", "Rust async docs"],
+          "riskFlags": [],
+          "confidence": 0.88
+        }
+        ```"#,
+    )
+    .unwrap();
+
+    assert_eq!(summary.identity_tags, vec!["software_builder"]);
+    assert_eq!(summary.routine_tags, vec!["coding_build"]);
+    assert!(
+        !summary
+            .identity_tags
+            .contains(&"not_a_real_tag".to_string())
+    );
+    let minute_five = summary
+        .trajectory
+        .iter()
+        .find(|point| point.minute_mark == 5)
+        .unwrap();
+    assert_eq!(minute_five.routine_tags, vec!["learning_exploration"]);
+}
+
+fn window_sample(
+    screenshot_id: i64,
+    minute_mark: u8,
+    captured_at: &str,
+    process_name: &str,
+    window_title: &str,
+) -> WindowScreenshotSample {
+    WindowScreenshotSample {
+        minute_mark,
+        screenshot: HighResScreenshotMeta {
+            id: screenshot_id,
+            captured_at: ts(captured_at),
+            file_path: format!("2026-05-25/{screenshot_id}.jpg"),
+            width: 1920,
+            height: 1080,
+            process_name: Some(process_name.to_string()),
+            window_title: Some(window_title.to_string()),
+            capture_status: "ok".to_string(),
+        },
+    }
 }
 
 fn ts(value: &str) -> DateTime<Utc> {

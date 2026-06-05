@@ -27,6 +27,8 @@ pub fn observation_from_visual_summary(
         summary_text: summary.summary_text.clone(),
         activity_category: summary.activity_category.clone(),
         project_hints: summary.project_hints.clone(),
+        identity_tags: summary.identity_tags.clone(),
+        routine_tags: summary.routine_tags.clone(),
         visible_apps: summary.visible_apps.clone(),
         visible_text_hints: summary.visible_text_hints.clone(),
         risk_flags: summary.risk_flags.clone(),

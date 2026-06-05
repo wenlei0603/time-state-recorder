@@ -2282,6 +2282,8 @@ fn map_visual_summary_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VisualSum
         summary_text: row.get(6)?,
         activity_category,
         project_hints: parse_string_vec(&project_hints_json)?,
+        identity_tags: unknown_visual_tags(),
+        routine_tags: unknown_visual_tags(),
         visible_apps: parse_string_vec(&visible_apps_json)?,
         visible_text_hints: parse_string_vec(&visible_text_hints_json)?,
         risk_flags: parse_string_vec(&risk_flags_json)?,
@@ -2321,6 +2323,8 @@ fn map_visual_observation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Visua
         summary_text: row.get(7)?,
         activity_category,
         project_hints: parse_string_vec(&project_hints_json)?,
+        identity_tags: unknown_visual_tags(),
+        routine_tags: unknown_visual_tags(),
         visible_apps: parse_string_vec(&visible_apps_json)?,
         visible_text_hints: parse_string_vec(&visible_text_hints_json)?,
         risk_flags: parse_string_vec(&risk_flags_json)?,
@@ -2366,6 +2370,8 @@ fn map_visual_window_summary_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Vi
         continuity: row.get(9)?,
         primary_activity,
         project_hints: parse_string_vec(&project_hints_json)?,
+        identity_tags: unknown_visual_tags(),
+        routine_tags: unknown_visual_tags(),
         task_intent: row.get(12)?,
         trajectory: parse_visual_trajectory(&trajectory_json)?,
         switching_level: row.get(14)?,
@@ -2516,6 +2522,10 @@ fn parse_i64_vec(value: &str) -> rusqlite::Result<Vec<i64>> {
 fn parse_visual_trajectory(value: &str) -> rusqlite::Result<Vec<VisualTrajectoryPoint>> {
     serde_json::from_str(value)
         .map_err(|err| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(err)))
+}
+
+fn unknown_visual_tags() -> Vec<String> {
+    vec!["unknown".to_string()]
 }
 
 fn parse_category_mix(value: &str) -> rusqlite::Result<Vec<ActivityCategoryCount>> {

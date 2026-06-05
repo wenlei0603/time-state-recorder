@@ -311,6 +311,8 @@ pub struct VisualSummary {
     pub summary_text: String,
     pub activity_category: ActivityCategory,
     pub project_hints: Vec<String>,
+    pub identity_tags: Vec<String>,
+    pub routine_tags: Vec<String>,
     pub visible_apps: Vec<String>,
     pub visible_text_hints: Vec<String>,
     pub risk_flags: Vec<String>,
@@ -332,6 +334,8 @@ pub struct VisualObservation {
     pub summary_text: String,
     pub activity_category: ActivityCategory,
     pub project_hints: Vec<String>,
+    pub identity_tags: Vec<String>,
+    pub routine_tags: Vec<String>,
     pub visible_apps: Vec<String>,
     pub visible_text_hints: Vec<String>,
     pub risk_flags: Vec<String>,
@@ -347,6 +351,12 @@ pub struct VisualTrajectoryPoint {
     pub screenshot_id: i64,
     pub observation: String,
     pub activity_category: ActivityCategory,
+    #[serde(default)]
+    pub project_hints: Vec<String>,
+    #[serde(default = "unknown_visual_tags")]
+    pub identity_tags: Vec<String>,
+    #[serde(default = "unknown_visual_tags")]
+    pub routine_tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -364,6 +374,8 @@ pub struct VisualWindowSummary {
     pub continuity: String,
     pub primary_activity: ActivityCategory,
     pub project_hints: Vec<String>,
+    pub identity_tags: Vec<String>,
+    pub routine_tags: Vec<String>,
     pub task_intent: String,
     pub trajectory: Vec<VisualTrajectoryPoint>,
     pub switching_level: String,
@@ -377,6 +389,10 @@ pub struct VisualWindowSummary {
     pub raw_summary_json: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub error: Option<String>,
+}
+
+fn unknown_visual_tags() -> Vec<String> {
+    vec!["unknown".to_string()]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

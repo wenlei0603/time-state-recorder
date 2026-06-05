@@ -9,6 +9,10 @@ use crate::models::{
     ActivityCategory, HighResScreenshotMeta, ScreenshotMeta, VisualSummary, VisualTrajectoryPoint,
     VisualWindowSummary,
 };
+use crate::visual_labels::{
+    fallback_identity_tags, fallback_routine_tags, identity_tag_list_for_prompt,
+    routine_tag_list_for_prompt, sanitize_identity_tags, sanitize_routine_tags,
+};
 
 const MINIMAX_PROMPT_VERSION: &str = "visual-summary-minimax-m3-v1";
 const MINIMAX_WINDOW_PROMPT_VERSION: &str = "visual-window-minimax-m3-v1";
@@ -343,7 +347,7 @@ impl MiniMaxAnalyzer {
             "messages": [
                 {
                     "role": "system",
-                    "content": "You analyze three screenshots from a 5-minute personal work window. Return compact JSON only."
+                    "content": "Return one valid JSON object only. Do not use markdown fences or commentary. Use only the provided label values."
                 },
                 {
                     "role": "user",
@@ -453,6 +457,16 @@ impl MiniMaxAnalyzer {
                 .as_ref()
                 .and_then(|value| value.project_hints.clone())
                 .unwrap_or(local_fallback.project_hints),
+            identity_tags: parsed
+                .as_ref()
+                .and_then(|value| value.identity_tags.as_ref())
+                .map(|tags| sanitize_identity_tags(tags))
+                .unwrap_or(local_fallback.identity_tags),
+            routine_tags: parsed
+                .as_ref()
+                .and_then(|value| value.routine_tags.as_ref())
+                .map(|tags| sanitize_routine_tags(tags))
+                .unwrap_or(local_fallback.routine_tags),
             visible_apps: parsed
                 .as_ref()
                 .and_then(|value| value.visible_apps.clone())
@@ -532,6 +546,16 @@ impl MiniMaxAnalyzer {
                 .as_ref()
                 .and_then(|value| value.project_hints.clone())
                 .unwrap_or(local.project_hints),
+            identity_tags: parsed
+                .as_ref()
+                .and_then(|value| value.identity_tags.as_ref())
+                .map(|tags| sanitize_identity_tags(tags))
+                .unwrap_or(local.identity_tags),
+            routine_tags: parsed
+                .as_ref()
+                .and_then(|value| value.routine_tags.as_ref())
+                .map(|tags| sanitize_routine_tags(tags))
+                .unwrap_or(local.routine_tags),
             task_intent: parsed
                 .as_ref()
                 .and_then(|value| value.task_intent.clone())
@@ -583,6 +607,8 @@ struct ModelSummaryJson {
     summary_text: Option<String>,
     activity_category: Option<String>,
     project_hints: Option<Vec<String>>,
+    identity_tags: Option<Vec<String>>,
+    routine_tags: Option<Vec<String>>,
     visible_apps: Option<Vec<String>>,
     visible_text_hints: Option<Vec<String>>,
     risk_flags: Option<Vec<String>>,
@@ -596,6 +622,8 @@ struct ModelWindowSummaryJson {
     continuity: Option<String>,
     primary_activity: Option<String>,
     project_hints: Option<Vec<String>>,
+    identity_tags: Option<Vec<String>>,
+    routine_tags: Option<Vec<String>>,
     task_intent: Option<String>,
     trajectory: Option<Vec<ModelTrajectoryPointJson>>,
     switching_level: Option<String>,
@@ -614,6 +642,9 @@ struct ModelTrajectoryPointJson {
     minute_mark: u8,
     observation: String,
     activity_category: Option<String>,
+    project_hints: Option<Vec<String>>,
+    identity_tags: Option<Vec<String>>,
+    routine_tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -686,7 +717,9 @@ fn mime_type_for_image_path(path: &Path) -> &'static str {
 
 fn visual_summary_prompt(screenshot: &ScreenshotMeta) -> String {
     format!(
-        "Summarize this screenshot for personal work insight. Return JSON only with keys: summaryText, activityCategory, projectHints, visibleApps, visibleTextHints, riskFlags, confidence. activityCategory must be one of project_work, research, writing, coding, communication, meeting, admin, learning, planning, loafing, personal, idle, unknown. Context metadata: processName={:?}, windowTitle={:?}, capturedAt={}, dimensions={}x{}.",
+        "Summarize this screenshot for personal work insight. Return JSON only with keys: summaryText, activityCategory, projectHints, identityTags, routineTags, visibleApps, visibleTextHints, riskFlags, confidence. activityCategory must be one of project_work, research, writing, coding, communication, meeting, admin, learning, planning, loafing, personal, idle, unknown. identityTags must use only these values: {}. routineTags must use only these values: {}. Context metadata: processName={:?}, windowTitle={:?}, capturedAt={}, dimensions={}x{}.",
+        identity_tag_list_for_prompt(),
+        routine_tag_list_for_prompt(),
         screenshot.process_name,
         screenshot.window_title,
         screenshot.captured_at.to_rfc3339(),
@@ -718,6 +751,8 @@ fn window_summary_prompt(input: &WindowVisualAnalysisInput<'_>) -> String {
             "summaryText": summary.summary_text,
             "primaryActivity": summary.primary_activity.as_str(),
             "projectHints": summary.project_hints,
+            "identityTags": summary.identity_tags,
+            "routineTags": summary.routine_tags,
             "taskIntent": summary.task_intent,
             "switchingLevel": summary.switching_level,
             "loafingLevel": summary.loafing_level,
@@ -725,7 +760,9 @@ fn window_summary_prompt(input: &WindowVisualAnalysisInput<'_>) -> String {
     });
 
     format!(
-        "Analyze this 5-minute work window using exactly three screenshots from minute marks 1, 3, and 5. Use the previous window summary only as continuity context, not as evidence for the current window. Return JSON only with keys: summaryText, continuity, primaryActivity, projectHints, taskIntent, trajectory, switchingLevel, switchingEvidence, loafingLevel, loafingEvidence, visibleApps, visibleTextHints, riskFlags, confidence. primaryActivity and each trajectory.activityCategory must be one of project_work, research, writing, coding, communication, meeting, admin, learning, planning, loafing, personal, idle, unknown. trajectory must include one object per image with minuteMark, observation, activityCategory. switchingLevel must be low, medium, or high. loafingLevel must be none, possible, or clear. Be concise and write summaryText, taskIntent, evidence fields in Chinese. windowStart={}, windowEnd={}, previousWindowSummary={}, samples={}",
+        "Analyze this 5-minute work window using exactly three screenshots from minute marks 1, 3, and 5. Use the previous window summary only as continuity context, not as evidence for the current window. Return JSON only with keys: summaryText, continuity, primaryActivity, projectHints, identityTags, routineTags, taskIntent, trajectory, switchingLevel, switchingEvidence, loafingLevel, loafingEvidence, visibleApps, visibleTextHints, riskFlags, confidence. primaryActivity and each trajectory.activityCategory must be one of project_work, research, writing, coding, communication, meeting, admin, learning, planning, loafing, personal, idle, unknown. identityTags and each trajectory.identityTags must use only these values: {}. routineTags and each trajectory.routineTags must use only these values: {}. trajectory must include one object per image with minuteMark, observation, activityCategory, projectHints, identityTags, routineTags. switchingLevel must be low, medium, or high. loafingLevel must be none, possible, or clear. Human-facing strings including summaryText, continuity, taskIntent, trajectory.observation, switchingEvidence, loafingEvidence must be concise Chinese. windowStart={}, windowEnd={}, previousWindowSummary={}, samples={}",
+        identity_tag_list_for_prompt(),
+        routine_tag_list_for_prompt(),
         input.window_start.to_rfc3339(),
         input.window_end.to_rfc3339(),
         previous_summary
@@ -752,6 +789,8 @@ fn local_stub_visual_summary(
     let visible_apps = screenshot.process_name.iter().cloned().collect::<Vec<_>>();
     let visible_text_hints = screenshot.window_title.iter().cloned().collect::<Vec<_>>();
     let project_hints = project_hints_from_metadata(&app, &title);
+    let identity_tags = fallback_identity_tags(&app, &title);
+    let routine_tags = fallback_routine_tags(&app, &title);
     let mut risk_flags = Vec::new();
     if screenshot.capture_status != "ok" {
         risk_flags.push(format!("capture_status:{}", screenshot.capture_status));
@@ -782,6 +821,8 @@ fn local_stub_visual_summary(
         summary_text,
         activity_category,
         project_hints,
+        identity_tags,
+        routine_tags,
         visible_apps,
         visible_text_hints,
         risk_flags,
@@ -811,6 +852,7 @@ fn local_stub_visual_window_summary(
                 .window_title
                 .clone()
                 .unwrap_or_else(|| "Untitled window".to_string());
+            let point_project_hints = project_hints_from_metadata(&app, &title);
             VisualTrajectoryPoint {
                 minute_mark: sample.minute_mark,
                 screenshot_id: sample.screenshot.id,
@@ -823,6 +865,9 @@ fn local_stub_visual_window_summary(
                     &title,
                     &sample.screenshot.capture_status,
                 ),
+                project_hints: point_project_hints,
+                identity_tags: fallback_identity_tags(&app, &title),
+                routine_tags: fallback_routine_tags(&app, &title),
             }
         })
         .collect::<Vec<_>>();
@@ -849,6 +894,18 @@ fn local_stub_visual_window_summary(
             })
             .collect(),
     );
+    let identity_tags = unknown_if_empty(dedupe_strings(
+        trajectory
+            .iter()
+            .flat_map(|point| point.identity_tags.clone())
+            .collect(),
+    ));
+    let routine_tags = unknown_if_empty(dedupe_strings(
+        trajectory
+            .iter()
+            .flat_map(|point| point.routine_tags.clone())
+            .collect(),
+    ));
     let risk_flags = if samples.len() == WINDOW_SAMPLE_MARKS.len() {
         Vec::new()
     } else {
@@ -880,6 +937,8 @@ fn local_stub_visual_window_summary(
         },
         primary_activity,
         project_hints,
+        identity_tags,
+        routine_tags,
         task_intent: "Metadata-only task intent is uncertain.".to_string(),
         trajectory,
         switching_level: "unknown".to_string(),
@@ -941,6 +1000,17 @@ fn model_trajectory_to_points(
                     .as_deref()
                     .and_then(ActivityCategory::from_db)
                     .unwrap_or(ActivityCategory::Unknown),
+                project_hints: item.project_hints.clone().unwrap_or_default(),
+                identity_tags: item
+                    .identity_tags
+                    .as_ref()
+                    .map(|tags| sanitize_identity_tags(tags))
+                    .unwrap_or_else(|| vec!["unknown".to_string()]),
+                routine_tags: item
+                    .routine_tags
+                    .as_ref()
+                    .map(|tags| sanitize_routine_tags(tags))
+                    .unwrap_or_else(|| vec!["unknown".to_string()]),
             })
         })
         .collect()
@@ -977,6 +1047,14 @@ fn dedupe_strings(values: Vec<String>) -> Vec<String> {
         }
     }
     deduped
+}
+
+fn unknown_if_empty(values: Vec<String>) -> Vec<String> {
+    if values.is_empty() {
+        vec!["unknown".to_string()]
+    } else {
+        values
+    }
 }
 
 fn categorize_screenshot_metadata(
