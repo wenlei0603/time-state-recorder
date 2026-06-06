@@ -1062,6 +1062,61 @@ async fn serves_date_scoped_insight_reports_chronologically() {
 }
 
 #[tokio::test]
+async fn serves_hourly_insight_reports_by_date_and_kind() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    store
+        .insert_insight_report(&InsightReport {
+            id: 0,
+            period_start: ts("2026-06-07T02:00:00Z"),
+            period_end: ts("2026-06-07T03:00:00Z"),
+            generated_at: ts("2026-06-07T03:00:05Z"),
+            report_kind: "1h".into(),
+            model_provider: "local_insight".into(),
+            model_name: "trajectory-v1".into(),
+            summary_text: "整点小时报告。".into(),
+            category_mix: vec![ActivityCategoryCount {
+                activity_category: ActivityCategory::Coding,
+                count: 12,
+            }],
+            project_hints: vec!["Time State Recorder".into()],
+            evidence_count: 12,
+            error: None,
+        })
+        .unwrap();
+    store
+        .insert_insight_report(&sample_insight_report(
+            0,
+            "2026-06-07T02:00:00Z",
+            "2026-06-07T07:00:00Z",
+            "5小时报告。",
+        ))
+        .unwrap();
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let body: serde_json::Value = reqwest::get(format!(
+        "http://{addr}/api/insight-reports?date=2026-06-07&kind=1h&limit=10"
+    ))
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+
+    assert_eq!(body["reports"].as_array().unwrap().len(), 1);
+    assert_eq!(body["reports"][0]["reportKind"], "1h");
+    assert_eq!(body["reports"][0]["summaryText"], "整点小时报告。");
+
+    server.abort();
+}
+
+#[tokio::test]
 async fn serves_daily_brief_response_with_stats_and_same_day_reports() {
     let mut store = Store::open_memory().unwrap();
     store.init().unwrap();

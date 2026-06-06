@@ -270,8 +270,6 @@ const VISUAL_ANALYSIS_SCAN_INTERVAL: u64 = 30;
 const HOURLY_REPORT_KIND: &str = "1h";
 const FIVE_HOUR_REPORT_KIND: &str = "5h";
 const HOURLY_REPORT_INTERVAL: i64 = 60 * 60;
-const FIVE_HOUR_REPORT_INTERVAL: i64 = 5 * 60 * 60;
-const INSIGHT_REPORT_INTERVAL: u64 = 5 * 60 * 60;
 const INSIGHT_REPORT_CHECK_INTERVAL: u64 = 5 * 60;
 const REPORT_GENERATION_BATCH_LIMIT: usize = 6;
 const FIXED_FIVE_HOUR_START_DATE: &str = "2026-06-07";
@@ -1450,6 +1448,70 @@ mod report_cadence_tests {
             "2026-06-08 01:00"
         );
     }
+
+    #[test]
+    fn due_report_periods_skip_existing_kind_and_exact_period() {
+        let mut store = Store::open_memory().unwrap();
+        store.init().unwrap();
+        store
+            .insert_insight_report(&sample_report(
+                HOURLY_REPORT_KIND,
+                "2026-06-07T11:00:00+08:00",
+                "2026-06-07T12:00:00+08:00",
+            ))
+            .unwrap();
+        store
+            .insert_insight_report(&sample_report(
+                FIVE_HOUR_REPORT_KIND,
+                "2026-06-07T10:00:00+08:00",
+                "2026-06-07T15:00:00+08:00",
+            ))
+            .unwrap();
+        let state = default_state(store, None, None);
+
+        let due = due_report_periods(&state, local_ts("2026-06-07 20:01:00").with_timezone(&Utc))
+            .unwrap();
+
+        assert_eq!(
+            due.iter()
+                .map(|period| {
+                    format!(
+                        "{} {}-{}",
+                        period.kind,
+                        period
+                            .period_start
+                            .with_timezone(&Local)
+                            .format("%H:%M"),
+                        period.period_end.with_timezone(&Local).format("%H:%M")
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec!["1h 19:00-20:00", "5h 15:00-20:00"]
+        );
+    }
+
+    fn sample_report(kind: &str, start: &str, end: &str) -> InsightReport {
+        InsightReport {
+            id: 0,
+            period_start: DateTime::parse_from_rfc3339(start)
+                .unwrap()
+                .with_timezone(&Utc),
+            period_end: DateTime::parse_from_rfc3339(end)
+                .unwrap()
+                .with_timezone(&Utc),
+            generated_at: DateTime::parse_from_rfc3339(end)
+                .unwrap()
+                .with_timezone(&Utc),
+            report_kind: kind.into(),
+            model_provider: "local_insight".into(),
+            model_name: "trajectory-v1".into(),
+            summary_text: "已有报告。".into(),
+            category_mix: Vec::new(),
+            project_hints: Vec::new(),
+            evidence_count: 0,
+            error: None,
+        }
+    }
 }
 
 fn spawn_insight_report_loop(state: AppState) -> tokio::task::JoinHandle<()> {
@@ -1459,16 +1521,16 @@ fn spawn_insight_report_loop(state: AppState) -> tokio::task::JoinHandle<()> {
             let next_run_at =
                 started_at + chrono::Duration::seconds(INSIGHT_REPORT_CHECK_INTERVAL as i64);
             update_report_running(&state, started_at);
-            match maybe_generate_insight_report(&state, started_at).await {
-                Ok(Some(report)) => {
-                    let next_report_at = report.period_end
-                        + chrono::Duration::seconds(INSIGHT_REPORT_INTERVAL as i64);
-                    update_report_success(&state, Utc::now(), next_report_at, report);
+            match maybe_generate_due_insight_reports(&state, started_at).await {
+                Ok(reports) if !reports.is_empty() => {
+                    let latest = reports.last().cloned().expect("reports is not empty");
+                    let next_report_at = next_report_status_time(Utc::now());
+                    update_report_success(&state, Utc::now(), next_report_at, latest);
                 }
-                Ok(None) => {
+                Ok(_) => {
                     if let Ok(mut status) = state.analysis_status.lock() {
                         status.report.status = "idle".into();
-                        status.report.next_run_at = Some(next_run_at);
+                        status.report.next_run_at = Some(next_report_status_time(Utc::now()));
                     }
                 }
                 Err(error) => {
@@ -1481,26 +1543,58 @@ fn spawn_insight_report_loop(state: AppState) -> tokio::task::JoinHandle<()> {
     })
 }
 
-async fn maybe_generate_insight_report(
+async fn maybe_generate_due_insight_reports(
     state: &AppState,
-    period_end: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Result<Vec<InsightReport>> {
+    let mut generated = Vec::new();
+    for period in due_report_periods(state, now)? {
+        if let Some(report) = generate_insight_report_for_period(state, &period).await? {
+            generated.push(report);
+        }
+        if generated.len() >= REPORT_GENERATION_BATCH_LIMIT {
+            break;
+        }
+    }
+    Ok(generated)
+}
+
+fn due_report_periods(state: &AppState, now: DateTime<Utc>) -> Result<Vec<ReportPeriod>> {
+    let now_local = now.with_timezone(&Local);
+    let mut candidates = Vec::new();
+    if let Some(hourly) = completed_hourly_period(now_local) {
+        candidates.push(hourly);
+    }
+    candidates.extend(completed_five_hour_periods(
+        now_local,
+        report_cadence_cutoff_date(),
+    ));
+    candidates.sort_by_key(|period| period.period_end);
+
+    let store = state
+        .store
+        .lock()
+        .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
+    let mut due = Vec::new();
+    for period in candidates {
+        if !store.insight_report_exists(period.kind, period.period_start, period.period_end)? {
+            due.push(period);
+        }
+    }
+    Ok(due)
+}
+
+async fn generate_insight_report_for_period(
+    state: &AppState,
+    period: &ReportPeriod,
 ) -> Result<Option<InsightReport>> {
-    let period_start = period_end - chrono::Duration::seconds(INSIGHT_REPORT_INTERVAL as i64);
     let window_summaries = {
         let store = state
             .store
             .lock()
             .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
-        if let Some(latest) = store.list_insight_reports(1)?.into_iter().next() {
-            let next_due =
-                latest.period_end + chrono::Duration::seconds(INSIGHT_REPORT_INTERVAL as i64);
-            if period_end < next_due {
-                return Ok(None);
-            }
-        }
-
         store
-            .list_visual_window_summaries_between(period_start, period_end, 1000)?
+            .list_visual_window_summaries_between(period.period_start, period.period_end, 1000)?
             .into_iter()
             .filter(|summary| summary.error.is_none())
             .collect::<Vec<_>>()
@@ -1510,7 +1604,12 @@ async fn maybe_generate_insight_report(
     }
 
     let mut report = ConfiguredInsightReporter::from_env()?
-        .report_from_window_summaries(period_start, period_end, &window_summaries)
+        .report_from_window_summaries(
+            period.kind,
+            period.period_start,
+            period.period_end,
+            &window_summaries,
+        )
         .await?;
     let report_id = {
         let mut store = state
@@ -1521,6 +1620,17 @@ async fn maybe_generate_insight_report(
     };
     report.id = report_id;
     Ok(Some(report))
+}
+
+fn next_report_status_time(now: DateTime<Utc>) -> DateTime<Utc> {
+    let now_local = now.with_timezone(&Local);
+    let next_hour = now_local
+        .date_naive()
+        .and_hms_opt(now_local.hour(), 0, 0)
+        .and_then(|value| value.checked_add_signed(chrono::Duration::hours(1)))
+        .and_then(|value| Local.from_local_datetime(&value).earliest())
+        .unwrap_or_else(|| now_local + chrono::Duration::seconds(INSIGHT_REPORT_CHECK_INTERVAL as i64));
+    next_hour.with_timezone(&Utc)
 }
 
 fn spawn_daily_brief_loop(state: AppState) -> tokio::task::JoinHandle<()> {

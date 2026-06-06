@@ -302,17 +302,24 @@ impl ConfiguredInsightReporter {
 
     pub async fn report_from_window_summaries(
         &self,
+        report_kind: &str,
         period_start: DateTime<Utc>,
         period_end: DateTime<Utc>,
         window_summaries: &[VisualWindowSummary],
     ) -> Result<InsightReport> {
         match self {
             Self::Local(reporter) => {
-                reporter.report_from_window_summaries(period_start, period_end, window_summaries)
+                reporter.report_from_window_summaries(
+                    report_kind,
+                    period_start,
+                    period_end,
+                    window_summaries,
+                )
             }
             Self::MiniMax(reporter) => {
                 reporter
                     .report_from_window_summaries(
+                        report_kind,
                         period_start,
                         period_end,
                         window_summaries,
@@ -365,11 +372,13 @@ impl LocalInsightReporter {
 
     pub fn report_from_window_summaries(
         &self,
+        report_kind: &str,
         period_start: DateTime<Utc>,
         period_end: DateTime<Utc>,
         window_summaries: &[VisualWindowSummary],
     ) -> Result<InsightReport> {
-        Ok(build_five_hour_report_from_window_summaries(
+        Ok(build_report_from_window_summaries(
+            report_kind,
             period_start,
             period_end,
             window_summaries,
@@ -877,6 +886,7 @@ impl MiniMaxInsightReporter {
 
     pub async fn report_from_window_summaries(
         &self,
+        report_kind: &str,
         period_start: DateTime<Utc>,
         period_end: DateTime<Utc>,
         window_summaries: &[VisualWindowSummary],
@@ -905,6 +915,7 @@ impl MiniMaxInsightReporter {
         }
         let content = parse_chat_completion_content(&response_text)?;
         Self::report_from_window_summary_response_text(
+            report_kind,
             period_start,
             period_end,
             window_summaries,
@@ -947,6 +958,7 @@ impl MiniMaxInsightReporter {
     }
 
     pub fn report_from_window_summary_response_text(
+        report_kind: &str,
         period_start: DateTime<Utc>,
         period_end: DateTime<Utc>,
         window_summaries: &[VisualWindowSummary],
@@ -954,7 +966,8 @@ impl MiniMaxInsightReporter {
         model_name: &str,
         content: &str,
     ) -> Result<InsightReport> {
-        let local = build_five_hour_report_from_window_summaries(
+        let local = build_report_from_window_summaries(
+            report_kind,
             period_start,
             period_end,
             window_summaries,
@@ -965,7 +978,7 @@ impl MiniMaxInsightReporter {
             period_start,
             period_end,
             generated_at,
-            report_kind: "5h".into(),
+            report_kind: report_kind.into(),
             model_provider: "minimax".into(),
             model_name: model_name.into(),
             summary_text: parsed
