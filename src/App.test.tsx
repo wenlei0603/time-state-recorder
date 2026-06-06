@@ -180,6 +180,22 @@ function dailyBriefResponse() {
       },
       error: null
     },
+    hourlyReports: [
+      {
+        id: 9,
+        periodStart: "2026-05-24T09:00:00Z",
+        periodEnd: "2026-05-24T10:00:00Z",
+        generatedAt: "2026-05-24T10:00:05Z",
+        reportKind: "1h",
+        modelProvider: "local_insight",
+        modelName: "trajectory-v1",
+        summaryText: "09点小时报告。",
+        categoryMix: [{ activityCategory: "coding", count: 12 }],
+        projectHints: ["Time State Recorder"],
+        evidenceCount: 12,
+        error: null
+      }
+    ],
     fiveHourReports: [
       {
         id: 2,

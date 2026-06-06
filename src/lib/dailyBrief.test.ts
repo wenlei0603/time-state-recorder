@@ -43,6 +43,8 @@ describe("daily brief API", () => {
     expect(response.descriptiveStats.activeSeconds).toBe(3600);
     expect(response.hourlyMetrics[0].hour).toBe(9);
     expect(response.hourlyMetrics[0].fiveHourReportIds).toEqual([2]);
+    expect(response.hourlyReports[0].reportKind).toBe("1h");
+    expect(response.hourlyReports[0].summaryText).toBe("09点小时报告。");
     expect(response.fiveHourReports[0].summaryText).toBe("上午报告。");
   });
 });
@@ -60,6 +62,23 @@ function insightReport() {
     categoryMix: [{ activityCategory: "coding", count: 3 }],
     projectHints: ["Time State Recorder"],
     evidenceCount: 3,
+    error: null,
+  };
+}
+
+function hourlyReport() {
+  return {
+    id: 9,
+    periodStart: "2026-06-03T09:00:00Z",
+    periodEnd: "2026-06-03T10:00:00Z",
+    generatedAt: "2026-06-03T10:00:05Z",
+    reportKind: "1h",
+    modelProvider: "local_insight",
+    modelName: "trajectory-v1",
+    summaryText: "09点小时报告。",
+    categoryMix: [{ activityCategory: "coding", count: 12 }],
+    projectHints: ["Time State Recorder"],
+    evidenceCount: 12,
     error: null,
   };
 }
@@ -92,6 +111,7 @@ function dailyBriefResponse() {
       },
       error: null,
     },
+    hourlyReports: [hourlyReport()],
     fiveHourReports: [insightReport()],
     descriptiveStats: dailyStats(),
     hourlyMetrics: [hourlyMetric()],

@@ -51,6 +51,7 @@ function toDailyBriefResponse(value: Record<string, unknown>): DailyBriefRespons
     status: readString(value, "status"),
     nextRunAt: readOptionalString(value, "nextRunAt"),
     brief: readOptionalRecord(value, "brief", toDailyBrief),
+    hourlyReports: readArray(value, "hourlyReports", toInsightReport),
     fiveHourReports: readArray(value, "fiveHourReports", toInsightReport),
     descriptiveStats: readDailyActivityStats(value, "descriptiveStats"),
     hourlyMetrics: readArray(value, "hourlyMetrics", toHourlyActivityMetric),
