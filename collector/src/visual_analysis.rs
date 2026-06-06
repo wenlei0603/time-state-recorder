@@ -9,6 +9,7 @@ use crate::models::{
     ActivityCategory, HighResScreenshotMeta, ScreenshotMeta, VisualSummary, VisualTrajectoryPoint,
     VisualWindowSummary,
 };
+use crate::prompt_time::minimax_prompt_timestamp;
 use crate::visual_labels::{
     fallback_identity_tags, fallback_routine_tags, identity_tag_list_for_prompt,
     routine_tag_list_for_prompt, sanitize_identity_tags, sanitize_routine_tags,
@@ -201,7 +202,7 @@ impl MiniMaxConfig {
             model: model.into(),
             image_detail: "default".to_string(),
             max_long_side_pixel: None,
-            max_completion_tokens: 700,
+            max_completion_tokens: 10_000,
         }
     }
 
@@ -220,9 +221,11 @@ impl MiniMaxConfig {
                 format!("MINIMAX_MAX_LONG_SIDE_PIXEL must be an integer, got {value}")
             })?);
         }
-        if let Ok(value) = std::env::var("MINIMAX_MAX_COMPLETION_TOKENS") {
+        if let Ok(value) = std::env::var("MINIMAX_VISUAL_MAX_COMPLETION_TOKENS")
+            .or_else(|_| std::env::var("MINIMAX_MAX_COMPLETION_TOKENS"))
+        {
             config.max_completion_tokens = value.parse().with_context(|| {
-                format!("MINIMAX_MAX_COMPLETION_TOKENS must be an integer, got {value}")
+                format!("MINIMAX_VISUAL_MAX_COMPLETION_TOKENS must be an integer, got {value}")
             })?;
         }
         config.validate()?;
@@ -498,8 +501,8 @@ impl MiniMaxAnalyzer {
         model_name: &str,
         content: &str,
     ) -> Result<VisualWindowSummary> {
-        let raw_summary_json =
-            parse_model_window_summary_value(content).unwrap_or_else(|| serde_json::json!({}));
+        let raw_summary_json = parse_model_window_summary_value(content)
+            .unwrap_or_else(|| serde_json::json!({ "content": content.trim() }));
         let parsed =
             serde_json::from_value::<ModelWindowSummaryJson>(raw_summary_json.clone()).ok();
         let local = local_stub_visual_window_summary(
@@ -655,6 +658,8 @@ struct ChatCompletionResponse {
 #[derive(Debug, Deserialize)]
 struct ChatCompletionChoice {
     message: ChatCompletionMessage,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -669,9 +674,23 @@ fn parse_chat_completion_content(response_text: &str) -> Result<String> {
         .choices
         .into_iter()
         .next()
-        .map(|choice| choice.message.content)
+        .and_then(|choice| {
+            if choice
+                .finish_reason
+                .as_deref()
+                .is_some_and(|reason| reason.eq_ignore_ascii_case("length"))
+            {
+                None
+            } else {
+                Some(choice.message.content)
+            }
+        })
         .filter(|content| !content.trim().is_empty())
-        .ok_or_else(|| anyhow!("MiniMax response did not include message content"))
+        .ok_or_else(|| {
+            anyhow!(
+                "MiniMax response did not include complete message content; finish_reason may be length"
+            )
+        })
 }
 
 fn parse_model_summary_json(content: &str) -> Option<ModelSummaryJson> {
@@ -722,7 +741,7 @@ fn visual_summary_prompt(screenshot: &ScreenshotMeta) -> String {
         routine_tag_list_for_prompt(),
         screenshot.process_name,
         screenshot.window_title,
-        screenshot.captured_at.to_rfc3339(),
+        minimax_prompt_timestamp(screenshot.captured_at),
         screenshot.width,
         screenshot.height
     )
@@ -736,7 +755,7 @@ fn window_summary_prompt(input: &WindowVisualAnalysisInput<'_>) -> String {
             serde_json::json!({
                 "minuteMark": sample.minute_mark,
                 "highResScreenshotId": sample.screenshot.id,
-                "capturedAt": sample.screenshot.captured_at,
+                "capturedAt": minimax_prompt_timestamp(sample.screenshot.captured_at),
                 "processName": sample.screenshot.process_name,
                 "windowTitle": sample.screenshot.window_title,
                 "dimensions": format!("{}x{}", sample.screenshot.width, sample.screenshot.height)
@@ -746,8 +765,8 @@ fn window_summary_prompt(input: &WindowVisualAnalysisInput<'_>) -> String {
     let previous_summary = input.previous_summary.map(|summary| {
         serde_json::json!({
             "id": summary.id,
-            "windowStart": summary.window_start,
-            "windowEnd": summary.window_end,
+            "windowStart": minimax_prompt_timestamp(summary.window_start),
+            "windowEnd": minimax_prompt_timestamp(summary.window_end),
             "summaryText": summary.summary_text,
             "primaryActivity": summary.primary_activity.as_str(),
             "projectHints": summary.project_hints,
@@ -763,8 +782,8 @@ fn window_summary_prompt(input: &WindowVisualAnalysisInput<'_>) -> String {
         "Analyze this 5-minute work window using exactly three screenshots from minute marks 1, 3, and 5. Use the previous window summary only as continuity context, not as evidence for the current window. Return JSON only with keys: summaryText, continuity, primaryActivity, projectHints, identityTags, routineTags, taskIntent, trajectory, switchingLevel, switchingEvidence, loafingLevel, loafingEvidence, visibleApps, visibleTextHints, riskFlags, confidence. primaryActivity and each trajectory.activityCategory must be one of project_work, research, writing, coding, communication, meeting, admin, learning, planning, loafing, personal, idle, unknown. identityTags and each trajectory.identityTags must use only these values: {}. routineTags and each trajectory.routineTags must use only these values: {}. trajectory must include one object per image with minuteMark, observation, activityCategory, projectHints, identityTags, routineTags. switchingLevel must be low, medium, or high. loafingLevel must be none, possible, or clear. Human-facing strings including summaryText, continuity, taskIntent, trajectory.observation, switchingEvidence, loafingEvidence must be concise Chinese. windowStart={}, windowEnd={}, previousWindowSummary={}, samples={}",
         identity_tag_list_for_prompt(),
         routine_tag_list_for_prompt(),
-        input.window_start.to_rfc3339(),
-        input.window_end.to_rfc3339(),
+        minimax_prompt_timestamp(input.window_start),
+        minimax_prompt_timestamp(input.window_end),
         previous_summary
             .map(|value| serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string()))
             .unwrap_or_else(|| "null".to_string()),
@@ -1101,4 +1120,24 @@ fn project_hints_from_metadata(app: &str, title: &str) -> Vec<String> {
 
 fn contains_any(value: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| value.contains(needle))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_chat_completion_content_rejects_length_finish_reason() {
+        let error = parse_chat_completion_content(
+            r#"{
+              "choices": [{
+                "finish_reason": "length",
+                "message": { "content": "{\"summaryText\":\"截断" }
+              }]
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("finish_reason"));
+    }
 }

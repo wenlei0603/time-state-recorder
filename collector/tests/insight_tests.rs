@@ -103,12 +103,13 @@ fn minimax_insight_report_uses_text_chat_completions() {
     assert_eq!(request["model"], "MiniMax-M3");
     assert_eq!(request["max_completion_tokens"], 10_000);
     assert_eq!(request["messages"][1]["role"], "user");
-    assert!(
-        request["messages"][1]["content"]
-            .as_str()
-            .unwrap()
-            .contains("observations=")
-    );
+    let prompt = request["messages"][1]["content"].as_str().unwrap();
+    assert!(prompt.contains("observations="));
+    assert!(prompt.contains("periodStart=2026-06-03T13:00:00+08:00"));
+    assert!(prompt.contains("periodEnd=2026-06-03T18:00:00+08:00"));
+    assert!(prompt.contains(r#""capturedAt":"2026-06-03T13:05:00+08:00""#));
+    assert!(!prompt.contains("2026-06-03T05:00:00Z"));
+    assert!(!prompt.contains("2026-06-03T05:05:00Z"));
     assert_eq!(request["thinking"]["type"], "disabled");
 }
 
@@ -151,12 +152,15 @@ fn minimax_daily_brief_request_defaults_to_ten_thousand_completion_tokens() {
     );
 
     assert_eq!(request["max_completion_tokens"], 10_000);
-    assert!(
-        request["messages"][1]["content"]
-            .as_str()
-            .unwrap()
-            .contains("parallel projects")
-    );
+    let prompt = request["messages"][1]["content"].as_str().unwrap();
+    assert!(prompt.contains("parallel projects"));
+    assert!(prompt.contains("periodStart=2026-06-03T08:00:00+08:00"));
+    assert!(prompt.contains("periodEnd=2026-06-04T08:00:00+08:00"));
+    assert!(prompt.contains(r#""firstActivityAt":"2026-06-03T13:00:00+08:00""#));
+    assert!(prompt.contains(r#""startAt":"2026-06-03T17:00:00+08:00""#));
+    assert!(prompt.contains(r#""periodStart":"2026-06-03T13:00:00+08:00""#));
+    assert!(!prompt.contains("2026-06-03T05:00:00Z"));
+    assert!(!prompt.contains("2026-06-03T09:00:00Z"));
 }
 
 #[test]
@@ -453,6 +457,10 @@ fn minimax_insight_report_request_uses_window_summaries() {
     assert!(!prompt.contains("observations="));
     assert!(prompt.contains("switchingLevel"));
     assert!(prompt.contains("loafingLevel"));
+    assert!(prompt.contains("periodStart=2026-06-03T13:00:00+08:00"));
+    assert!(prompt.contains("periodEnd=2026-06-03T18:00:00+08:00"));
+    assert!(prompt.contains(r#""windowStart":"2026-06-03T13:00:00+08:00""#));
+    assert!(!prompt.contains("2026-06-03T05:00:00Z"));
 }
 
 #[test]

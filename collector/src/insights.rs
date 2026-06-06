@@ -7,6 +7,7 @@ use crate::models::{
     HighResScreenshotMeta, HourlyActivityMetric, InsightReport, VisualObservation, VisualSummary,
     VisualWindowSummary,
 };
+use crate::prompt_time::minimax_prompt_timestamp;
 
 const LOCAL_REPORT_PROMPT_VERSION: &str = "trajectory-v1";
 const DAILY_BRIEF_PROMPT_VERSION: &str = "daily-brief-v1";
@@ -1000,7 +1001,7 @@ fn report_prompt(
         .iter()
         .map(|observation| {
             serde_json::json!({
-                "capturedAt": observation.captured_at,
+                "capturedAt": minimax_prompt_timestamp(observation.captured_at),
                 "summaryText": observation.summary_text,
                 "activityCategory": observation.activity_category.as_str(),
                 "projectHints": observation.project_hints,
@@ -1013,8 +1014,8 @@ fn report_prompt(
 
     format!(
         "Infer the user's work trajectory for this 5-hour window. Return JSON only with keys summaryText and projectHints. summaryText must be complete, structured, human-readable Chinese. Focus on projects, time allocation, workflow pattern, switching or loafing signs, and uncertainty; do not list every 5-minute window. periodStart={}, periodEnd={}, observations={}",
-        period_start.to_rfc3339(),
-        period_end.to_rfc3339(),
+        minimax_prompt_timestamp(period_start),
+        minimax_prompt_timestamp(period_end),
         serde_json::to_string(&observations_json).unwrap_or_else(|_| "[]".to_string())
     )
 }
@@ -1028,8 +1029,8 @@ fn window_summary_report_prompt(
         .iter()
         .map(|summary| {
             serde_json::json!({
-                "windowStart": summary.window_start,
-                "windowEnd": summary.window_end,
+                "windowStart": minimax_prompt_timestamp(summary.window_start),
+                "windowEnd": minimax_prompt_timestamp(summary.window_end),
                 "summaryText": summary.summary_text,
                 "continuity": summary.continuity,
                 "primaryActivity": summary.primary_activity.as_str(),
@@ -1050,10 +1051,58 @@ fn window_summary_report_prompt(
 
     format!(
         "Infer the user's work trajectory for this 5-hour window from 5-minute structured summaries. Return JSON only with keys summaryText and projectHints. summaryText must be complete, structured, human-readable Chinese and cover: project-based work path, time allocation, possible loafing, switching frequency, long-run pattern, and uncertainty. Do not produce a 5-minute log. periodStart={}, periodEnd={}, windowSummaries={}",
-        period_start.to_rfc3339(),
-        period_end.to_rfc3339(),
+        minimax_prompt_timestamp(period_start),
+        minimax_prompt_timestamp(period_end),
         serde_json::to_string(&summaries_json).unwrap_or_else(|_| "[]".to_string())
     )
+}
+
+fn daily_activity_stats_prompt_value(stats: &DailyActivityStats) -> serde_json::Value {
+    serde_json::json!({
+        "date": &stats.date,
+        "periodStart": minimax_prompt_timestamp(stats.period_start),
+        "periodEnd": minimax_prompt_timestamp(stats.period_end),
+        "activeSeconds": stats.active_seconds,
+        "activeHours": stats.active_hours,
+        "windowEventCount": stats.window_event_count,
+        "switchCount": stats.switch_count,
+        "distinctAppCount": stats.distinct_app_count,
+        "topApps": &stats.top_apps,
+        "categoryMix": &stats.category_mix,
+        "inputChars": stats.input_chars,
+        "inputEvents": stats.input_events,
+        "screenshotCount": stats.screenshot_count,
+        "highResScreenshotCount": stats.high_res_screenshot_count,
+        "visualWindowCount": stats.visual_window_count,
+        "fiveHourReportCount": stats.five_hour_report_count,
+        "firstActivityAt": stats.first_activity_at.map(minimax_prompt_timestamp),
+        "lastActivityAt": stats.last_activity_at.map(minimax_prompt_timestamp),
+    })
+}
+
+fn hourly_metrics_prompt_values(metrics: &[HourlyActivityMetric]) -> Vec<serde_json::Value> {
+    metrics
+        .iter()
+        .map(|metric| {
+            serde_json::json!({
+                "hour": metric.hour,
+                "startAt": minimax_prompt_timestamp(metric.start_at),
+                "endAt": minimax_prompt_timestamp(metric.end_at),
+                "activeSeconds": metric.active_seconds,
+                "activeRatio": metric.active_ratio,
+                "windowEventCount": metric.window_event_count,
+                "switchCount": metric.switch_count,
+                "distinctAppCount": metric.distinct_app_count,
+                "dominantApp": &metric.dominant_app,
+                "dominantCategory": &metric.dominant_category,
+                "inputChars": metric.input_chars,
+                "screenshotCount": metric.screenshot_count,
+                "highResScreenshotCount": metric.high_res_screenshot_count,
+                "visualWindowCount": metric.visual_window_count,
+                "fiveHourReportIds": &metric.five_hour_report_ids,
+            })
+        })
+        .collect()
 }
 
 fn daily_brief_prompt(
@@ -1068,8 +1117,8 @@ fn daily_brief_prompt(
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct ReportPromptRow<'a> {
-        period_start: DateTime<Utc>,
-        period_end: DateTime<Utc>,
+        period_start: String,
+        period_end: String,
         summary_text: &'a str,
         category_mix: &'a [ActivityCategoryCount],
         project_hints: &'a [String],
@@ -1079,22 +1128,24 @@ fn daily_brief_prompt(
     let report_rows = reports
         .iter()
         .map(|report| ReportPromptRow {
-            period_start: report.period_start,
-            period_end: report.period_end,
+            period_start: minimax_prompt_timestamp(report.period_start),
+            period_end: minimax_prompt_timestamp(report.period_end),
             summary_text: &report.summary_text,
             category_mix: &report.category_mix,
             project_hints: &report.project_hints,
             evidence_count: report.evidence_count,
         })
         .collect::<Vec<_>>();
+    let stats = daily_activity_stats_prompt_value(stats);
+    let hourly_metrics = hourly_metrics_prompt_values(hourly_metrics);
 
     format!(
         "Write a neutral daily brief in Chinese. Return JSON only with keys dailySummaryText, actionTrajectory, comparisonExplanation. Do not include advice, praise, criticism, ranking, or value judgment. Avoid words equivalent to productive, wasted, efficient, inefficient, good, bad, should. actionTrajectory must be complete, human-readable, and structured around parallel projects, time allocation, workflow pattern, work mode, design/tooling activity, and important evidence; do not create a raw 5-minute log. Use uncertainty when evidence is incomplete. date={}, periodStart={}, periodEnd={}, descriptiveStats={}, hourlyMetrics={}, comparison={}, fiveHourReports={}",
         date,
-        period_start.to_rfc3339(),
-        period_end.to_rfc3339(),
-        serde_json::to_string(stats).unwrap_or_else(|_| "{}".to_string()),
-        serde_json::to_string(hourly_metrics).unwrap_or_else(|_| "[]".to_string()),
+        minimax_prompt_timestamp(period_start),
+        minimax_prompt_timestamp(period_end),
+        serde_json::to_string(&stats).unwrap_or_else(|_| "{}".to_string()),
+        serde_json::to_string(&hourly_metrics).unwrap_or_else(|_| "[]".to_string()),
         serde_json::to_string(comparison).unwrap_or_else(|_| "{}".to_string()),
         serde_json::to_string(&report_rows).unwrap_or_else(|_| "[]".to_string())
     )

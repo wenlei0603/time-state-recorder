@@ -5,7 +5,8 @@ use tsr_collector::{
     models::{ActivityCategory, HighResScreenshotMeta, ScreenshotMeta},
     visual_analysis::{
         LocalMetadataAnalyzer, MiniMaxAnalyzer, MiniMaxConfig, VisualAnalysisInput, VisualAnalyzer,
-        WindowScreenshotSample, select_visual_analyzer_provider,
+        WindowScreenshotSample, WindowVisualAnalysisInput, WindowVisualAnalysisSample,
+        select_visual_analyzer_provider,
     },
 };
 
@@ -140,6 +141,8 @@ fn minimax_request_uses_openai_chat_completions_image_content_block() {
     assert!(prompt.contains("routineTags"));
     assert!(prompt.contains("software_builder"));
     assert!(prompt.contains("coding_build"));
+    assert!(prompt.contains("capturedAt=2026-05-25T17:08:00+08:00"));
+    assert!(!prompt.contains("capturedAt=2026-05-25T09:08:00Z"));
     assert_eq!(request["messages"][1]["content"][1]["type"], "image_url");
     assert_eq!(
         request["messages"][1]["content"][1]["image_url"]["detail"],
@@ -153,6 +156,65 @@ fn minimax_request_uses_openai_chat_completions_image_content_block() {
             .starts_with("data:image/jpeg;base64,")
     );
     assert_eq!(request["thinking"]["type"], "disabled");
+}
+
+#[test]
+fn minimax_window_analysis_request_defaults_to_ten_thousand_completion_tokens() {
+    let dir = tempfile::tempdir().unwrap();
+    let image_paths = [1, 3, 5]
+        .iter()
+        .map(|mark| {
+            let path = dir.path().join(format!("minute-{mark}.jpg"));
+            std::fs::write(&path, [0xff, 0xd8, 0xff, 0xd9]).unwrap();
+            path
+        })
+        .collect::<Vec<_>>();
+    let samples = vec![
+        window_sample(101, 1, "2026-05-25T09:00:30Z", "Code.exe", "api.rs"),
+        window_sample(102, 3, "2026-05-25T09:02:30Z", "Code.exe", "insights.rs"),
+        window_sample(103, 5, "2026-05-25T09:04:30Z", "msedge.exe", "TSR UI"),
+    ];
+    let input = WindowVisualAnalysisInput {
+        window_start: ts("2026-05-25T09:00:00Z"),
+        window_end: ts("2026-05-25T09:05:00Z"),
+        samples: vec![
+            WindowVisualAnalysisSample {
+                minute_mark: samples[0].minute_mark,
+                screenshot: &samples[0].screenshot,
+                image_path: image_paths[0].as_path(),
+            },
+            WindowVisualAnalysisSample {
+                minute_mark: samples[1].minute_mark,
+                screenshot: &samples[1].screenshot,
+                image_path: image_paths[1].as_path(),
+            },
+            WindowVisualAnalysisSample {
+                minute_mark: samples[2].minute_mark,
+                screenshot: &samples[2].screenshot,
+                image_path: image_paths[2].as_path(),
+            },
+        ],
+        previous_summary: None,
+    };
+    let analyzer = MiniMaxAnalyzer::new(MiniMaxConfig::new(
+        "test-key",
+        "https://api.minimax.test/v1",
+        "MiniMax-M3",
+    ));
+
+    let request = analyzer
+        .build_window_chat_completions_request(&input)
+        .unwrap();
+    let prompt = request["messages"][1]["content"][0]["text"]
+        .as_str()
+        .unwrap();
+
+    assert_eq!(request["max_completion_tokens"], 10_000);
+    assert!(prompt.contains("windowStart=2026-05-25T17:00:00+08:00"));
+    assert!(prompt.contains("windowEnd=2026-05-25T17:05:00+08:00"));
+    assert!(prompt.contains(r#""capturedAt":"2026-05-25T17:00:30+08:00""#));
+    assert!(!prompt.contains("2026-05-25T09:00:00Z"));
+    assert!(!prompt.contains("2026-05-25T09:00:30Z"));
 }
 
 #[test]
@@ -314,6 +376,29 @@ fn minimax_window_analysis_response_maps_identity_and_routine_tags() {
         .find(|point| point.minute_mark == 5)
         .unwrap();
     assert_eq!(minute_five.routine_tags, vec!["learning_exploration"]);
+}
+
+#[test]
+fn minimax_window_analysis_parse_failure_keeps_raw_content_for_diagnostics() {
+    let samples = vec![
+        window_sample(101, 1, "2026-05-25T09:00:30Z", "Code.exe", "api.rs"),
+        window_sample(102, 3, "2026-05-25T09:02:30Z", "Code.exe", "insights.rs"),
+        window_sample(103, 5, "2026-05-25T09:04:30Z", "msedge.exe", "TSR UI"),
+    ];
+    let content = "{\"summaryText\":\"截断";
+
+    let summary = MiniMaxAnalyzer::window_summary_from_response_text(
+        ts("2026-05-25T09:00:00Z"),
+        ts("2026-05-25T09:05:00Z"),
+        &samples,
+        None,
+        ts("2026-05-25T09:05:10Z"),
+        "MiniMax-M3",
+        content,
+    )
+    .unwrap();
+
+    assert_eq!(summary.raw_summary_json["content"], content);
 }
 
 fn window_sample(

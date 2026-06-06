@@ -8,6 +8,7 @@ pub mod interval;
 pub mod llm_json;
 pub mod models;
 pub mod notion_smoke;
+pub(crate) mod prompt_time;
 pub mod screenshot;
 pub mod storage;
 pub mod visual_analysis;
