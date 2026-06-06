@@ -25,7 +25,6 @@ function report(overrides: Partial<InsightReport> = {}): InsightReport {
     ],
     projectHints: ["Time State Recorder", "Notion OS"],
     evidenceCount: 12,
-    error: null,
     ...overrides,
   };
 }
@@ -76,7 +75,6 @@ function brief(overrides: Partial<DailyBrief> = {}): DailyBrief {
       "09:00-10:00 处理 hourly 报告。15:00-20:00 处理 scheduled 5h 报告。待排查：移动端溢出。",
     fiveHourReportIds: [2],
     rawSummaryJson: {},
-    error: null,
     ...overrides,
   };
 }
