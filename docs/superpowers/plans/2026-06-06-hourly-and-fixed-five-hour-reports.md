@@ -4,7 +4,7 @@
 
 **Goal:** Add top-of-hour 1-hour reports, keep 5-hour reports, and switch 5-hour generation from rolling windows to fixed local windows starting on 2026-06-07: 10:00-15:00, 15:00-20:00, and 20:00-01:00.
 
-**Architecture:** Reuse the existing `insight_reports` table and `InsightReport` model. Add `report_kind = "1h"` for hourly reports and keep `report_kind = "5h"` for five-hour reports. Both kinds are generated from `visual_window_summaries`; Daily Brief and Notion archive responses keep `fiveHourReports` and add `hourlyReports` so existing consumers are not silently repointed. The database may keep coarse merged model text, but the frontend must never render report text as one unbounded paragraph; it converts reports into a structured presentation model before display.
+**Architecture:** Reuse the existing `insight_reports` table and `InsightReport` model. Add `report_kind = "1h"` for hourly reports and keep `report_kind = "5h"` for five-hour reports. Both kinds are generated from `visual_window_summaries`; Daily Brief and Notion archive responses keep `fiveHourReports` and add `hourlyReports` so existing consumers are not silently repointed. UTC remains a storage/API machine-field detail only; every human-readable report prompt, fallback summary, Notion markdown line, and frontend card must render Asia/Shanghai UTC+8 local time. The database may keep coarse merged model text, but the frontend must never render report text as one unbounded paragraph; it converts reports into a structured presentation model before display.
 
 **Tech Stack:** Rust/Axum collector, SQLite storage through `rusqlite`, Chrono local/UTC conversion, React/TypeScript/Vite frontend, Vitest and Rust integration tests.
 
@@ -19,6 +19,9 @@
   - `15:00-20:00`
   - `20:00-01:00` where the `01:00` belongs to the next local calendar day but the slot owner date is the date of `20:00`.
 - Both 1h and 5h reports are derived from existing 5-minute `visual_window_summaries`, not raw screenshots or raw window events.
+- The owner timezone for human interpretation is Asia/Shanghai UTC+8. Do not use UTC clock labels in report text, Daily Brief text, Notion archive markdown, or frontend cards.
+- UTC timestamps may remain in persisted `DateTime<Utc>` values and JSON machine fields such as `periodStart`, `periodEnd`, and `generatedAt`. Those fields must be converted at every human-visible boundary.
+- MiniMax prompts must send local fields such as `localPeriodStart`, `localPeriodEnd`, `localWindowStart`, and `localWindowEnd`; prompt instructions must explicitly say summary text must not emit `Z`, `UTC`, or `+00:00` time labels.
 - `InsightReport.reportKind` values are exactly `"1h"` and `"5h"`.
 - The API field `fiveHourReports` remains unchanged. Add `hourlyReports` beside it.
 - `DailyBrief.fiveHourReportIds`, `DailyActivityStats.fiveHourReportCount`, and `HourlyActivityMetric.fiveHourReportIds` stay as-is for backward compatibility. The new hourly reports are displayed in the response/UI but are not stored inside `DailyBrief`.
@@ -39,17 +42,23 @@
   - Add generic report builders that accept `report_kind`.
   - Keep existing five-hour builder wrappers so old tests and call sites remain readable.
   - Update MiniMax prompt text to describe 1-hour or 5-hour windows correctly.
+  - Use UTC+8 local clock labels in local fallback Daily Brief action trajectories.
+- Modify `collector/src/prompt_time.rs`
+  - Expose shared UTC+8 human-report timestamp and range helpers.
+  - Keep persisted UTC values unchanged while preventing UTC labels from leaking into prompts or markdown.
 - Modify `collector/src/storage.rs`
   - Add `insight_report_exists(kind, start, end)`.
   - Keep the existing `insight_reports` schema; do not add a table or migration.
 - Modify `collector/tests/insight_tests.rs`
   - Add hourly report builder tests.
   - Update MiniMax prompt tests for report-kind-aware prompts.
+  - Assert report prompts, Daily Brief prompts, and local fallback text use UTC+8 local time labels.
 - Modify `collector/tests/storage_tests.rs`
   - Add exact-kind/exact-period report-existence tests.
 - Modify `collector/tests/api_tests.rs`
   - Add API coverage for `kind=1h`.
   - Add `hourlyReports` coverage in `/api/daily-brief` and `/api/notion/daily-archive`.
+  - Assert Notion archive markdown uses UTC+8 local report ranges and contains no `Z` or `+00:00` report labels.
 - Modify `src/types.ts`
   - Add `hourlyReports: InsightReport[]` to `DailyBriefResponse`.
 - Modify `src/lib/dailyBrief.ts`
@@ -59,6 +68,7 @@
 - Create `src/lib/reportPresentation.ts`
   - Convert `InsightReport` and `DailyBrief` text into a bounded UI presentation model.
   - Extract numbered phases, time-span lines, project hints, evidence chips, uncertainty statements, and raw text fallback.
+  - Format report ranges with `Asia/Shanghai` explicitly and normalize visible legacy UTC timestamp tokens into local clock labels.
 - Create `src/lib/reportPresentation.test.ts`
   - Verify long LLM text is split into readable sections and raw text remains collapsed-only.
 - Create `src/StructuredReportCard.tsx`
@@ -998,6 +1008,8 @@ In `docs/api/notion-daily-archive.md`, add:
 
 Add a note that `archiveMarkdown` contains separate `Hourly Reports` and `Scheduled 5h Reports` sections.
 
+Add a note that `periodStart`, `periodEnd`, and `generatedAt` remain UTC JSON machine fields, while `archiveMarkdown` and any human-facing report text use Asia/Shanghai UTC+8 local clock labels.
+
 - [ ] **Step 6: Run API and Notion smoke tests**
 
 Run:
@@ -1018,7 +1030,345 @@ git commit -m "feat: expose hourly reports in daily brief"
 
 ---
 
-### Task 6: Update Frontend Types And API Parsing
+### Task 6: Enforce UTC+8 Human Report Time Semantics
+
+**Files:**
+- Modify: `collector/src/prompt_time.rs`
+- Modify: `collector/src/insights.rs`
+- Modify: `collector/src/api.rs`
+- Modify: `collector/tests/insight_tests.rs`
+- Modify: `collector/tests/api_tests.rs`
+
+- [ ] **Step 1: Write failing shared time helper tests**
+
+In `collector/src/prompt_time.rs`, add:
+
+```rust
+#[cfg(test)]
+mod prompt_time_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn human_report_times_use_owner_utc_plus_eight_clock() {
+        let start = Utc.with_ymd_and_hms(2026, 6, 7, 2, 0, 0).single().unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 6, 7, 7, 0, 0).single().unwrap();
+
+        assert_eq!(human_report_timestamp(start), "2026-06-07T10:00:00+08:00");
+        assert_eq!(human_report_clock(start), "10:00");
+        assert_eq!(human_report_range(start, end), "10:00-15:00");
+        assert_eq!(human_report_timezone_label(), "Asia/Shanghai UTC+8");
+        assert_eq!(minimax_prompt_timestamp(start), human_report_timestamp(start));
+    }
+}
+```
+
+- [ ] **Step 2: Run helper test to verify it fails**
+
+Run:
+
+```powershell
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" test -p tsr-collector prompt_time_tests
+```
+
+Expected: FAIL because `human_report_timestamp`, `human_report_clock`, `human_report_range`, and `human_report_timezone_label` do not exist.
+
+- [ ] **Step 3: Implement shared human-report time helpers**
+
+Replace `collector/src/prompt_time.rs` with:
+
+```rust
+use chrono::{DateTime, FixedOffset, Utc};
+
+const OWNER_LOCAL_UTC_OFFSET_SECONDS: i32 = 8 * 60 * 60;
+const OWNER_LOCAL_TIMEZONE_LABEL: &str = "Asia/Shanghai UTC+8";
+
+pub(crate) fn minimax_prompt_timestamp(value: DateTime<Utc>) -> String {
+    human_report_timestamp(value)
+}
+
+pub(crate) fn human_report_timestamp(value: DateTime<Utc>) -> String {
+    value
+        .with_timezone(&owner_local_offset())
+        .format("%Y-%m-%dT%H:%M:%S%:z")
+        .to_string()
+}
+
+pub(crate) fn human_report_clock(value: DateTime<Utc>) -> String {
+    value
+        .with_timezone(&owner_local_offset())
+        .format("%H:%M")
+        .to_string()
+}
+
+pub(crate) fn human_report_range(start: DateTime<Utc>, end: DateTime<Utc>) -> String {
+    format!("{}-{}", human_report_clock(start), human_report_clock(end))
+}
+
+pub(crate) fn human_report_timezone_label() -> &'static str {
+    OWNER_LOCAL_TIMEZONE_LABEL
+}
+
+fn owner_local_offset() -> FixedOffset {
+    FixedOffset::east_opt(OWNER_LOCAL_UTC_OFFSET_SECONDS)
+        .expect("UTC+8 offset must be valid")
+}
+```
+
+Keep the test module from Step 1 at the bottom of the file.
+
+- [ ] **Step 4: Write failing insight prompt and fallback assertions**
+
+In `collector/tests/insight_tests.rs`, update `minimax_insight_report_uses_text_chat_completions` to require local field names and a no-UTC instruction:
+
+```rust
+assert!(prompt.contains("Asia/Shanghai UTC+8"));
+assert!(prompt.contains("localPeriodStart=2026-06-03T13:00:00+08:00"));
+assert!(prompt.contains("localPeriodEnd=2026-06-03T18:00:00+08:00"));
+assert!(prompt.contains(r#""capturedAt":"2026-06-03T13:05:00+08:00""#));
+assert!(prompt.contains("must not emit UTC, Z, or +00:00"));
+assert!(!prompt.contains("periodStart=2026-06-03T05:00:00Z"));
+```
+
+In `minimax_insight_report_request_uses_window_summaries`, add:
+
+```rust
+assert!(prompt.contains("Asia/Shanghai UTC+8"));
+assert!(prompt.contains("localPeriodStart=2026-06-03T13:00:00+08:00"));
+assert!(prompt.contains("localPeriodEnd=2026-06-03T18:00:00+08:00"));
+assert!(prompt.contains(r#""localWindowStart":"2026-06-03T13:00:00+08:00""#));
+assert!(prompt.contains(r#""localWindowEnd":"2026-06-03T13:05:00+08:00""#));
+assert!(prompt.contains("must not emit UTC, Z, or +00:00"));
+assert!(!prompt.contains(r#""windowStart":"2026-06-03T05:00:00Z""#));
+```
+
+In `minimax_daily_brief_request_defaults_to_ten_thousand_completion_tokens`, add:
+
+```rust
+assert!(prompt.contains("Asia/Shanghai UTC+8"));
+assert!(prompt.contains("localPeriodStart=2026-06-03T08:00:00+08:00"));
+assert!(prompt.contains("localPeriodEnd=2026-06-04T08:00:00+08:00"));
+assert!(prompt.contains(r#""localFirstActivityAt":"2026-06-03T13:00:00+08:00""#));
+assert!(prompt.contains(r#""localStartAt":"2026-06-03T17:00:00+08:00""#));
+assert!(prompt.contains(r#""localPeriodStart":"2026-06-03T13:00:00+08:00""#));
+assert!(prompt.contains("must not emit UTC, Z, or +00:00"));
+assert!(!prompt.contains(r#""periodStart":"2026-06-03T05:00:00Z""#));
+```
+
+In `local_daily_brief_builds_neutral_action_trajectory_from_five_hour_reports`, add:
+
+```rust
+assert!(brief.action_trajectory.contains("13:00-18:00"));
+assert!(brief.action_trajectory.contains("18:00-23:00"));
+assert!(!brief.action_trajectory.contains("05:00 - 10:00"));
+assert!(!brief.action_trajectory.contains("10:00 - 15:00"));
+```
+
+- [ ] **Step 5: Run insight tests to verify they fail**
+
+Run:
+
+```powershell
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" test -p tsr-collector --test insight_tests minimax_insight_report_uses_text_chat_completions minimax_insight_report_request_uses_window_summaries minimax_daily_brief_request_defaults_to_ten_thousand_completion_tokens local_daily_brief_builds_neutral_action_trajectory_from_five_hour_reports
+```
+
+Expected: FAIL because prompts still use old `periodStart` names and local fallback still formats `DateTime<Utc>` with the UTC clock.
+
+- [ ] **Step 6: Update insight prompts and local fallback formatting**
+
+In `collector/src/insights.rs`, change the import:
+
+```rust
+use crate::prompt_time::{
+    human_report_range, human_report_timezone_label, minimax_prompt_timestamp,
+};
+```
+
+In `LocalDailyBriefReporter::report`, replace the report range formatting with:
+
+```rust
+format!(
+    "{}：{}",
+    human_report_range(report.period_start, report.period_end),
+    report.summary_text
+)
+```
+
+In `report_prompt`, rename the human time labels in the prompt and add the no-UTC instruction:
+
+```rust
+"Infer the user's work trajectory for this 5-hour window. All time fields are {} local time. Return JSON only with keys summaryText and projectHints. summaryText must be complete, structured, human-readable Chinese and must not emit UTC, Z, or +00:00 time labels. Focus on projects, time allocation, workflow pattern, switching or loafing signs, and uncertainty; do not list every 5-minute window. localPeriodStart={}, localPeriodEnd={}, observations={}"
+```
+
+Pass `human_report_timezone_label()` before the local period timestamps.
+
+In `window_summary_report_prompt`, change summary JSON keys:
+
+```rust
+serde_json::json!({
+    "localWindowStart": minimax_prompt_timestamp(summary.window_start),
+    "localWindowEnd": minimax_prompt_timestamp(summary.window_end),
+    "summaryText": summary.summary_text,
+    "continuity": summary.continuity,
+    "primaryActivity": summary.primary_activity.as_str(),
+    "projectHints": summary.project_hints,
+    "taskIntent": summary.task_intent,
+    "trajectory": summary.trajectory,
+    "switchingLevel": summary.switching_level,
+    "switchingEvidence": summary.switching_evidence,
+    "loafingLevel": summary.loafing_level,
+    "loafingEvidence": summary.loafing_evidence,
+    "visibleApps": summary.visible_apps,
+    "visibleTextHints": summary.visible_text_hints,
+    "riskFlags": summary.risk_flags,
+    "confidence": summary.confidence
+})
+```
+
+Update that prompt string to use `localPeriodStart`, `localPeriodEnd`, `human_report_timezone_label()`, and the same `must not emit UTC, Z, or +00:00` instruction.
+
+In `daily_activity_stats_prompt_value`, rename human-visible fields:
+
+```rust
+"localPeriodStart": minimax_prompt_timestamp(stats.period_start),
+"localPeriodEnd": minimax_prompt_timestamp(stats.period_end),
+"localFirstActivityAt": stats.first_activity_at.map(minimax_prompt_timestamp),
+"localLastActivityAt": stats.last_activity_at.map(minimax_prompt_timestamp),
+```
+
+In `hourly_metrics_prompt_values`, rename:
+
+```rust
+"localStartAt": minimax_prompt_timestamp(metric.start_at),
+"localEndAt": minimax_prompt_timestamp(metric.end_at),
+```
+
+In `daily_brief_prompt`, rename `ReportPromptRow` fields:
+
+```rust
+local_period_start: String,
+local_period_end: String,
+```
+
+Set them with `minimax_prompt_timestamp(report.period_start)` and `minimax_prompt_timestamp(report.period_end)`. Update the prompt string to:
+
+```rust
+"Write a neutral daily brief in Chinese. All time fields are {} local time. Return JSON only with keys dailySummaryText, actionTrajectory, comparisonExplanation. Do not include advice, praise, criticism, ranking, or value judgment. Avoid words equivalent to productive, wasted, efficient, inefficient, good, bad, should. actionTrajectory must be complete, human-readable, structured around parallel projects, time allocation, workflow pattern, work mode, design/tooling activity, and important evidence, and must not emit UTC, Z, or +00:00 time labels; do not create a raw 5-minute log. Use uncertainty when evidence is incomplete. date={}, localPeriodStart={}, localPeriodEnd={}, descriptiveStats={}, hourlyMetrics={}, comparison={}, fiveHourReports={}"
+```
+
+Pass `human_report_timezone_label()` and local timestamps in the new format-argument order.
+
+- [ ] **Step 7: Write failing Notion archive markdown assertions**
+
+In `collector/tests/api_tests.rs`, update `serves_notion_daily_archive_with_human_readable_markdown`:
+
+```rust
+let markdown = body["archiveMarkdown"].as_str().unwrap();
+assert_eq!(body["source"]["timezone"], "Asia/Shanghai UTC+8");
+assert!(markdown.contains("13:00-18:00"));
+assert!(markdown.contains("18:00-23:00"));
+assert!(markdown.contains("First activity: 2026-05-24T13:00:00+08:00"));
+assert!(!markdown.contains("2026-05-24T05:00:00Z"));
+assert!(!markdown.contains("2026-05-24T10:00:00Z"));
+assert!(!markdown.contains("+00:00"));
+```
+
+- [ ] **Step 8: Run Notion archive test to verify it fails**
+
+Run:
+
+```powershell
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" test -p tsr-collector --test api_tests serves_notion_daily_archive_with_human_readable_markdown
+```
+
+Expected: FAIL because `optional_time`, `project_lines_from_reports`, and `report_lines` still emit UTC RFC3339 strings.
+
+- [ ] **Step 9: Update Notion archive markdown formatting**
+
+In `collector/src/api.rs`, import:
+
+```rust
+use crate::prompt_time::{human_report_range, human_report_timestamp};
+```
+
+Replace `optional_time` with:
+
+```rust
+fn optional_human_time(value: Option<DateTime<Utc>>) -> String {
+    value
+        .map(human_report_timestamp)
+        .unwrap_or_else(|| "unknown".into())
+}
+```
+
+Update callers:
+
+```rust
+optional_human_time(stats.first_activity_at)
+optional_human_time(stats.last_activity_at)
+```
+
+In `project_lines_from_reports`, replace the range formatting:
+
+```rust
+format!(
+    "- {}: {} ({})",
+    human_report_range(report.period_start, report.period_end),
+    projects,
+    category_mix_text(&report.category_mix)
+)
+```
+
+In `report_lines`, replace the range formatting:
+
+```rust
+format!(
+    "- {} | evidence {} | projects {} | {}",
+    human_report_range(report.period_start, report.period_end),
+    report.evidence_count,
+    projects,
+    report.summary_text
+)
+```
+
+In the `Hourly Reports` markdown section added in Task 5, replace separate `with_timezone(&Local).format("%H:%M")` calls with the same shared range helper:
+
+```rust
+lines.push(format!(
+    "- {}: {}",
+    human_report_range(report.period_start, report.period_end),
+    report.summary_text
+));
+```
+
+In `NotionArchiveSource`, set the human timezone label explicitly:
+
+```rust
+timezone: "Asia/Shanghai UTC+8".into(),
+```
+
+- [ ] **Step 10: Run timezone-focused tests**
+
+Run:
+
+```powershell
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" test -p tsr-collector prompt_time_tests
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" test -p tsr-collector --test insight_tests minimax_insight_report_uses_text_chat_completions minimax_insight_report_request_uses_window_summaries minimax_daily_brief_request_defaults_to_ten_thousand_completion_tokens local_daily_brief_builds_neutral_action_trajectory_from_five_hour_reports
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" test -p tsr-collector --test api_tests serves_notion_daily_archive_with_human_readable_markdown
+```
+
+Expected: PASS.
+
+- [ ] **Step 11: Commit**
+
+```powershell
+git add collector/src/prompt_time.rs collector/src/insights.rs collector/src/api.rs collector/tests/insight_tests.rs collector/tests/api_tests.rs
+git commit -m "fix: use local time in human reports"
+```
+
+---
+
+### Task 7: Update Frontend Types And API Parsing
 
 **Files:**
 - Modify: `src/types.ts`
@@ -1148,7 +1498,7 @@ git commit -m "feat: parse hourly daily brief reports"
 
 ---
 
-### Task 7: Build Structured Report Presentation Model
+### Task 8: Build Structured Report Presentation Model
 
 **Files:**
 - Create: `src/lib/reportPresentation.ts`
@@ -1162,6 +1512,7 @@ Create `src/lib/reportPresentation.test.ts`:
 import { describe, expect, it } from "vitest";
 import type { DailyBrief, InsightReport } from "../types";
 import {
+  normalizeVisibleTimeText,
   presentDailyNarrative,
   presentInsightReport,
   splitReportText,
@@ -1214,6 +1565,7 @@ describe("reportPresentation", () => {
     const presentation = presentInsightReport(report());
 
     expect(presentation.title).toBe("1h Report");
+    expect(presentation.timeRange).toBe("10:00 - 11:00");
     expect(presentation.overview.length).toBeLessThanOrEqual(180);
     expect(presentation.phases.length).toBeGreaterThanOrEqual(3);
     expect(presentation.phases[0].body).toContain("Notion RAW");
@@ -1239,6 +1591,23 @@ describe("reportPresentation", () => {
     expect(presentation.phases.length).toBeGreaterThanOrEqual(3);
     expect(presentation.uncertainty.join(" ")).toContain("待排查");
     expect(presentation.rawText).toContain("09:00-10:00");
+  });
+
+  it("normalizes visible legacy UTC timestamp tokens but preserves raw text", () => {
+    const presentation = presentInsightReport(
+      report({
+        periodStart: "2026-06-07T02:00:00Z",
+        periodEnd: "2026-06-07T07:00:00Z",
+        summaryText:
+          "2026-06-07T02:00:00Z 到 2026-06-07T07:00:00Z 处理 Time State Recorder 报告。",
+      })
+    );
+
+    expect(normalizeVisibleTimeText("2026-06-07T02:00:00Z")).toBe("10:00");
+    expect(presentation.overview).toContain("10:00");
+    expect(presentation.overview).toContain("15:00");
+    expect(presentation.overview).not.toContain("02:00:00Z");
+    expect(presentation.rawText).toContain("2026-06-07T02:00:00Z");
   });
 
   it("truncates visible text deterministically", () => {
@@ -1285,12 +1654,15 @@ export type StructuredReportPresentation = {
 const MAX_OVERVIEW_LENGTH = 180;
 const MAX_PHASE_BODY_LENGTH = 220;
 const MAX_CHIPS = 8;
+const OWNER_TIME_ZONE = "Asia/Shanghai";
 const RISK_PATTERN = /(不确定|可能|待|缺失|卡住|ERROR|风险|无法)/i;
 const NUMBERED_SPLIT_PATTERN = /(?=(?:[①②③④⑤⑥⑦⑧⑨]|\d+[).、]))/g;
 const TIME_SPAN_SPLIT_PATTERN = /(?=\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})/g;
+const UTC_TIMESTAMP_PATTERN = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g;
 
 export function presentInsightReport(report: InsightReport): StructuredReportPresentation {
-  const sections = splitReportText(report.summaryText);
+  const visibleText = normalizeVisibleTimeText(report.summaryText);
+  const sections = splitReportText(visibleText);
   const phases = sections.slice(0, 6).map((section, index) => ({
     label: phaseLabel(section, index),
     body: truncateText(stripLeadingMarker(section), MAX_PHASE_BODY_LENGTH),
@@ -1300,8 +1672,8 @@ export function presentInsightReport(report: InsightReport): StructuredReportPre
     title: report.reportKind === "5h" ? "5h Report" : "1h Report",
     timeRange: formatReportRange(report.periodStart, report.periodEnd),
     eyebrow: `${report.reportKind} - ${report.modelProvider}`,
-    overview: truncateText(stripLeadingMarker(sections[0] ?? report.summaryText), MAX_OVERVIEW_LENGTH),
-    phases: phases.length > 0 ? phases : fallbackPhase(report.summaryText),
+    overview: truncateText(stripLeadingMarker(sections[0] ?? visibleText), MAX_OVERVIEW_LENGTH),
+    phases: phases.length > 0 ? phases : fallbackPhase(visibleText),
     chips: reportChips(report),
     evidence: [`${report.evidenceCount} windows`, ...report.categoryMix.map((item) => `${item.activityCategory} ${item.count}`)],
     uncertainty: extractUncertainty(sections),
@@ -1311,12 +1683,13 @@ export function presentInsightReport(report: InsightReport): StructuredReportPre
 
 export function presentDailyNarrative(brief: DailyBrief): StructuredReportPresentation {
   const rawText = [brief.dailySummaryText, brief.actionTrajectory].filter(Boolean).join("\n");
-  const sections = splitReportText(rawText);
+  const visibleText = normalizeVisibleTimeText(rawText);
+  const sections = splitReportText(visibleText);
   return {
     title: "Daily Action Trajectory",
     timeRange: brief.date,
     eyebrow: `daily - ${brief.modelProvider}`,
-    overview: truncateText(stripLeadingMarker(sections[0] ?? rawText), MAX_OVERVIEW_LENGTH),
+    overview: truncateText(stripLeadingMarker(sections[0] ?? visibleText), MAX_OVERVIEW_LENGTH),
     phases: sections.slice(0, 8).map((section, index) => ({
       label: phaseLabel(section, index),
       body: truncateText(stripLeadingMarker(section), MAX_PHASE_BODY_LENGTH),
@@ -1347,6 +1720,10 @@ export function truncateText(text: string, maxLength: number): string {
   return `${text.slice(0, maxLength - 3).trimEnd()}...`;
 }
 
+export function normalizeVisibleTimeText(text: string): string {
+  return text.replace(UTC_TIMESTAMP_PATTERN, (token) => formatClock(new Date(token)));
+}
+
 export function formatReportRange(startIso: string, endIso: string): string {
   const start = new Date(startIso);
   const end = new Date(endIso);
@@ -1354,7 +1731,12 @@ export function formatReportRange(startIso: string, endIso: string): string {
 }
 
 function formatClock(value: Date): string {
-  return value.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: OWNER_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(value);
 }
 
 function reportChips(report: InsightReport): string[] {
@@ -1403,7 +1785,7 @@ git commit -m "feat: structure report presentation model"
 
 ---
 
-### Task 8: Render Structured Report Cards
+### Task 9: Render Structured Report Cards
 
 **Files:**
 - Create: `src/StructuredReportCard.tsx`
@@ -1688,7 +2070,7 @@ git commit -m "feat: render structured report cards"
 
 ---
 
-### Task 9: Full Verification And PR-Ready Cleanup
+### Task 10: Full Verification And PR-Ready Cleanup
 
 **Files:**
 - Verify all changed files.
@@ -1747,6 +2129,8 @@ Verify:
 - Daily Brief shows `Scheduled 5h Reports`.
 - Daily Brief shows `Daily Action Trajectory` as structured sections.
 - Hourly and 5h reports render as bounded cards with chips, phases, risk notes, and collapsed raw text.
+- Human-visible report ranges use Asia/Shanghai UTC+8 local clock labels such as `10:00-15:00`, never UTC labels.
+- Existing report text containing legacy `2026-...Z` timestamps is normalized in visible frontend sections while the collapsed raw text preserves the original database text.
 - No report text renders as one unbounded wall-of-text paragraph.
 - Redacted mode hides hourly, 5h, and daily narrative text while preserving labels, time ranges, and non-sensitive counts.
 - Raw mode reveals structured hourly, 5h, and daily narrative text.
@@ -1757,7 +2141,7 @@ Verify:
 If verification changes source or test files, commit the concrete files changed by verification with:
 
 ```powershell
-git add collector/src/api.rs collector/src/insights.rs collector/src/storage.rs collector/tests/api_tests.rs collector/tests/insight_tests.rs collector/tests/storage_tests.rs collector/tests/notion_daily_archive_smoke_tests.rs src/types.ts src/lib/dailyBrief.ts src/lib/dailyBrief.test.ts src/lib/reportPresentation.ts src/lib/reportPresentation.test.ts src/StructuredReportCard.tsx src/StructuredDailyNarrative.tsx src/DailyBriefPanel.tsx src/App.test.tsx src/styles.css docs/api/notion-daily-archive.md
+git add collector/src/api.rs collector/src/insights.rs collector/src/prompt_time.rs collector/src/storage.rs collector/tests/api_tests.rs collector/tests/insight_tests.rs collector/tests/storage_tests.rs collector/tests/notion_daily_archive_smoke_tests.rs src/types.ts src/lib/dailyBrief.ts src/lib/dailyBrief.test.ts src/lib/reportPresentation.ts src/lib/reportPresentation.test.ts src/StructuredReportCard.tsx src/StructuredDailyNarrative.tsx src/DailyBriefPanel.tsx src/App.test.tsx src/styles.css docs/api/notion-daily-archive.md
 git commit -m "test: verify report cadence UI"
 ```
 
@@ -1775,12 +2159,14 @@ Use a PR body with:
 
 - Adds top-of-hour `1h` insight reports from 5-minute visual window summaries.
 - Keeps `5h` reports and switches them to fixed local slots from 2026-06-07: 10:00-15:00, 15:00-20:00, 20:00-01:00.
+- Keeps UTC as storage/API machine data only; all report prompts, fallback text, Notion markdown, and frontend cards display Asia/Shanghai UTC+8 local time.
 - Adds `hourlyReports` to Daily Brief / Notion archive responses.
 - Adds a structured frontend presentation framework for hourly, scheduled 5h, and daily narrative reports so raw model text is progressive-disclosure content, not the primary layout.
 
 ## Validation
 
 - `cargo test -p tsr-collector`
+- `cargo test -p tsr-collector prompt_time_tests`
 - `npm test -- --run`
 - `npm run build`
 - `git diff --check`
@@ -1793,6 +2179,7 @@ Use a PR body with:
 
 - Spec coverage: The plan covers hourly reports, fixed five-hour slots from 2026-06-07, retention of existing five-hour reports, 5-minute visual-window source data, backend scheduling, API response updates, structured frontend rendering, tests, docs, and PR flow.
 - Presentation coverage: The plan explicitly keeps coarse merged report text in storage while requiring the frontend to derive bounded sections, chips, evidence, risks, and collapsed raw text for 1h, 5h, and daily reports.
+- Time semantics coverage: The plan treats UTC as storage-only and requires UTC+8 conversion in MiniMax prompts, local fallback Daily Brief text, Notion markdown, and frontend visible sections.
 - Red-flag scan: No task uses unspecified future work. Each implementation task names files, includes concrete code shapes, and lists exact commands.
 - Type consistency: Backend uses `InsightReport.report_kind = "1h" | "5h"`; frontend uses `InsightReport.reportKind` and `DailyBriefResponse.hourlyReports | fiveHourReports`.
 - Risk note: Existing dirty changes in the main checkout are not part of this work. All implementation should stay inside `.worktrees/report-cadence-20260607`.
