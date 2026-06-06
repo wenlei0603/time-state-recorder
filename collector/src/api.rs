@@ -13,7 +13,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use chrono::{DateTime, FixedOffset, Local, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, FixedOffset, Local, NaiveDate, TimeZone, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::{sync::oneshot, time};
 use tower_http::services::ServeDir;
@@ -267,10 +267,25 @@ const HIGH_RES_SCREENSHOT_QUALITY: u8 = 88;
 const DEFAULT_IMAGE_RETENTION_DAYS: u32 = 30;
 const IMAGE_RETENTION_SCAN_INTERVAL: u64 = 12 * 60 * 60;
 const VISUAL_ANALYSIS_SCAN_INTERVAL: u64 = 30;
+const HOURLY_REPORT_KIND: &str = "1h";
+const FIVE_HOUR_REPORT_KIND: &str = "5h";
+const HOURLY_REPORT_INTERVAL: i64 = 60 * 60;
+const FIVE_HOUR_REPORT_INTERVAL: i64 = 5 * 60 * 60;
 const INSIGHT_REPORT_INTERVAL: u64 = 5 * 60 * 60;
 const INSIGHT_REPORT_CHECK_INTERVAL: u64 = 5 * 60;
+const REPORT_GENERATION_BATCH_LIMIT: usize = 6;
+const FIXED_FIVE_HOUR_START_DATE: &str = "2026-06-07";
+const FIXED_FIVE_HOUR_SLOTS: [(u32, u32, u32, u32); 3] =
+    [(10, 0, 15, 0), (15, 0, 20, 0), (20, 0, 1, 0)];
 const VISUAL_WINDOW_INTERVAL: i64 = 5 * 60;
 const VISUAL_WINDOW_LOOKBACK_HOURS: i64 = 6;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReportPeriod {
+    kind: &'static str,
+    period_start: DateTime<Utc>,
+    period_end: DateTime<Utc>,
+}
 const DAILY_BRIEF_CHECK_INTERVAL: u64 = 60;
 const DEFAULT_DAILY_BRIEF_LOCAL_TIME: &str = "23:40";
 
@@ -1266,6 +1281,175 @@ fn floor_to_visual_window(value: DateTime<Utc>) -> DateTime<Utc> {
     Utc.timestamp_opt(floored, 0)
         .single()
         .expect("floored timestamp must be valid")
+}
+
+fn report_cadence_cutoff_date() -> NaiveDate {
+    NaiveDate::parse_from_str(FIXED_FIVE_HOUR_START_DATE, "%Y-%m-%d")
+        .expect("fixed five-hour cutoff date must be valid")
+}
+
+fn completed_hourly_period(now: DateTime<Local>) -> Option<ReportPeriod> {
+    let date = now.date_naive();
+    let hour_start = date.and_hms_opt(now.hour(), 0, 0)?;
+    let local_end = Local.from_local_datetime(&hour_start).earliest()?;
+    let local_start = local_end - chrono::Duration::seconds(HOURLY_REPORT_INTERVAL);
+    Some(ReportPeriod {
+        kind: HOURLY_REPORT_KIND,
+        period_start: local_start.with_timezone(&Utc),
+        period_end: local_end.with_timezone(&Utc),
+    })
+}
+
+fn completed_five_hour_periods(now: DateTime<Local>, cutoff_date: NaiveDate) -> Vec<ReportPeriod> {
+    let today = now.date_naive();
+    let mut periods = Vec::new();
+    for owner_date in [today.pred_opt(), Some(today)].into_iter().flatten() {
+        if owner_date < cutoff_date {
+            continue;
+        }
+        for (start_hour, start_minute, end_hour, end_minute) in FIXED_FIVE_HOUR_SLOTS {
+            let Some(local_start) = local_time_on_date(owner_date, start_hour, start_minute) else {
+                continue;
+            };
+            let end_date = if end_hour < start_hour {
+                owner_date.succ_opt()
+            } else {
+                Some(owner_date)
+            };
+            let Some(end_date) = end_date else {
+                continue;
+            };
+            let Some(local_end) = local_time_on_date(end_date, end_hour, end_minute) else {
+                continue;
+            };
+            if now >= local_end {
+                periods.push(ReportPeriod {
+                    kind: FIVE_HOUR_REPORT_KIND,
+                    period_start: local_start.with_timezone(&Utc),
+                    period_end: local_end.with_timezone(&Utc),
+                });
+            }
+        }
+    }
+    periods.sort_by_key(|period| period.period_end);
+    periods.dedup_by(|left, right| {
+        left.kind == right.kind
+            && left.period_start == right.period_start
+            && left.period_end == right.period_end
+    });
+    periods
+}
+
+fn local_time_on_date(date: NaiveDate, hour: u32, minute: u32) -> Option<DateTime<Local>> {
+    let naive = date.and_hms_opt(hour, minute, 0)?;
+    Local.from_local_datetime(&naive).earliest()
+}
+
+#[cfg(test)]
+mod report_cadence_tests {
+    use super::*;
+    use chrono::{LocalResult, NaiveDate, TimeZone};
+
+    fn local_ts(value: &str) -> DateTime<Local> {
+        let naive = chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S").unwrap();
+        match Local.from_local_datetime(&naive) {
+            LocalResult::Single(value) => value,
+            LocalResult::Ambiguous(value, _) => value,
+            LocalResult::None => panic!("test timestamp cannot be represented in local timezone"),
+        }
+    }
+
+    #[test]
+    fn hourly_candidate_uses_previous_complete_local_hour() {
+        let now = local_ts("2026-06-06 15:03:10");
+
+        let period = completed_hourly_period(now).unwrap();
+
+        assert_eq!(period.kind, HOURLY_REPORT_KIND);
+        assert_eq!(
+            period
+                .period_start
+                .with_timezone(&Local)
+                .format("%H:%M")
+                .to_string(),
+            "14:00"
+        );
+        assert_eq!(
+            period
+                .period_end
+                .with_timezone(&Local)
+                .format("%H:%M")
+                .to_string(),
+            "15:00"
+        );
+    }
+
+    #[test]
+    fn fixed_five_hour_candidates_start_on_cutoff_date() {
+        let cutoff = NaiveDate::from_ymd_opt(2026, 6, 7).unwrap();
+
+        let before = completed_five_hour_periods(local_ts("2026-06-06 20:01:00"), cutoff);
+        let after = completed_five_hour_periods(local_ts("2026-06-07 20:01:00"), cutoff);
+
+        assert!(before.is_empty());
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[0].kind, FIVE_HOUR_REPORT_KIND);
+        assert_eq!(
+            after[0]
+                .period_start
+                .with_timezone(&Local)
+                .format("%H:%M")
+                .to_string(),
+            "10:00"
+        );
+        assert_eq!(
+            after[0]
+                .period_end
+                .with_timezone(&Local)
+                .format("%H:%M")
+                .to_string(),
+            "15:00"
+        );
+        assert_eq!(
+            after[1]
+                .period_start
+                .with_timezone(&Local)
+                .format("%H:%M")
+                .to_string(),
+            "15:00"
+        );
+        assert_eq!(
+            after[1]
+                .period_end
+                .with_timezone(&Local)
+                .format("%H:%M")
+                .to_string(),
+            "20:00"
+        );
+    }
+
+    #[test]
+    fn fixed_five_hour_cross_midnight_slot_belongs_to_previous_owner_date() {
+        let cutoff = NaiveDate::from_ymd_opt(2026, 6, 7).unwrap();
+
+        let periods = completed_five_hour_periods(local_ts("2026-06-08 01:02:00"), cutoff);
+
+        let last = periods.last().unwrap();
+        assert_eq!(
+            last.period_start
+                .with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string(),
+            "2026-06-07 20:00"
+        );
+        assert_eq!(
+            last.period_end
+                .with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string(),
+            "2026-06-08 01:00"
+        );
+    }
 }
 
 fn spawn_insight_report_loop(state: AppState) -> tokio::task::JoinHandle<()> {
