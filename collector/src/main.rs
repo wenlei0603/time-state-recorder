@@ -3,7 +3,10 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tokio::time;
-use tsr_collector::{api, models::LifecycleType, storage::Store, window::sample_foreground_window};
+use tsr_collector::{
+    api, models::LifecycleType, notion_smoke::run_notion_daily_archive_smoke, storage::Store,
+    window::sample_foreground_window,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "tsr-collector")]
@@ -33,6 +36,10 @@ enum Command {
         poll_ms: u64,
         #[arg(long, default_value = "blocker_config.json")]
         blocker_config: PathBuf,
+    },
+    NotionDailyArchiveSmoke {
+        #[arg(long, default_value = "reports/notion-daily-archive-smoke.json")]
+        artifact: PathBuf,
     },
 }
 
@@ -77,6 +84,10 @@ async fn main() -> Result<()> {
             let store = Store::open(db)?;
             store.init()?;
             api::serve(store, addr, poll_ms, Some(blocker_config)).await?;
+        }
+        Command::NotionDailyArchiveSmoke { artifact } => {
+            let summary = run_notion_daily_archive_smoke(&artifact).await?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
         }
     }
 

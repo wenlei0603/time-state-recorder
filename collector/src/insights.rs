@@ -679,7 +679,7 @@ impl MiniMaxInsightConfig {
             api_key: api_key.into(),
             base_url: base_url.into(),
             model: model.into(),
-            max_completion_tokens: 900,
+            max_completion_tokens: 10_000,
         }
     }
 
@@ -708,7 +708,7 @@ impl MiniMaxInsightConfig {
             .context("MINIMAX_BASE_URL is required when DAILY_BRIEF_PROVIDER=minimax")?;
         let model = std::env::var("MINIMAX_MODEL").unwrap_or_else(|_| "MiniMax-M3".to_string());
         let mut config = Self::new(api_key, base_url, model);
-        config.max_completion_tokens = 1400;
+        config.max_completion_tokens = 10_000;
         if let Ok(value) = std::env::var("MINIMAX_DAILY_BRIEF_MAX_COMPLETION_TOKENS")
             .or_else(|_| std::env::var("MINIMAX_MAX_COMPLETION_TOKENS"))
         {
@@ -765,7 +765,7 @@ impl MiniMaxInsightReporter {
             "messages": [
                 {
                     "role": "system",
-                    "content": "You infer a personal work trajectory from timestamped screenshot summaries. Return compact JSON only."
+                    "content": "You infer a personal work trajectory from timestamped screenshot summaries. Return one complete compact JSON object only, without markdown fences."
                 },
                 {
                     "role": "user",
@@ -796,7 +796,7 @@ impl MiniMaxInsightReporter {
             "messages": [
                 {
                     "role": "system",
-                    "content": "You infer a personal work trajectory from structured 5-minute screenshot-window summaries. Return compact JSON only."
+                    "content": "You infer a personal work trajectory from structured 5-minute screenshot-window summaries. Return one complete compact JSON object only, without markdown fences."
                 },
                 {
                     "role": "user",
@@ -982,6 +982,8 @@ struct ChatCompletionResponse {
 #[derive(Debug, Deserialize)]
 struct ChatCompletionChoice {
     message: ChatCompletionMessage,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1010,7 +1012,7 @@ fn report_prompt(
         .collect::<Vec<_>>();
 
     format!(
-        "Infer the user's work trajectory for this 5-hour window. Return JSON only with keys summaryText and projectHints. summaryText should be concise Chinese, mention sequence, dominant activity, possible project, switching or loafing signs, and uncertainty. periodStart={}, periodEnd={}, observations={}",
+        "Infer the user's work trajectory for this 5-hour window. Return JSON only with keys summaryText and projectHints. summaryText must be complete, structured, human-readable Chinese. Focus on projects, time allocation, workflow pattern, switching or loafing signs, and uncertainty; do not list every 5-minute window. periodStart={}, periodEnd={}, observations={}",
         period_start.to_rfc3339(),
         period_end.to_rfc3339(),
         serde_json::to_string(&observations_json).unwrap_or_else(|_| "[]".to_string())
@@ -1047,7 +1049,7 @@ fn window_summary_report_prompt(
         .collect::<Vec<_>>();
 
     format!(
-        "Infer the user's work trajectory for this 5-hour window from 5-minute structured summaries. Return JSON only with keys summaryText and projectHints. summaryText must be concise Chinese and cover: chronological work path, project-based focus, possible loafing, switching frequency, long-run pattern, and uncertainty. periodStart={}, periodEnd={}, windowSummaries={}",
+        "Infer the user's work trajectory for this 5-hour window from 5-minute structured summaries. Return JSON only with keys summaryText and projectHints. summaryText must be complete, structured, human-readable Chinese and cover: project-based work path, time allocation, possible loafing, switching frequency, long-run pattern, and uncertainty. Do not produce a 5-minute log. periodStart={}, periodEnd={}, windowSummaries={}",
         period_start.to_rfc3339(),
         period_end.to_rfc3339(),
         serde_json::to_string(&summaries_json).unwrap_or_else(|_| "[]".to_string())
@@ -1087,7 +1089,7 @@ fn daily_brief_prompt(
         .collect::<Vec<_>>();
 
     format!(
-        "Write a neutral daily brief in Chinese. Return JSON only with keys dailySummaryText, actionTrajectory, comparisonExplanation. Do not include advice, praise, criticism, ranking, or value judgment. Avoid words equivalent to productive, wasted, efficient, inefficient, good, bad, should. Describe the desktop-work action trajectory chronologically and use uncertainty when evidence is incomplete. date={}, periodStart={}, periodEnd={}, descriptiveStats={}, hourlyMetrics={}, comparison={}, fiveHourReports={}",
+        "Write a neutral daily brief in Chinese. Return JSON only with keys dailySummaryText, actionTrajectory, comparisonExplanation. Do not include advice, praise, criticism, ranking, or value judgment. Avoid words equivalent to productive, wasted, efficient, inefficient, good, bad, should. actionTrajectory must be complete, human-readable, and structured around parallel projects, time allocation, workflow pattern, work mode, design/tooling activity, and important evidence; do not create a raw 5-minute log. Use uncertainty when evidence is incomplete. date={}, periodStart={}, periodEnd={}, descriptiveStats={}, hourlyMetrics={}, comparison={}, fiveHourReports={}",
         date,
         period_start.to_rfc3339(),
         period_end.to_rfc3339(),
@@ -1105,9 +1107,23 @@ fn parse_chat_completion_content(response_text: &str) -> Result<String> {
         .choices
         .into_iter()
         .next()
-        .map(|choice| choice.message.content)
+        .and_then(|choice| {
+            if choice
+                .finish_reason
+                .as_deref()
+                .is_some_and(|reason| reason.eq_ignore_ascii_case("length"))
+            {
+                None
+            } else {
+                Some(choice.message.content)
+            }
+        })
         .filter(|content| !content.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("MiniMax response did not include message content"))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "MiniMax response did not include complete message content; finish_reason may be length"
+            )
+        })
 }
 
 fn parse_model_report_json(content: &str) -> Option<ModelReportJson> {
@@ -1116,4 +1132,43 @@ fn parse_model_report_json(content: &str) -> Option<ModelReportJson> {
 
 fn parse_model_daily_brief_json(content: &str) -> Option<ModelDailyBriefJson> {
     crate::llm_json::parse_json_object_as(content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_chat_completion_content_accepts_stop_finish_reason() {
+        let content = parse_chat_completion_content(
+            r#"{
+              "choices": [
+                {
+                  "finish_reason": "stop",
+                  "message": { "content": "{\"summaryText\":\"完整报告\",\"projectHints\":[]}" }
+                }
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        assert!(content.contains("完整报告"));
+    }
+
+    #[test]
+    fn parse_chat_completion_content_rejects_length_finish_reason() {
+        let error = parse_chat_completion_content(
+            r#"{
+              "choices": [
+                {
+                  "finish_reason": "length",
+                  "message": { "content": "{\"summaryText\":\"半截报告" }
+                }
+              ]
+            }"#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("finish_reason"));
+    }
 }

@@ -1,0 +1,213 @@
+{
+  "archiveMarkdown": "# Time State Recorder Daily Archive | 2026-05-24\nDaily Diary: INDEX-20260524 | Daily Diary\nSource date: 2026-05-24\n\n## Daily Summary\nThe sample day centered on implementation and archive wiring.\nAction trajectory: Morning implementation was followed by documentation and Notion archive preparation.\n\n## Descriptive Statistics\n- Active time: 1.00 hours\n- Window switches: 2\n- Distinct apps: 2\n- Input: 120 chars across 140 events\n- Visual evidence: 4 visual windows, 3 high-res screenshots\n- First activity: 2026-05-24T05:00:00+00:00\n- Last activity: 2026-05-24T15:00:00+00:00\n- Top apps: Code.exe 67%\n\n## Parallel Projects And Time Allocation\n- 2026-05-24T05:00:00+00:00 to 2026-05-24T10:00:00+00:00: Time State Recorder (coding:1)\n- 2026-05-24T10:00:00+00:00 to 2026-05-24T15:00:00+00:00: Time State Recorder (coding:1)\n\n## Workflow Pattern\n- 09:00: 30.0 active minutes, dominant app Code.exe, category coding, reports [1]\n\n## Five-Hour Reports\n- 2026-05-24T05:00:00+00:00 to 2026-05-24T10:00:00+00:00 | evidence 3 | projects Time State Recorder | Morning build report.\n- 2026-05-24T10:00:00+00:00 to 2026-05-24T15:00:00+00:00 | evidence 3 | projects Time State Recorder | Afternoon documentation report.\n\n## Comparison\nCoding windows increased relative to the prior day.\n- Active time delta: 600 seconds\n- Switches/hour delta: 0.20\n- Input chars delta: 120\n\n## Uncertainty And Review Notes\n- This archive is generated from local desktop activity records, screenshots, model summaries, and daily aggregation stats.\n- It may miss off-screen work, offline activity, or model interpretation errors; keep diary-level review available.",
+  "archiveTitle": "Time State Recorder Daily Archive | 2026-05-24",
+  "brief": {
+    "actionTrajectory": "Morning implementation was followed by documentation and Notion archive preparation.",
+    "comparison": {
+      "activeSecondsDelta": 600,
+      "baselineDays": 7,
+      "comparedDates": [
+        "2026-05-23"
+      ],
+      "dominantCategoryShift": "research -> coding",
+      "endTimeShiftMinutes": 20,
+      "explanation": "Coding windows increased relative to the prior day.",
+      "inputCharsDelta": 120,
+      "screenshotCoverageDelta": 0.1,
+      "startTimeShiftMinutes": -10,
+      "switchesPerHourDelta": 0.2
+    },
+    "dailySummaryText": "The sample day centered on implementation and archive wiring.",
+    "date": "2026-05-24",
+    "descriptiveStats": {
+      "activeHours": 1.0,
+      "activeSeconds": 3600,
+      "categoryMix": [
+        {
+          "activityCategory": "coding",
+          "count": 2
+        }
+      ],
+      "date": "2026-05-24",
+      "distinctAppCount": 2,
+      "firstActivityAt": "2026-05-24T05:00:00Z",
+      "fiveHourReportCount": 2,
+      "highResScreenshotCount": 3,
+      "inputChars": 120,
+      "inputEvents": 140,
+      "lastActivityAt": "2026-05-24T15:00:00Z",
+      "periodEnd": "2026-05-25T00:00:00Z",
+      "periodStart": "2026-05-24T00:00:00Z",
+      "screenshotCount": 6,
+      "switchCount": 2,
+      "topApps": [
+        {
+          "activeSeconds": 2400,
+          "processName": "Code.exe",
+          "share": 0.67
+        }
+      ],
+      "visualWindowCount": 4,
+      "windowEventCount": 4
+    },
+    "error": null,
+    "fiveHourReportIds": [
+      1,
+      2
+    ],
+    "generatedAt": "2026-05-24T15:40:05Z",
+    "hourlyMetrics": [
+      {
+        "activeRatio": 0.5,
+        "activeSeconds": 1800,
+        "distinctAppCount": 2,
+        "dominantApp": "Code.exe",
+        "dominantCategory": "coding",
+        "endAt": "2026-05-24T10:00:00Z",
+        "fiveHourReportIds": [
+          1
+        ],
+        "highResScreenshotCount": 1,
+        "hour": 9,
+        "inputChars": 60,
+        "screenshotCount": 2,
+        "startAt": "2026-05-24T09:00:00Z",
+        "switchCount": 1,
+        "visualWindowCount": 1,
+        "windowEventCount": 2
+      }
+    ],
+    "id": 1,
+    "modelName": "daily-brief-smoke-v1",
+    "modelProvider": "local_smoke",
+    "periodEnd": "2026-05-25T00:00:00Z",
+    "periodStart": "2026-05-24T00:00:00Z",
+    "promptVersion": "daily-brief-v1",
+    "rawSummaryJson": {
+      "actionTrajectory": "Morning implementation was followed by documentation and Notion archive preparation.",
+      "dailySummaryText": "The sample day centered on implementation and archive wiring."
+    },
+    "scheduledForLocal": "23:40",
+    "status": "complete"
+  },
+  "comparison": {
+    "activeSecondsDelta": 600,
+    "baselineDays": 7,
+    "comparedDates": [
+      "2026-05-23"
+    ],
+    "dominantCategoryShift": "research -> coding",
+    "endTimeShiftMinutes": 20,
+    "explanation": "Coding windows increased relative to the prior day.",
+    "inputCharsDelta": 120,
+    "screenshotCoverageDelta": 0.1,
+    "startTimeShiftMinutes": -10,
+    "switchesPerHourDelta": 0.2
+  },
+  "dailyDiaryTitle": "INDEX-20260524 | Daily Diary",
+  "date": "2026-05-24",
+  "descriptiveStats": {
+    "activeHours": 1.0,
+    "activeSeconds": 3600,
+    "categoryMix": [
+      {
+        "activityCategory": "coding",
+        "count": 2
+      }
+    ],
+    "date": "2026-05-24",
+    "distinctAppCount": 2,
+    "firstActivityAt": "2026-05-24T05:00:00Z",
+    "fiveHourReportCount": 2,
+    "highResScreenshotCount": 3,
+    "inputChars": 120,
+    "inputEvents": 140,
+    "lastActivityAt": "2026-05-24T15:00:00Z",
+    "periodEnd": "2026-05-25T00:00:00Z",
+    "periodStart": "2026-05-24T00:00:00Z",
+    "screenshotCount": 6,
+    "switchCount": 2,
+    "topApps": [
+      {
+        "activeSeconds": 2400,
+        "processName": "Code.exe",
+        "share": 0.67
+      }
+    ],
+    "visualWindowCount": 4,
+    "windowEventCount": 4
+  },
+  "fiveHourReports": [
+    {
+      "categoryMix": [
+        {
+          "activityCategory": "coding",
+          "count": 1
+        }
+      ],
+      "error": null,
+      "evidenceCount": 3,
+      "generatedAt": "2026-05-24T10:00:00Z",
+      "id": 1,
+      "modelName": "notion-daily-archive-smoke-v1",
+      "modelProvider": "local_smoke",
+      "periodEnd": "2026-05-24T10:00:00Z",
+      "periodStart": "2026-05-24T05:00:00Z",
+      "projectHints": [
+        "Time State Recorder"
+      ],
+      "reportKind": "5h",
+      "summaryText": "Morning build report."
+    },
+    {
+      "categoryMix": [
+        {
+          "activityCategory": "coding",
+          "count": 1
+        }
+      ],
+      "error": null,
+      "evidenceCount": 3,
+      "generatedAt": "2026-05-24T15:00:00Z",
+      "id": 2,
+      "modelName": "notion-daily-archive-smoke-v1",
+      "modelProvider": "local_smoke",
+      "periodEnd": "2026-05-24T15:00:00Z",
+      "periodStart": "2026-05-24T10:00:00Z",
+      "projectHints": [
+        "Time State Recorder"
+      ],
+      "reportKind": "5h",
+      "summaryText": "Afternoon documentation report."
+    }
+  ],
+  "generatedAt": "2026-06-06T05:44:19.182025200Z",
+  "hourlyMetrics": [
+    {
+      "activeRatio": 0.5,
+      "activeSeconds": 1800,
+      "distinctAppCount": 2,
+      "dominantApp": "Code.exe",
+      "dominantCategory": "coding",
+      "endAt": "2026-05-24T10:00:00Z",
+      "fiveHourReportIds": [
+        1
+      ],
+      "highResScreenshotCount": 1,
+      "hour": 9,
+      "inputChars": 60,
+      "screenshotCount": 2,
+      "startAt": "2026-05-24T09:00:00Z",
+      "switchCount": 1,
+      "visualWindowCount": 1,
+      "windowEventCount": 2
+    }
+  ],
+  "source": {
+    "app": "time-state-recorder",
+    "endpoint": "/api/notion/daily-archive",
+    "localDate": "2026-05-24",
+    "timezone": "query-local-date"
+  },
+  "status": "complete"
+}

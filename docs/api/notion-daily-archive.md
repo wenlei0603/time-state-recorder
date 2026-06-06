@@ -29,3 +29,15 @@ The endpoint is read-only. It is intended for local Notion Principles OS archiva
 4. Verify the diary marker with `npm run notion:os -- verify-diary 2026-06-05` and block readback.
 
 The Notion write job should be idempotent and must not create durable Tasks from report text automatically.
+
+## Repo-Local Smoke Command
+
+Run this before wiring or changing the Notion Principles OS archive job:
+
+```powershell
+npm run smoke:notion-daily-archive
+```
+
+The command starts an in-memory collector API with sample daily brief data, calls `/api/notion/daily-archive?date=2026-05-24&tzOffsetMinutes=0`, asserts the required markdown sections and same-day 5-hour report filtering, then writes `reports/notion-daily-archive-smoke.json`.
+
+The JSON artifact is an exact sample endpoint response. Other agents can use it as the local contract fixture when building the Principles OS diary append and verification flow.

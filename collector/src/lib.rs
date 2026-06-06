@@ -7,6 +7,7 @@ pub mod insights;
 pub mod interval;
 pub mod llm_json;
 pub mod models;
+pub mod notion_smoke;
 pub mod screenshot;
 pub mod storage;
 pub mod visual_analysis;

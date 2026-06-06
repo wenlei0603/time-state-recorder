@@ -1,9 +1,10 @@
 use chrono::{DateTime, Utc};
 use tsr_collector::{
     insights::{
-        LocalDailyBriefReporter, MiniMaxInsightConfig, MiniMaxInsightReporter,
-        build_five_hour_report, build_five_hour_report_from_window_summaries,
-        observation_from_visual_summary, select_insight_report_provider,
+        LocalDailyBriefReporter, MiniMaxDailyBriefReporter, MiniMaxInsightConfig,
+        MiniMaxInsightReporter, build_five_hour_report,
+        build_five_hour_report_from_window_summaries, observation_from_visual_summary,
+        select_insight_report_provider,
     },
     models::{
         ActivityCategory, ActivityCategoryCount, DailyActivityStats, DailyAppActivity,
@@ -100,6 +101,7 @@ fn minimax_insight_report_uses_text_chat_completions() {
     );
 
     assert_eq!(request["model"], "MiniMax-M3");
+    assert_eq!(request["max_completion_tokens"], 10_000);
     assert_eq!(request["messages"][1]["role"], "user");
     assert!(
         request["messages"][1]["content"]
@@ -108,6 +110,53 @@ fn minimax_insight_report_uses_text_chat_completions() {
             .contains("observations=")
     );
     assert_eq!(request["thinking"]["type"], "disabled");
+}
+
+#[test]
+fn minimax_daily_brief_request_defaults_to_ten_thousand_completion_tokens() {
+    let reporter = MiniMaxDailyBriefReporter::new(MiniMaxInsightConfig::new(
+        "test-key",
+        "https://api.minimax.test/v1",
+        "MiniMax-M3",
+    ));
+    let reports = vec![sample_insight_report(
+        11,
+        "2026-06-03T05:00:00Z",
+        "2026-06-03T10:00:00Z",
+        "上午先处理课程邮件，随后进入 Overpayment do-file 编码。",
+    )];
+    let stats = sample_daily_stats();
+    let hourly = vec![sample_hourly_metric(9, 1800, vec![11])];
+    let comparison = DailyComparison {
+        baseline_days: 7,
+        compared_dates: vec!["2026-06-02".into()],
+        active_seconds_delta: 600,
+        switches_per_hour_delta: 0.2,
+        input_chars_delta: 120,
+        screenshot_coverage_delta: 0.1,
+        dominant_category_shift: Some("research -> coding".into()),
+        start_time_shift_minutes: Some(-20),
+        end_time_shift_minutes: Some(15),
+        explanation: "编码相关窗口较前一日增加。".into(),
+    };
+
+    let request = reporter.build_chat_completions_request(
+        "2026-06-03",
+        ts("2026-06-03T00:00:00Z"),
+        ts("2026-06-04T00:00:00Z"),
+        &stats,
+        &hourly,
+        &comparison,
+        &reports,
+    );
+
+    assert_eq!(request["max_completion_tokens"], 10_000);
+    assert!(
+        request["messages"][1]["content"]
+            .as_str()
+            .unwrap()
+            .contains("parallel projects")
+    );
 }
 
 #[test]
