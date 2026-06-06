@@ -43,6 +43,40 @@ function toLocalDate(value: string): string {
   return `${y}-${m}-${d}`;
 }
 
+function ScreenshotFrame({
+  shot,
+  sample,
+  full = false
+}: {
+  shot: ScreenshotMeta;
+  sample: boolean;
+  full?: boolean;
+}) {
+  const [failed, setFailed] = useState(false);
+
+  if (sample || failed || !shot.filePath) {
+    return (
+      <div className={`thumbPlaceholder ${full ? "full" : ""}`}>
+        <ImageIcon aria-hidden="true" size={full ? 30 : 22} />
+        <span>{sample ? "Sample screenshot" : "Screenshot unavailable"}</span>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={`/screenshots/${shot.filePath}`}
+      alt={`${full ? "Full screenshot" : "Screenshot"} at ${formatTime(
+        shot.capturedAt
+      )}`}
+      width={full ? undefined : shot.width}
+      height={full ? undefined : shot.height}
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 export function DailyTracking({
   date,
   screenshots,
@@ -103,7 +137,10 @@ export function DailyTracking({
       <div className="dailyHeader">
         <div>
           <h2>Screenshot Timeline</h2>
-          <p className="dailyDate">{date}</p>
+          <p className="dailyDate">
+            Visual evidence for {date} ·{" "}
+            {sourceMode === "live" ? "Live" : "Sample"} screenshot data
+          </p>
         </div>
         <div className="actions">
           <button type="button" onClick={onLoadSample}>
@@ -111,7 +148,7 @@ export function DailyTracking({
           </button>
           <button type="button" onClick={onLoadLive} disabled={loading}>
             <Camera aria-hidden="true" size={18} />
-            <span>{loading ? "Loading..." : "Live Data"}</span>
+            <span>{loading ? "Loading..." : "Load live"}</span>
           </button>
         </div>
       </div>
@@ -152,7 +189,7 @@ export function DailyTracking({
 
       {sourceMode === "sample" && (
         <p className="sampleNotice">
-          Showing sample data. Click "Live Data" when the collector is running.
+          Showing sample data. Click "Load live" when the collector is running.
         </p>
       )}
 
@@ -197,28 +234,16 @@ export function DailyTracking({
                   <div className="timelineTime">{formatTime(shot.capturedAt)}</div>
                   <div className="timelineThumb">
                     {privacyMode === "raw" ? (
-                      <img
-                        src={`/screenshots/${shot.filePath}`}
-                        alt={`Screenshot at ${formatTime(shot.capturedAt)}`}
-                        width={shot.width}
-                        height={shot.height}
-                        loading="lazy"
-                        onError={(e) => {
-                          const target = e.currentTarget;
-                          target.style.display = "none";
-                          const placeholder = target.nextElementSibling;
-                          if (placeholder) {
-                            (placeholder as HTMLElement).style.display = "flex";
-                          }
-                        }}
+                      <ScreenshotFrame
+                        shot={shot}
+                        sample={sourceMode === "sample"}
                       />
-                    ) : null}
-                    <div
-                      className="thumbPlaceholder"
-                      style={{ display: privacyMode === "raw" ? "none" : "flex" }}
-                    >
-                      <ImageIcon aria-hidden="true" size={24} />
-                    </div>
+                    ) : (
+                      <div className="thumbPlaceholder">
+                        <ImageIcon aria-hidden="true" size={22} />
+                        <span>Hidden in redacted mode</span>
+                      </div>
+                    )}
                   </div>
                   <div className="timelineMeta">
                     <span className="timelineApp">{shot.processName || "Unknown"}</span>
@@ -256,12 +281,10 @@ export function DailyTracking({
                   </div>
                   {expanded === shot.id && privacyMode === "raw" && (
                     <div className="timelineExpand">
-                      <img
-                        src={`/screenshots/${shot.filePath}`}
-                        alt={`Full screenshot at ${formatTime(shot.capturedAt)}`}
-                        onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display = "none";
-                        }}
+                      <ScreenshotFrame
+                        shot={shot}
+                        sample={sourceMode === "sample"}
+                        full
                       />
                     </div>
                   )}
