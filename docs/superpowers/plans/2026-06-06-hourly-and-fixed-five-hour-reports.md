@@ -4,7 +4,7 @@
 
 **Goal:** Add top-of-hour 1-hour reports, keep 5-hour reports, and switch 5-hour generation from rolling windows to fixed local windows starting on 2026-06-07: 10:00-15:00, 15:00-20:00, and 20:00-01:00.
 
-**Architecture:** Reuse the existing `insight_reports` table and `InsightReport` model. Add `report_kind = "1h"` for hourly reports and keep `report_kind = "5h"` for five-hour reports. Both kinds are generated from `visual_window_summaries`; Daily Brief and Notion archive responses keep `fiveHourReports` and add `hourlyReports` so existing consumers are not silently repointed.
+**Architecture:** Reuse the existing `insight_reports` table and `InsightReport` model. Add `report_kind = "1h"` for hourly reports and keep `report_kind = "5h"` for five-hour reports. Both kinds are generated from `visual_window_summaries`; Daily Brief and Notion archive responses keep `fiveHourReports` and add `hourlyReports` so existing consumers are not silently repointed. The database may keep coarse merged model text, but the frontend must never render report text as one unbounded paragraph; it converts reports into a structured presentation model before display.
 
 **Tech Stack:** Rust/Axum collector, SQLite storage through `rusqlite`, Chrono local/UTC conversion, React/TypeScript/Vite frontend, Vitest and Rust integration tests.
 
@@ -22,6 +22,10 @@
 - `InsightReport.reportKind` values are exactly `"1h"` and `"5h"`.
 - The API field `fiveHourReports` remains unchanged. Add `hourlyReports` beside it.
 - `DailyBrief.fiveHourReportIds`, `DailyActivityStats.fiveHourReportCount`, and `HourlyActivityMetric.fiveHourReportIds` stay as-is for backward compatibility. The new hourly reports are displayed in the response/UI but are not stored inside `DailyBrief`.
+- Frontend report presentation is structured for all three report levels: 1-hour reports, scheduled 5-hour reports, and Daily Brief narrative. The UI must show time range, summary, phases/projects, evidence metadata, uncertainty/risks, and collapsed raw text, not the screenshot's current wall-of-text layout.
+- The structured frontend model is deterministic and UI-only. It should prefer structured fields if future API responses add them, but for this implementation it derives readable sections from existing `summaryText`, `dailySummaryText`, `actionTrajectory`, `categoryMix`, `projectHints`, `evidenceCount`, and timestamps.
+- Report cards must cap visible text lengths and use progressive disclosure. Long raw report text belongs in a collapsed details block.
+- Redacted mode still hides narrative text. It may show time range, report kind, evidence counts, category/project chips, and section labels.
 - The work happens in `D:\CodexInfra\docs\projects\time-state-recorder\.worktrees\report-cadence-20260607` on branch `codex/report-cadence-20260607`.
 
 ## File Structure
@@ -52,11 +56,25 @@
   - Parse `hourlyReports`.
 - Modify `src/lib/dailyBrief.test.ts`
   - Verify hourly reports parse and existing 5h reports still parse.
+- Create `src/lib/reportPresentation.ts`
+  - Convert `InsightReport` and `DailyBrief` text into a bounded UI presentation model.
+  - Extract numbered phases, time-span lines, project hints, evidence chips, uncertainty statements, and raw text fallback.
+- Create `src/lib/reportPresentation.test.ts`
+  - Verify long LLM text is split into readable sections and raw text remains collapsed-only.
+- Create `src/StructuredReportCard.tsx`
+  - Reusable report card for 1h and 5h reports.
+  - Shows overview, phase bullets, evidence chips, and collapsed raw text.
+- Create `src/StructuredDailyNarrative.tsx`
+  - Reusable structured renderer for Daily Brief `dailySummaryText` and `actionTrajectory`.
 - Modify `src/DailyBriefPanel.tsx`
   - Show an "Hourly Reports" section above scheduled 5h reports.
   - Rename the 5h heading to "Scheduled 5h Reports".
+  - Use structured report cards instead of rendering `report.summaryText` directly.
+  - Use structured daily narrative instead of rendering the daily summary/action trajectory as plain paragraphs.
 - Modify `src/App.test.tsx`
   - Update daily brief fixtures with `hourlyReports`.
+- Modify `src/styles.css`
+  - Add compact structured report card, phase list, evidence chip, and raw details styles.
 - Modify `docs/api/notion-daily-archive.md`
   - Document the new `hourlyReports` field and markdown section.
 
@@ -1130,27 +1148,295 @@ git commit -m "feat: parse hourly daily brief reports"
 
 ---
 
-### Task 7: Render Hourly Reports In Daily Brief UI
+### Task 7: Build Structured Report Presentation Model
 
 **Files:**
-- Modify: `src/DailyBriefPanel.tsx`
-- Modify: `src/App.test.tsx`
+- Create: `src/lib/reportPresentation.ts`
+- Create: `src/lib/reportPresentation.test.ts`
 
-- [ ] **Step 1: Write failing UI assertion**
+- [ ] **Step 1: Write failing presentation tests**
 
-Add an assertion in the App test that opens or observes the Daily Brief panel:
+Create `src/lib/reportPresentation.test.ts`:
 
 ```ts
-expect(screen.getByRole("heading", { name: /hourly reports/i })).toBeInTheDocument();
-expect(screen.getByText("09点小时报告。")).toBeInTheDocument();
-expect(screen.getByRole("heading", { name: /scheduled 5h reports/i })).toBeInTheDocument();
+import { describe, expect, it } from "vitest";
+import type { DailyBrief, InsightReport } from "../types";
+import {
+  presentDailyNarrative,
+  presentInsightReport,
+  splitReportText,
+  truncateText,
+} from "./reportPresentation";
+
+function report(overrides: Partial<InsightReport> = {}): InsightReport {
+  return {
+    id: 9,
+    periodStart: "2026-06-07T02:00:00Z",
+    periodEnd: "2026-06-07T03:00:00Z",
+    generatedAt: "2026-06-07T03:00:05Z",
+    reportKind: "1h",
+    modelProvider: "local_insight",
+    modelName: "trajectory-v1",
+    summaryText:
+      "1) Notion RAW 字段整理，补全 raw_link 与 note_product_link。2) Codex 前端计划，处理 hourlyReports 与 5h Reports。3) ERROR 待排查：长文本直接渲染造成巨大段落。",
+    categoryMix: [
+      { activityCategory: "coding", count: 8 },
+      { activityCategory: "research", count: 4 },
+    ],
+    projectHints: ["Time State Recorder", "Notion OS"],
+    evidenceCount: 12,
+    error: null,
+    ...overrides,
+  };
+}
+
+function brief(overrides: Partial<DailyBrief> = {}): DailyBrief {
+  return {
+    id: 1,
+    date: "2026-06-07",
+    generatedAt: "2026-06-07T23:50:00Z",
+    modelProvider: "local_insight",
+    modelName: "daily-brief-v1",
+    dailySummaryText:
+      "上午：推进报告 cadence。下午：整理前端结构化呈现。晚上：验证 API 与 UI。",
+    actionTrajectory:
+      "09:00-10:00 处理 hourly 报告。15:00-20:00 处理 scheduled 5h 报告。待排查：移动端溢出。",
+    keyTransitions: [],
+    suggestedNextActions: [],
+    fiveHourReportIds: [2],
+    error: null,
+    ...overrides,
+  };
+}
+
+describe("reportPresentation", () => {
+  it("splits numbered long report text into bounded visible sections", () => {
+    const presentation = presentInsightReport(report());
+
+    expect(presentation.title).toBe("1h Report");
+    expect(presentation.overview.length).toBeLessThanOrEqual(180);
+    expect(presentation.phases.length).toBeGreaterThanOrEqual(3);
+    expect(presentation.phases[0].body).toContain("Notion RAW");
+    expect(presentation.chips).toContain("Time State Recorder");
+    expect(presentation.chips).toContain("12 windows");
+    expect(presentation.uncertainty.join(" ")).toContain("ERROR");
+    expect(presentation.rawText).toContain("长文本直接渲染");
+  });
+
+  it("extracts sections from Chinese punctuation and time spans", () => {
+    const sections = splitReportText(
+      "10:00-15:00 文献与 Notion RAW；15:00-20:00 Codex 前端设计；20:00-01:00 验证与 PR 准备。"
+    );
+
+    expect(sections).toHaveLength(3);
+    expect(sections[1]).toContain("Codex 前端设计");
+  });
+
+  it("structures daily narrative without losing raw text", () => {
+    const presentation = presentDailyNarrative(brief());
+
+    expect(presentation.title).toBe("Daily Action Trajectory");
+    expect(presentation.phases.length).toBeGreaterThanOrEqual(3);
+    expect(presentation.uncertainty.join(" ")).toContain("待排查");
+    expect(presentation.rawText).toContain("09:00-10:00");
+  });
+
+  it("truncates visible text deterministically", () => {
+    expect(truncateText("a".repeat(400), 20)).toHaveLength(20);
+  });
+});
 ```
 
-If the test is in redacted mode, switch to Raw first:
+- [ ] **Step 2: Run presentation tests to verify they fail**
+
+Run:
+
+```powershell
+npm test -- --run src/lib/reportPresentation.test.ts
+```
+
+Expected: FAIL because `src/lib/reportPresentation.ts` does not exist.
+
+- [ ] **Step 3: Implement presentation model**
+
+Create `src/lib/reportPresentation.ts`:
+
+```ts
+import type { DailyBrief, InsightReport } from "../types";
+
+export type ReportPhase = {
+  label: string;
+  body: string;
+  meta?: string;
+};
+
+export type StructuredReportPresentation = {
+  title: string;
+  timeRange: string;
+  eyebrow: string;
+  overview: string;
+  phases: ReportPhase[];
+  chips: string[];
+  evidence: string[];
+  uncertainty: string[];
+  rawText: string;
+};
+
+const MAX_OVERVIEW_LENGTH = 180;
+const MAX_PHASE_BODY_LENGTH = 220;
+const MAX_CHIPS = 8;
+const RISK_PATTERN = /(不确定|可能|待|缺失|卡住|ERROR|风险|无法)/i;
+const NUMBERED_SPLIT_PATTERN = /(?=(?:[①②③④⑤⑥⑦⑧⑨]|\d+[).、]))/g;
+const TIME_SPAN_SPLIT_PATTERN = /(?=\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2})/g;
+
+export function presentInsightReport(report: InsightReport): StructuredReportPresentation {
+  const sections = splitReportText(report.summaryText);
+  const phases = sections.slice(0, 6).map((section, index) => ({
+    label: phaseLabel(section, index),
+    body: truncateText(stripLeadingMarker(section), MAX_PHASE_BODY_LENGTH),
+    meta: index === 0 ? `${report.evidenceCount} source windows` : undefined,
+  }));
+  return {
+    title: report.reportKind === "5h" ? "5h Report" : "1h Report",
+    timeRange: formatReportRange(report.periodStart, report.periodEnd),
+    eyebrow: `${report.reportKind} - ${report.modelProvider}`,
+    overview: truncateText(stripLeadingMarker(sections[0] ?? report.summaryText), MAX_OVERVIEW_LENGTH),
+    phases: phases.length > 0 ? phases : fallbackPhase(report.summaryText),
+    chips: reportChips(report),
+    evidence: [`${report.evidenceCount} windows`, ...report.categoryMix.map((item) => `${item.activityCategory} ${item.count}`)],
+    uncertainty: extractUncertainty(sections),
+    rawText: report.summaryText,
+  };
+}
+
+export function presentDailyNarrative(brief: DailyBrief): StructuredReportPresentation {
+  const rawText = [brief.dailySummaryText, brief.actionTrajectory].filter(Boolean).join("\n");
+  const sections = splitReportText(rawText);
+  return {
+    title: "Daily Action Trajectory",
+    timeRange: brief.date,
+    eyebrow: `daily - ${brief.modelProvider}`,
+    overview: truncateText(stripLeadingMarker(sections[0] ?? rawText), MAX_OVERVIEW_LENGTH),
+    phases: sections.slice(0, 8).map((section, index) => ({
+      label: phaseLabel(section, index),
+      body: truncateText(stripLeadingMarker(section), MAX_PHASE_BODY_LENGTH),
+    })),
+    chips: [`${brief.fiveHourReportIds.length} 5h reports`, ...brief.suggestedNextActions.slice(0, 3)],
+    evidence: brief.keyTransitions.slice(0, 4),
+    uncertainty: extractUncertainty(sections),
+    rawText,
+  };
+}
+
+export function splitReportText(text: string): string[] {
+  return text
+    .split(NUMBERED_SPLIT_PATTERN)
+    .flatMap((part) => part.split(TIME_SPAN_SPLIT_PATTERN))
+    .flatMap((part) => part.split(/[；;。]\s*/))
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+export function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  if (maxLength <= 3) {
+    return text.slice(0, maxLength);
+  }
+  return `${text.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
+export function formatReportRange(startIso: string, endIso: string): string {
+  const start = new Date(startIso);
+  const end = new Date(endIso);
+  return `${formatClock(start)} - ${formatClock(end)}`;
+}
+
+function formatClock(value: Date): string {
+  return value.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function reportChips(report: InsightReport): string[] {
+  return [...report.projectHints, `${report.evidenceCount} windows`, ...report.categoryMix.map((item) => item.activityCategory)]
+    .filter(Boolean)
+    .slice(0, MAX_CHIPS);
+}
+
+function extractUncertainty(sections: string[]): string[] {
+  return sections.filter((section) => RISK_PATTERN.test(section)).slice(0, 3).map((section) => truncateText(stripLeadingMarker(section), 120));
+}
+
+function phaseLabel(section: string, index: number): string {
+  const timeMatch = section.match(/\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}/);
+  if (timeMatch) {
+    return timeMatch[0].replace(/\s+/g, "");
+  }
+  return `Phase ${index + 1}`;
+}
+
+function stripLeadingMarker(text: string): string {
+  return text.replace(/^(?:[①②③④⑤⑥⑦⑧⑨]|\d+[).、])\s*/, "").trim();
+}
+
+function fallbackPhase(text: string): ReportPhase[] {
+  return [{ label: "Summary", body: truncateText(text, MAX_PHASE_BODY_LENGTH) }];
+}
+```
+
+- [ ] **Step 4: Run presentation tests**
+
+Run:
+
+```powershell
+npm test -- --run src/lib/reportPresentation.test.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```powershell
+git add src/lib/reportPresentation.ts src/lib/reportPresentation.test.ts
+git commit -m "feat: structure report presentation model"
+```
+
+---
+
+### Task 8: Render Structured Report Cards
+
+**Files:**
+- Create: `src/StructuredReportCard.tsx`
+- Create: `src/StructuredDailyNarrative.tsx`
+- Modify: `src/DailyBriefPanel.tsx`
+- Modify: `src/App.test.tsx`
+- Modify: `src/styles.css`
+
+- [ ] **Step 1: Write failing UI assertions**
+
+Add assertions in the App test that opens or observes the Daily Brief panel:
 
 ```ts
 fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
+
+expect(screen.getByRole("heading", { name: /hourly reports/i })).toBeInTheDocument();
+expect(screen.getByRole("heading", { name: /scheduled 5h reports/i })).toBeInTheDocument();
+expect(screen.getByRole("heading", { name: /daily action trajectory/i })).toBeInTheDocument();
+expect(screen.getByText("Phase 1")).toBeInTheDocument();
+expect(screen.getByText("Raw report text")).toBeInTheDocument();
 ```
+
+Add a regression assertion that protects against the screenshot failure mode:
+
+```ts
+const reportParagraphs = screen.getAllByTestId("structured-report-lead");
+for (const paragraph of reportParagraphs) {
+  expect(paragraph.textContent?.length ?? 0).toBeLessThanOrEqual(190);
+}
+expect(screen.queryByText(/本5小时窗口.*Time State Recorder.*Dayflow/)).not.toBeInTheDocument();
+```
+
+Use fixture text with at least six numbered Chinese clauses that mention `Time State Recorder`, `Notion`, `Codex`, `Dayflow`, `ERROR`, and a `20:00-01:00` slot so this assertion is meaningful.
 
 - [ ] **Step 2: Run UI test to verify it fails**
 
@@ -1160,11 +1446,104 @@ Run:
 npm test -- --run src/App.test.tsx
 ```
 
-Expected: FAIL because the panel does not render hourly reports.
+Expected: FAIL because structured report components are not wired into the panel.
 
-- [ ] **Step 3: Update `DailyBriefPanel`**
+- [ ] **Step 3: Create `StructuredReportCard`**
 
-In `src/DailyBriefPanel.tsx`, split report arrays:
+Create `src/StructuredReportCard.tsx`:
+
+```tsx
+import type { StructuredReportPresentation } from "./lib/reportPresentation";
+
+type StructuredReportCardProps = {
+  presentation: StructuredReportPresentation;
+  canShowText: boolean;
+};
+
+export function StructuredReportCard({ presentation, canShowText }: StructuredReportCardProps) {
+  return (
+    <article className="structuredReportCard">
+      <header className="structuredReportHeader">
+        <div>
+          <p className="eyebrow">{presentation.eyebrow}</p>
+          <h4>{presentation.title}</h4>
+        </div>
+        <span className="statusPill">{presentation.timeRange}</span>
+      </header>
+      <div className="reportChipRow">
+        {presentation.chips.map((chip) => (
+          <span key={chip}>{chip}</span>
+        ))}
+      </div>
+      {canShowText ? (
+        <>
+          <p className="structuredReportLead" data-testid="structured-report-lead">
+            {presentation.overview}
+          </p>
+          <ol className="reportPhaseList">
+            {presentation.phases.map((phase) => (
+              <li key={`${phase.label}-${phase.body}`}>
+                <strong>{phase.label}</strong>
+                <p>{phase.body}</p>
+                {phase.meta ? <span>{phase.meta}</span> : null}
+              </li>
+            ))}
+          </ol>
+          {presentation.uncertainty.length > 0 ? (
+            <div className="reportUncertainty">
+              {presentation.uncertainty.map((item) => (
+                <span key={item}>{item}</span>
+              ))}
+            </div>
+          ) : null}
+          <details className="rawReportDetails">
+            <summary>Raw report text</summary>
+            <p>{presentation.rawText}</p>
+          </details>
+        </>
+      ) : (
+        <p className="redactedText insightRedacted">Report narrative hidden in redacted mode.</p>
+      )}
+    </article>
+  );
+}
+```
+
+- [ ] **Step 4: Create `StructuredDailyNarrative`**
+
+Create `src/StructuredDailyNarrative.tsx`:
+
+```tsx
+import type { DailyBrief } from "./types";
+import { presentDailyNarrative } from "./lib/reportPresentation";
+import { StructuredReportCard } from "./StructuredReportCard";
+
+type StructuredDailyNarrativeProps = {
+  brief: DailyBrief;
+  canShowText: boolean;
+};
+
+export function StructuredDailyNarrative({ brief, canShowText }: StructuredDailyNarrativeProps) {
+  return (
+    <StructuredReportCard
+      presentation={presentDailyNarrative(brief)}
+      canShowText={canShowText}
+    />
+  );
+}
+```
+
+- [ ] **Step 5: Wire structured cards into `DailyBriefPanel`**
+
+In `src/DailyBriefPanel.tsx`, import:
+
+```tsx
+import { StructuredDailyNarrative } from "./StructuredDailyNarrative";
+import { StructuredReportCard } from "./StructuredReportCard";
+import { presentInsightReport } from "./lib/reportPresentation";
+```
+
+Split report arrays:
 
 ```tsx
 const hourlyReports = response?.hourlyReports ?? [];
@@ -1181,7 +1560,15 @@ Update the metric:
 />
 ```
 
-Add this section before the five-hour section:
+Replace raw daily summary and action trajectory paragraphs with:
+
+```tsx
+{response.brief ? (
+  <StructuredDailyNarrative brief={response.brief} canShowText={canShowText} />
+) : null}
+```
+
+Add the hourly section before the 5-hour section:
 
 ```tsx
 <div className="dailyBriefSection">
@@ -1189,7 +1576,11 @@ Add this section before the five-hour section:
   {hourlyReports.length > 0 ? (
     <div className="dailyReportList">
       {hourlyReports.map((report) => (
-        <ReportRow key={report.id} report={report} canShowText={canShowText} />
+        <StructuredReportCard
+          key={report.id}
+          presentation={presentInsightReport(report)}
+          canShowText={canShowText}
+        />
       ))}
     </div>
   ) : (
@@ -1198,15 +1589,87 @@ Add this section before the five-hour section:
 </div>
 ```
 
-Rename the existing 5h section:
+Rename the existing 5h section to `Scheduled 5h Reports` and render `StructuredReportCard` for each `fiveHourReports` item.
 
-```tsx
-<h3>Scheduled 5h Reports</h3>
+- [ ] **Step 6: Add bounded card styles**
+
+In `src/styles.css`, add classes that keep long model text readable:
+
+```css
+.structuredReportCard {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--surface);
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.structuredReportHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.reportChipRow,
+.reportUncertainty {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.reportChipRow span,
+.reportUncertainty span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.structuredReportLead,
+.rawReportDetails p,
+.reportPhaseList p {
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+}
+
+.structuredReportLead {
+  margin: 0;
+  font-size: 14px;
+}
+
+.reportPhaseList {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.reportPhaseList li {
+  min-width: 0;
+}
+
+.reportPhaseList strong {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.rawReportDetails {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
 ```
 
-Change its array references to `fiveHourReports`.
+If the repo uses different CSS custom properties, map these classes to the existing surface, border, and muted tokens already used by `DailyBriefPanel`.
 
-- [ ] **Step 4: Run UI test**
+- [ ] **Step 7: Run UI test**
 
 Run:
 
@@ -1216,16 +1679,16 @@ npm test -- --run src/App.test.tsx
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 8: Commit**
 
 ```powershell
-git add src/DailyBriefPanel.tsx src/App.test.tsx
-git commit -m "feat: show hourly reports in daily brief"
+git add src/StructuredReportCard.tsx src/StructuredDailyNarrative.tsx src/DailyBriefPanel.tsx src/App.test.tsx src/styles.css
+git commit -m "feat: render structured report cards"
 ```
 
 ---
 
-### Task 8: Full Verification And PR-Ready Cleanup
+### Task 9: Full Verification And PR-Ready Cleanup
 
 **Files:**
 - Verify all changed files.
@@ -1282,8 +1745,11 @@ Verify:
 
 - Daily Brief shows `Hourly Reports`.
 - Daily Brief shows `Scheduled 5h Reports`.
-- Redacted mode hides hourly and 5h summary text.
-- Raw mode reveals hourly and 5h summary text.
+- Daily Brief shows `Daily Action Trajectory` as structured sections.
+- Hourly and 5h reports render as bounded cards with chips, phases, risk notes, and collapsed raw text.
+- No report text renders as one unbounded wall-of-text paragraph.
+- Redacted mode hides hourly, 5h, and daily narrative text while preserving labels, time ranges, and non-sensitive counts.
+- Raw mode reveals structured hourly, 5h, and daily narrative text.
 - Mobile viewport has no horizontal page overflow.
 
 - [ ] **Step 6: Final semantic commit if any cleanup remains**
@@ -1291,7 +1757,7 @@ Verify:
 If verification changes source or test files, commit the concrete files changed by verification with:
 
 ```powershell
-git add collector/src/api.rs collector/src/insights.rs collector/src/storage.rs collector/tests/api_tests.rs collector/tests/insight_tests.rs collector/tests/storage_tests.rs collector/tests/notion_daily_archive_smoke_tests.rs src/types.ts src/lib/dailyBrief.ts src/lib/dailyBrief.test.ts src/DailyBriefPanel.tsx src/App.test.tsx docs/api/notion-daily-archive.md
+git add collector/src/api.rs collector/src/insights.rs collector/src/storage.rs collector/tests/api_tests.rs collector/tests/insight_tests.rs collector/tests/storage_tests.rs collector/tests/notion_daily_archive_smoke_tests.rs src/types.ts src/lib/dailyBrief.ts src/lib/dailyBrief.test.ts src/lib/reportPresentation.ts src/lib/reportPresentation.test.ts src/StructuredReportCard.tsx src/StructuredDailyNarrative.tsx src/DailyBriefPanel.tsx src/App.test.tsx src/styles.css docs/api/notion-daily-archive.md
 git commit -m "test: verify report cadence UI"
 ```
 
@@ -1309,7 +1775,8 @@ Use a PR body with:
 
 - Adds top-of-hour `1h` insight reports from 5-minute visual window summaries.
 - Keeps `5h` reports and switches them to fixed local slots from 2026-06-07: 10:00-15:00, 15:00-20:00, 20:00-01:00.
-- Adds `hourlyReports` to Daily Brief / Notion archive responses and displays them in the frontend.
+- Adds `hourlyReports` to Daily Brief / Notion archive responses.
+- Adds a structured frontend presentation framework for hourly, scheduled 5h, and daily narrative reports so raw model text is progressive-disclosure content, not the primary layout.
 
 ## Validation
 
@@ -1324,7 +1791,8 @@ Use a PR body with:
 
 ## Self-Review
 
-- Spec coverage: The plan covers hourly reports, fixed five-hour slots from 2026-06-07, retention of existing five-hour reports, 5-minute visual-window source data, backend scheduling, API response updates, frontend rendering, tests, docs, and PR flow.
+- Spec coverage: The plan covers hourly reports, fixed five-hour slots from 2026-06-07, retention of existing five-hour reports, 5-minute visual-window source data, backend scheduling, API response updates, structured frontend rendering, tests, docs, and PR flow.
+- Presentation coverage: The plan explicitly keeps coarse merged report text in storage while requiring the frontend to derive bounded sections, chips, evidence, risks, and collapsed raw text for 1h, 5h, and daily reports.
 - Red-flag scan: No task uses unspecified future work. Each implementation task names files, includes concrete code shapes, and lists exact commands.
 - Type consistency: Backend uses `InsightReport.report_kind = "1h" | "5h"`; frontend uses `InsightReport.reportKind` and `DailyBriefResponse.hourlyReports | fiveHourReports`.
 - Risk note: Existing dirty changes in the main checkout are not part of this work. All implementation should stay inside `.worktrees/report-cadence-20260607`.
