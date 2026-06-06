@@ -47,6 +47,17 @@ describe("daily brief API", () => {
     expect(response.hourlyReports[0].summaryText).toBe("09点小时报告。");
     expect(response.fiveHourReports[0].summaryText).toBe("上午报告。");
   });
+
+  it("accepts old daily brief API responses before hourlyReports exists", async () => {
+    const body = dailyBriefResponse();
+    delete (body as Partial<typeof body>).hourlyReports;
+    const fetcher = vi.fn().mockResolvedValue(jsonResponse(body));
+
+    const response = await fetchDailyBrief("2026-06-03", fetcher);
+
+    expect(response.hourlyReports).toEqual([]);
+    expect(response.fiveHourReports[0].summaryText).toBe("上午报告。");
+  });
 });
 
 function insightReport() {
