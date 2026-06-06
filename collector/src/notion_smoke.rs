@@ -28,7 +28,8 @@ pub const REQUIRED_MARKDOWN_SECTIONS: &[&str] = &[
     "## Descriptive Statistics",
     "## Parallel Projects And Time Allocation",
     "## Workflow Pattern",
-    "## Five-Hour Reports",
+    "## Hourly Reports",
+    "## Scheduled 5h Reports",
     "## Comparison",
     "## Uncertainty And Review Notes",
 ];
@@ -110,6 +111,19 @@ fn assert_daily_archive_body(body: &Value) -> Result<()> {
         "smoke response stats must report two 5-hour reports"
     );
 
+    let hourly_reports = body["hourlyReports"]
+        .as_array()
+        .context("hourlyReports must be an array")?;
+    ensure!(hourly_reports.len() == 1, "expected one hourly report");
+    ensure!(
+        hourly_reports[0]["reportKind"].as_str() == Some("1h"),
+        "smoke hourly report must be a 1h report"
+    );
+    ensure!(
+        hourly_reports[0]["summaryText"] == "Hourly build checkpoint.",
+        "missing hourly smoke report"
+    );
+
     let reports = body["fiveHourReports"]
         .as_array()
         .context("fiveHourReports must be an array")?;
@@ -154,6 +168,10 @@ fn assert_daily_archive_body(body: &Value) -> Result<()> {
         "archiveMarkdown missing same-day report text"
     );
     ensure!(
+        markdown.contains("Hourly build checkpoint."),
+        "archiveMarkdown missing hourly report text"
+    );
+    ensure!(
         !markdown.contains("Previous-day report should be excluded."),
         "archiveMarkdown included a previous-day report"
     );
@@ -163,6 +181,11 @@ fn assert_daily_archive_body(body: &Value) -> Result<()> {
 fn sample_store() -> Result<Store> {
     let mut store = Store::open_memory()?;
     store.init()?;
+    store.insert_insight_report(&sample_hourly_report(
+        "2026-05-24T09:00:00Z",
+        "2026-05-24T10:00:00Z",
+        "Hourly build checkpoint.",
+    ))?;
     let first_report_id = store.insert_insight_report(&sample_insight_report(
         "2026-05-24T05:00:00Z",
         "2026-05-24T10:00:00Z",
@@ -202,6 +225,26 @@ fn sample_insight_report(start: &str, end: &str, summary: &str) -> InsightReport
         }],
         project_hints: vec!["Time State Recorder".into()],
         evidence_count: 3,
+        error: None,
+    }
+}
+
+fn sample_hourly_report(start: &str, end: &str, summary: &str) -> InsightReport {
+    InsightReport {
+        id: 0,
+        period_start: ts(start),
+        period_end: ts(end),
+        generated_at: ts(end),
+        report_kind: "1h".into(),
+        model_provider: "local_smoke".into(),
+        model_name: "notion-daily-archive-smoke-v1".into(),
+        summary_text: summary.into(),
+        category_mix: vec![ActivityCategoryCount {
+            activity_category: ActivityCategory::Coding,
+            count: 1,
+        }],
+        project_hints: vec!["Time State Recorder".into()],
+        evidence_count: 12,
         error: None,
     }
 }

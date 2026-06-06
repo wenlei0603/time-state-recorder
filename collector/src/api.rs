@@ -147,6 +147,7 @@ struct DailyBriefResponse {
     status: String,
     next_run_at: Option<DateTime<Utc>>,
     brief: Option<DailyBrief>,
+    hourly_reports: Vec<InsightReport>,
     five_hour_reports: Vec<InsightReport>,
     descriptive_stats: DailyActivityStats,
     hourly_metrics: Vec<HourlyActivityMetric>,
@@ -164,6 +165,7 @@ struct NotionDailyArchiveResponse {
     status: String,
     archive_markdown: String,
     brief: Option<DailyBrief>,
+    hourly_reports: Vec<InsightReport>,
     five_hour_reports: Vec<InsightReport>,
     descriptive_stats: DailyActivityStats,
     hourly_metrics: Vec<HourlyActivityMetric>,
@@ -2159,10 +2161,16 @@ fn build_daily_brief_response(
         .store
         .lock()
         .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
-    let reports = store.list_insight_reports_between(
+    let hourly_reports = store.list_insight_reports_between(
         date_window.start_utc,
         date_window.end_utc,
-        Some("5h"),
+        Some(HOURLY_REPORT_KIND),
+        500,
+    )?;
+    let five_hour_reports = store.list_insight_reports_between(
+        date_window.start_utc,
+        date_window.end_utc,
+        Some(FIVE_HOUR_REPORT_KIND),
         100,
     )?;
     let brief = store.get_daily_brief_by_date(&date_window.date, &schedule_label)?;
@@ -2173,13 +2181,17 @@ fn build_daily_brief_response(
             &date_window.date,
             date_window.start_utc,
             date_window.end_utc,
-            &reports,
+            &five_hour_reports,
         )?
     };
     let hourly_metrics = if let Some(brief) = &brief {
         brief.hourly_metrics.clone()
     } else {
-        store.build_hourly_activity_metrics(date_window.start_utc, date_window.end_utc, &reports)?
+        store.build_hourly_activity_metrics(
+            date_window.start_utc,
+            date_window.end_utc,
+            &five_hour_reports,
+        )?
     };
     let comparison = if let Some(brief) = &brief {
         brief.comparison.clone()
@@ -2195,7 +2207,8 @@ fn build_daily_brief_response(
         status,
         next_run_at: next_daily_brief_run_at(Utc::now(), &schedule_label),
         brief,
-        five_hour_reports: reports,
+        hourly_reports,
+        five_hour_reports,
         descriptive_stats: stats,
         hourly_metrics,
         comparison,
@@ -2214,6 +2227,7 @@ fn build_notion_daily_archive_response(
         &archive_title,
         &daily_diary_title,
         response.brief.as_ref(),
+        &response.hourly_reports,
         &response.five_hour_reports,
         &response.descriptive_stats,
         &response.hourly_metrics,
@@ -2234,6 +2248,7 @@ fn build_notion_daily_archive_response(
         status: response.status,
         archive_markdown,
         brief: response.brief,
+        hourly_reports: response.hourly_reports,
         five_hour_reports: response.five_hour_reports,
         descriptive_stats: response.descriptive_stats,
         hourly_metrics: response.hourly_metrics,
@@ -2250,6 +2265,7 @@ fn render_notion_archive_markdown(
     archive_title: &str,
     daily_diary_title: &str,
     brief: Option<&DailyBrief>,
+    hourly_reports: &[InsightReport],
     reports: &[InsightReport],
     stats: &DailyActivityStats,
     hourly_metrics: &[HourlyActivityMetric],
@@ -2299,7 +2315,21 @@ fn render_notion_archive_markdown(
     lines.push("## Workflow Pattern".into());
     lines.extend(hourly_lines(hourly_metrics));
     lines.push(String::new());
-    lines.push("## Five-Hour Reports".into());
+    lines.push("## Hourly Reports".into());
+    if hourly_reports.is_empty() {
+        lines.push("- No hourly reports for this date yet.".into());
+    } else {
+        for report in hourly_reports {
+            lines.push(format!(
+                "- {} - {}: {}",
+                report.period_start.with_timezone(&Local).format("%H:%M"),
+                report.period_end.with_timezone(&Local).format("%H:%M"),
+                report.summary_text
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.push("## Scheduled 5h Reports".into());
     lines.extend(report_lines(reports));
     lines.push(String::new());
     lines.push("## Comparison".into());

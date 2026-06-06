@@ -1120,6 +1120,13 @@ async fn serves_hourly_insight_reports_by_date_and_kind() {
 async fn serves_daily_brief_response_with_stats_and_same_day_reports() {
     let mut store = Store::open_memory().unwrap();
     store.init().unwrap();
+    let hourly_report_id = store
+        .insert_insight_report(&sample_hourly_report(
+            "2026-05-24T09:00:00Z",
+            "2026-05-24T10:00:00Z",
+            "09点小时报告。",
+        ))
+        .unwrap();
     let first_report_id = store
         .insert_insight_report(&sample_insight_report(
             0,
@@ -1156,12 +1163,16 @@ async fn serves_daily_brief_response_with_stats_and_same_day_reports() {
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["date"], "2026-05-24");
     assert_eq!(body["status"], "complete");
+    assert!(hourly_report_id > 0);
     assert_eq!(
         body["brief"]["dailySummaryText"],
         "当天以编码和阅读窗口为主。"
     );
     assert_eq!(body["descriptiveStats"]["activeSeconds"], 3600);
     assert_eq!(body["hourlyMetrics"][0]["hour"], 9);
+    assert_eq!(body["hourlyReports"].as_array().unwrap().len(), 1);
+    assert_eq!(body["hourlyReports"][0]["reportKind"], "1h");
+    assert_eq!(body["hourlyReports"][0]["summaryText"], "09点小时报告。");
     assert_eq!(body["fiveHourReports"].as_array().unwrap().len(), 2);
     assert_eq!(body["fiveHourReports"][0]["summaryText"], "上午报告。");
 
@@ -1172,6 +1183,13 @@ async fn serves_daily_brief_response_with_stats_and_same_day_reports() {
 async fn serves_notion_daily_archive_with_human_readable_markdown() {
     let mut store = Store::open_memory().unwrap();
     store.init().unwrap();
+    store
+        .insert_insight_report(&sample_hourly_report(
+            "2026-05-24T09:00:00Z",
+            "2026-05-24T10:00:00Z",
+            "09点小时报告。",
+        ))
+        .unwrap();
     let first_report_id = store
         .insert_insight_report(&sample_insight_report(
             0,
@@ -1211,10 +1229,14 @@ async fn serves_notion_daily_archive_with_human_readable_markdown() {
     assert_eq!(body["date"], "2026-05-24");
     assert_eq!(body["dailyDiaryTitle"], "INDEX-20260524 | Daily Diary");
     assert_eq!(body["source"]["endpoint"], "/api/notion/daily-archive");
+    assert_eq!(body["hourlyReports"].as_array().unwrap().len(), 1);
     assert_eq!(body["fiveHourReports"].as_array().unwrap().len(), 2);
     assert_eq!(body["descriptiveStats"]["activeSeconds"], 3600);
     let markdown = body["archiveMarkdown"].as_str().unwrap();
     assert!(markdown.contains("## Daily Summary"));
+    assert!(markdown.contains("## Hourly Reports"));
+    assert!(markdown.contains("09点小时报告。"));
+    assert!(markdown.contains("## Scheduled 5h Reports"));
     assert!(markdown.contains("## Parallel Projects And Time Allocation"));
     assert!(markdown.contains("Time State Recorder"));
     assert!(markdown.contains("上午报告。"));
@@ -1335,6 +1357,26 @@ fn sample_insight_report(id: i64, start: &str, end: &str, summary: &str) -> Insi
         }],
         project_hints: vec!["Time State Recorder".into()],
         evidence_count: 1,
+        error: None,
+    }
+}
+
+fn sample_hourly_report(start: &str, end: &str, summary: &str) -> InsightReport {
+    InsightReport {
+        id: 0,
+        period_start: ts(start),
+        period_end: ts(end),
+        generated_at: ts(end),
+        report_kind: "1h".into(),
+        model_provider: "local_insight".into(),
+        model_name: "trajectory-v1".into(),
+        summary_text: summary.into(),
+        category_mix: vec![ActivityCategoryCount {
+            activity_category: ActivityCategory::Coding,
+            count: 12,
+        }],
+        project_hints: vec!["Time State Recorder".into()],
+        evidence_count: 12,
         error: None,
     }
 }
