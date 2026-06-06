@@ -1,150 +1,99 @@
-# Time State Recorder MVP
+# Time State Recorder
 
-Time State Recorder is a local-first, Windows-first project for understanding how time is spent on a computer. It records local activity signals, stores them in SQLite, derives rollups, and presents summaries in a React WebUI without sending private activity data to a cloud service.
+Time State Recorder is a local-first Windows workday memory layer. It captures desktop activity signals, turns them into a reviewable time flow, and produces evidence-backed daily summaries that can be archived into a personal knowledge system.
 
-The current repository contains a Rust/SQLite Windows collector, a local JSON API, a blocker/filter engine, periodic screenshot thumbnails, Raw Input keyboard capture with text segment reconstruction, and a React/TypeScript WebUI for statistics and daily timeline views.
+It is not a timer, employee-monitoring tool, or generic productivity scorecard. It is designed for a single user who wants to reconstruct what happened during a workday: which projects appeared, when focus shifted, what evidence exists, and what can be safely summarized for later reflection.
 
-## Current MVP Scope
+## Product Pitch
 
-The MVP answers three practical questions:
+Knowledge work disappears into tabs, chats, editors, documents, and meetings. By the end of the day, the user often knows they were busy but cannot reliably reconstruct the work path.
 
-1. Which applications and windows were active, for how long, and with what descriptive statistics?
-2. What did the screen look like minute-by-minute throughout the day?
-3. What keyboard activity and reconstructed text segments were captured by the local collector?
+Time State Recorder creates a private, local record of that path. It observes active windows, input activity, screenshots, visual summaries, and lifecycle events, then organizes them into a Today view, 5-hour reports, a Daily Brief, and a Notion-ready archive payload.
 
-Included:
+The result is a personal operating log: enough evidence to review the day, restore context, and write a useful diary entry without manually tracking every task.
 
-- **Feature 1** - Active window/process monitoring via polling `GetForegroundWindow`.
-- **Feature 2** - Keyboard input capture via the Raw Input API with text segment reconstruction.
-- **Feature 3** - Periodic screenshot thumbnails with idle detection and file-system storage.
-- **Blocker system** - JSON-configurable app/window/title blocklist used before screenshot capture.
-- Local SQLite storage for raw events, window events, screenshots, input events, text segments, and blocker hits.
-- Local REST JSON endpoints served by `tsr-collector`.
-- Static screenshot file serving from `/screenshots/`.
-- React WebUI views for time statistics, input activity, collector health, and daily screenshot tracking.
-- Built-in sample data fallback when the collector is offline.
+See [docs/product-pitch.md](docs/product-pitch.md) for a reusable pitch, demo script, and positioning notes.
 
-Not included yet:
+## What It Does
 
-- `SetWinEventHook` event-driven foreground-window collection.
-- Tray app or installed Windows service.
-- WH_GETMESSAGE hook for IME/composed Chinese or Japanese text capture.
-- OCR or high-resolution screenshot archival.
-- Cloud sync or multi-device support.
+- Captures active Windows process/window focus and turns raw changes into time intervals.
+- Captures keyboard input activity and reconstructs local text segments where Raw Input can observe them.
+- Captures periodic screenshot thumbnails and high-resolution screenshot evidence when the user is active.
+- Applies configurable blocker rules before screenshot capture.
+- Stores raw activity facts in local SQLite and screenshot files on the local filesystem.
+- Exposes a local REST API on `127.0.0.1:4317`.
+- Serves a React WebUI on `127.0.0.1:5173`.
+- Presents a Today Flow Board, timeline, activity review, screenshot evidence, collector health, and input activity views.
+- Generates 5-hour insight reports and a Daily Brief from local activity metrics and optional model-backed analysis.
+- Exposes `/api/notion/daily-archive` so Notion Principles OS can archive a selected day's summary without parsing the UI.
+- Provides a repo-local smoke command that writes a sample Notion archive JSON artifact for other agents.
 
-## Feature Definitions
+## Privacy Model
 
-### Feature 1: Window Activity
+The default product boundary is local capture and local storage:
 
-The collector polls `GetForegroundWindow` at a configurable interval, defaulting to 1000ms. It writes `window_focus` events containing timestamp, process name, PID, window title or redacted title, executable hash, and capture status.
+- Activity data is stored in SQLite under `data/`.
+- Screenshot files are stored under `data/screenshots/` and `data/high-res-screenshots/`.
+- The WebUI talks to the local collector through same-origin/proxied local routes.
+- Screenshot retention is treated as a temporary local cache, currently 30 days by default.
+- Blocker rules live in `collector/blocker_config.json` and are checked before screenshot capture.
 
-The WebUI turns raw focus changes into active intervals and computes count, mean, median, standard deviation, min, max, quartiles, total duration, and per-application summaries.
+Optional AI analysis can send selected screenshots or structured summaries to a configured model provider. Notion integration is intentionally read-only from this repo: Time State Recorder exposes local JSON/Markdown payloads, while the separate Notion Principles OS tooling performs Notion writes and verification.
 
-### Feature 2: Input Activity
+## Current Capabilities
 
-The input collector registers a Raw Input keyboard device (`RIDEV_INPUTSINK`) on a dedicated message-only window thread. It receives `WM_INPUT` messages system-wide, maps virtual-key codes to characters via `ToUnicodeEx` using the foreground window keyboard layout, and buffers keydown/keyup events into text segments.
+| Area | Status |
+| --- | --- |
+| Window activity | Active foreground-window polling through Windows APIs |
+| Lifecycle events | Session start/stop, lock/unlock, service stop, stale-session handling |
+| Input activity | Raw Input keyboard events, text segment reconstruction, input summaries |
+| Screenshot evidence | Thumbnail and high-resolution screenshot metadata, local file serving |
+| Privacy controls | Blocker rules, raw/redacted UI modes, same-origin local access |
+| Daily review | Today Flow Board, timeline, activity buckets, evidence drawer |
+| Visual analysis | Optional screenshot/window summaries and structured visual labels |
+| 5-hour reports | Project-oriented work trajectory summaries |
+| Daily Brief | Daily stats, hourly metrics, comparison, and action trajectory |
+| Notion archive | Read-only daily archive API plus smoke artifact for downstream agents |
+| Packaging | Windows x64 release ZIP with collector, WebUI, scripts, and README |
 
-A segment is flushed when Enter (`VK_RETURN`) is pressed or after a 30-second idle timeout.
+## Quick Start
 
-Each segment records:
-
-- `textContent` - accumulated printable characters with backspace/delete tracking.
-- `keyCount`, `backspaceCount`, `deleteCount` - edit statistics.
-- `startedAt` and `endedAt` - segment time boundaries.
-- Foreground window metadata at capture time.
-
-Known limitation: Raw Input alone cannot capture composed IME characters. Feature 2B should add a WH_GETMESSAGE hook DLL for pre-edit/composed text.
-
-### Feature 3: Screenshot Tracking
-
-The screenshot collector captures a thumbnail of the primary monitor every 60 seconds, but only when the user is active. Activity is detected with `GetLastInputInfo`; screenshots are skipped after 2 minutes of idle time.
-
-Each capture is:
-
-- Resized to max 640px width while preserving aspect ratio.
-- Encoded as JPEG and stored under `data/screenshots/YYYY-MM-DD/HH-MM.jpg`.
-- Stored in SQLite with timestamp, dimensions, foreground app/window, and capture status.
-- Checked against blocker rules before capture.
-
-The Daily Tracking view shows the day's screenshots grouped by hour, with app/title context and per-app screenshot counts.
-
-## Blocker System
-
-The blocker engine provides a privacy-aware filter before screenshot capture. Future text redaction and hook-based capture should reuse the same rule model.
-
-Rules live in `collector/blocker_config.json`:
-
-```json
-{
-  "version": 1,
-  "rules": [
-    { "capture_type": "screenshot", "field": "process_name", "operator": "equals", "value": "Taskmgr.exe" },
-    { "capture_type": "screenshot", "field": "window_title", "operator": "contains", "value": "Banking" }
-  ]
-}
-```
-
-Supported fields: `process_name`, `window_title`, `exe_path_hash`.
-
-Supported operators: `equals`, `contains`, `starts_with`.
-
-Blocked attempts are logged to `blocker_hits` and exposed through `GET /api/blockers`.
-
-## Architecture
-
-1. The Windows collector starts with `cargo run -p tsr-collector -- serve` or `npm run collector`.
-2. The collector samples foreground-window state, captures keyboard input, and periodically captures screenshots.
-3. SQLite stores `raw_events`, `window_events`, `screenshot_thumbnails`, `input_events`, `text_segments`, and `blocker_hits`.
-4. The local REST API exposes raw focus events, interval-shaped time events, input events, text segments, summaries, screenshots, blocker hits, and collector health.
-5. Screenshot files are served as static files under `/screenshots/`.
-6. The WebUI fetches local API data and renders statistics, collector status, input activity, and screenshot timelines.
-
-The collector intentionally starts with polling because it is easy to verify and keeps the WebUI contract stable. A future collector can add `SetWinEventHook` without changing the API shape.
-
-## Windows Toolchain
-
-The repository is configured for `x86_64-pc-windows-gnullvm` in `.cargo/config.toml` and `rust-toolchain.toml`. This avoids a Visual Studio / Windows SDK requirement, but it requires LLVM-MinGW MSVCRT tools on `PATH`.
-
-Install the required local toolchain:
+For day-to-day use on Windows, build or download a release package, then run:
 
 ```powershell
-winget install --id MartinStorsjo.LLVM-MinGW.MSVCRT --exact --accept-source-agreements --accept-package-agreements
-npm install
+.\scripts\start-user.ps1
 ```
 
-If the current shell cannot find `cargo` or `x86_64-w64-mingw32-clang`, refresh `PATH`:
-
-```powershell
-$mingwBin = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\MartinStorsjo.LLVM-MinGW.MSVCRT_Microsoft.Winget.Source_8wekyb3d8bbwe" -Recurse -Filter x86_64-w64-mingw32-clang.exe | Select-Object -First 1 -ExpandProperty DirectoryName
-$env:PATH = "$mingwBin;$env:USERPROFILE\.cargo\bin;$env:PATH"
-```
-
-Common build failures:
-
-- `kernel32.lib` or other `.lib` files missing: the build is using an MSVC target. Use the configured `x86_64-pc-windows-gnullvm` target.
-- `x86_64-w64-mingw32-clang` not found: install LLVM-MinGW MSVCRT and refresh `PATH`.
-- Missing `target/.../tsr-collector.exe`: rebuild with `cargo build -p tsr-collector`; `cargo clean` removes the debug executable.
-
-## One-Click Windows Start
-
-For day-to-day use, double-click:
+Or double-click:
 
 - `Start Time State Recorder.bat`
 
-The launcher starts the collector on `127.0.0.1:4317`, serves the built WebUI on `127.0.0.1:5173`, waits until both are ready, then opens the browser. If the collector binary or WebUI build is missing, it attempts to build them first. Runtime logs are written under `logs/`.
+The launcher starts:
 
-To stop the app processes, double-click:
+- Collector API: `http://127.0.0.1:4317`
+- WebUI: `http://127.0.0.1:5173`
+
+Stop it with:
+
+```powershell
+.\scripts\stop-user.ps1
+```
+
+Or double-click:
 
 - `Stop Time State Recorder.bat`
 
-The launcher uses a lightweight Node static server (`scripts/web-server.mjs`) for the WebUI and proxies `/api` and `/screenshots` to the collector. It does not use the Vite dev server for the user-facing start path.
+## Manual Development Run
 
-## Manual Local Run
+Install dependencies:
+
+```powershell
+npm install
+```
 
 Start the collector API:
 
 ```powershell
-cargo build -p tsr-collector
 cargo run -p tsr-collector -- serve --db data/local.sqlite3 --addr 127.0.0.1:4317
 ```
 
@@ -160,98 +109,138 @@ Open:
 - WebUI: `http://127.0.0.1:5173`
 - Collector health: `http://127.0.0.1:4317/api/health`
 
-## API Endpoints
+## Notion Daily Archive Smoke Test
 
-| Method | Path | Query Params | Description |
-| --- | --- | --- | --- |
-| `GET` | `/api/health` | None | Collector health, subsystem states, uptime, and DB row counts |
-| `GET` | `/api/window-events` | `?limit=N` | Raw joined window-focus events |
-| `GET` | `/api/time-events` | `?limit=N` | Interval-shaped time events for statistics |
-| `GET` | `/api/blockers` | `?limit=N` | Blocker rules and recent hits |
-| `GET` | `/api/screenshots` | `?date=YYYY-MM-DD&limit=N` | Screenshot metadata for a given date |
-| `GET` | `/api/screenshot-summary` | `?date=YYYY-MM-DD` | Aggregated screenshot stats |
-| `GET` | `/api/input-events` | `?limit=N&segmentId=S` | Raw keyboard input events |
-| `GET` | `/api/input-summary` | `?date=YYYY-MM-DD` | Aggregated input stats |
-| `GET` | `/api/text-segments` | `?date=YYYY-MM-DD&limit=N` | Text segments with content and edit stats |
+Run this before changing the Notion Principles OS archive job:
 
-Static files: `/screenshots/YYYY-MM-DD/HH-MM.jpg` serves captured thumbnail images.
+```powershell
+npm run smoke:notion-daily-archive
+```
+
+The command starts an in-memory collector API with sample data, calls `/api/notion/daily-archive`, asserts the required Markdown sections and same-day 5-hour report filtering, and writes:
+
+```text
+reports/notion-daily-archive-smoke.json
+```
+
+That artifact is a contract fixture other agents can consume when wiring the Notion Daily Diary append and verification flow.
+
+## Architecture
+
+```text
+Windows signals
+  -> Rust collector
+  -> SQLite + local screenshot files
+  -> local REST API
+  -> React WebUI
+  -> optional daily archive payloads for Notion Principles OS
+```
+
+The collector owns capture, storage, aggregation, and local API contracts. The WebUI owns review and interaction. External systems, such as Notion Principles OS, consume read-only payloads and perform their own write/readback verification outside this repo.
+
+Core components:
+
+- `collector/src/api.rs` - Axum routes and response builders.
+- `collector/src/storage.rs` - SQLite schema and query/aggregation methods.
+- `collector/src/insights.rs` - local and MiniMax-backed insight/report generation.
+- `collector/src/visual_analysis.rs` - screenshot visual analysis providers.
+- `collector/src/input.rs` - Raw Input capture and text segments.
+- `src/` - React/TypeScript WebUI.
+- `docs/api/` - API contracts and downstream integration notes.
+- `scripts/start-user.ps1` and `scripts/stop-user.ps1` - local runtime entrypoints.
+
+## API Surface
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/health` | Collector health, subsystem status, DB stats, retention state |
+| `GET` | `/api/window-events` | Raw joined foreground-window events |
+| `GET` | `/api/lifecycle-events` | Session, lock/unlock, service lifecycle events |
+| `GET` | `/api/time-events` | Interval-shaped activity and lifecycle rows |
+| `GET` | `/api/activity-buckets` | Date-scoped activity buckets for review |
+| `GET` | `/api/blockers` | Blocker config and recent blocked capture attempts |
+| `GET` | `/api/screenshots` | Thumbnail screenshot metadata by date |
+| `GET` | `/api/high-res-screenshots` | High-resolution screenshot metadata by date |
+| `GET` | `/api/screenshot-summary` | Screenshot coverage and app counts |
+| `GET` | `/api/visual-summaries` | Per-screenshot visual summaries |
+| `GET` | `/api/visual-observations` | High-resolution visual observations |
+| `GET` | `/api/visual-window-summaries` | Structured 5-minute window summaries |
+| `GET` | `/api/insight-reports` | 5-hour reports and related report records |
+| `GET` | `/api/daily-brief` | Daily stats, hourly metrics, reports, and action trajectory |
+| `GET` | `/api/notion/daily-archive` | Notion-ready daily archive JSON and Markdown |
+| `POST` | `/api/daily-brief/generate` | Generate or refresh a daily brief |
+| `POST` | `/api/screenshots/{id}/analyze` | Analyze one screenshot |
+| `GET` | `/api/input-events` | Raw keyboard input events |
+| `GET` | `/api/input-summary` | Aggregated input activity by date |
+| `GET` | `/api/text-segments` | Reconstructed text segments |
+| `POST` | `/api/shutdown` | Graceful collector shutdown |
+
+Static evidence routes:
+
+- `/screenshots/...`
+- `/high-res-screenshots/...`
 
 ## WebUI Views
 
-- **Statistics** - Descriptive stats grid, application time chart, collector health, and event rows table.
-- **Input Activity** - Input summary cards, per-app character chart, and expandable text segments.
-- **Daily Tracking** - Screenshot summary bar and timeline grouped by hour.
+- **Today Flow Board** - Overview-first daily flow with evidence drawers and raw/redacted modes.
+- **Dashboard** - Summary statistics and current collector status.
+- **Timeline** - Time intervals and lifecycle-aware activity rows.
+- **Activity Review** - Activity buckets and reviewable work segments.
+- **Daily Tracking** - Screenshot coverage and day-level evidence.
+- **Input Activity** - Keyboard/input summaries and text segments when raw mode is enabled.
+- **Review Notes / Daily Brief** - Model-backed or computed summaries for the selected date.
 
-The WebUI supports switching between built-in sample data and live collector data.
+## Toolchain
 
-## Data Model Notes
+The repository targets `x86_64-pc-windows-gnullvm` through `.cargo/config.toml` and `rust-toolchain.toml`. This avoids a Visual Studio build dependency but requires LLVM-MinGW MSVCRT tools.
 
-Input events use this JSON shape:
+Install the local toolchain:
 
-```json
-{
-  "id": 1,
-  "eventTs": "2026-05-23T09:00:01Z",
-  "eventType": "keydown",
-  "vkCode": 70,
-  "scanCode": 33,
-  "character": "f",
-  "segmentId": "segment-uuid",
-  "foregroundHwnd": 1111,
-  "foregroundPid": 100,
-  "processName": "Code",
-  "windowTitle": "main.rs"
-}
+```powershell
+winget install --id MartinStorsjo.LLVM-MinGW.MSVCRT --exact --accept-source-agreements --accept-package-agreements
+npm install
 ```
 
-`eventType` is serialized as `keydown` or `keyup`, matching the SQLite values and the TypeScript client contract.
+If the shell cannot find Cargo or the MinGW compiler, refresh `PATH`:
 
-Text segments use `textContent`, `keyCount`, `backspaceCount`, `deleteCount`, `startedAt`, `endedAt`, and foreground window metadata. `totalChars` in `/api/input-summary` is the SQLite `LENGTH(text_content)` total for matching segments.
-
-Derived analysis objects should not mutate normalized event rows. SQLite preserves raw collector payloads and the WebUI receives normalized JSON from the local API.
+```powershell
+$mingwBin = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\MartinStorsjo.LLVM-MinGW.MSVCRT_Microsoft.Winget.Source_8wekyb3d8bbwe" -Recurse -Filter x86_64-w64-mingw32-clang.exe | Select-Object -First 1 -ExpandProperty DirectoryName
+$env:PATH = "$mingwBin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+```
 
 ## Verification
 
-Run these before review or push:
+Run these before review, packaging, or release:
 
 ```powershell
 cargo fmt --all
-cargo test -p tsr-collector -- --nocapture
-cargo build -p tsr-collector
-npm test -- --run
+cargo test -p tsr-collector
+npm test
+npm run smoke:notion-daily-archive
 npm run build
+cargo build -p tsr-collector --release
 ```
 
-Manual checklist:
+Package a Windows release ZIP:
 
-- `sample-once` returns current foreground process/window JSON.
-- `serve` exposes `/api/health`, `/api/time-events`, `/api/blockers`, `/api/screenshots`, `/api/screenshot-summary`, `/api/input-events`, `/api/input-summary`, and `/api/text-segments`.
-- `/api/health` returns full `CollectorHealth` JSON with uptime, subsystem states, and DB row counts.
-- WebUI CollectorMonitor shows offline state when the collector is unreachable and live status when it is running.
-- Screenshot capture writes JPEG files under `data/screenshots/YYYY-MM-DD/HH-MM.jpg` when active.
-- Screenshots are skipped after the idle threshold.
-- Blocked apps/windows are not captured and are logged in `blocker_hits`.
-- WebUI loads collector data and falls back to sample datasets when offline.
-- Empty API responses, malformed JSON payloads, missing fields, and invalid timestamps do not crash the UI.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\package-release.ps1 -Version 1.4.0
+```
 
-## Non-Goals and Risks
+## Non-Goals
 
-Non-goals for this MVP:
+- No employee monitoring or team surveillance workflow.
+- No automatic productivity scoring.
+- No direct Notion writes from the collector.
+- No cloud sync or multi-device account model.
+- No installed Windows service or tray app yet.
+- No full IME/composed Chinese or Japanese text capture yet.
+- No guarantee that every off-screen, offline, or permission-denied activity is observed.
 
-- No installed Windows service or tray app.
-- No event-driven `SetWinEventHook` collector yet.
-- No WH_GETMESSAGE hook for IME/composed character capture yet.
-- No OCR or high-resolution screenshot archival.
-- No productivity classification, AI labeling, or automatic task inference.
-- No cloud sync or multi-device support.
+## Documentation
 
-Risks:
-
-- Sample fallback data can hide edge cases from live Windows collection, such as permission-denied windows, lock screen gaps, title changes, and rapid focus switches.
-- API response fields may drift unless collector models, WebUI validation, and documentation stay aligned.
-- Window titles, screenshots, and keyboard text content can contain private information. The blocker system is config-based and not automatic.
-- Keyboard text capture stores plaintext segments on disk; encryption and automatic redaction are future concerns.
-- Screenshots are stored as JPEG files on disk with no encryption; access control relies on local filesystem permissions.
-- Local browser access must stay same-origin or proxied; permissive CORS would expose private activity data to arbitrary websites.
-- Statistics are only as reliable as interval construction. Future recorder work must define how focus events become intervals.
-- `GetLastInputInfo` only reports input for the current user session and can be fooled by continuous-input devices.
+- [Product pitch](docs/product-pitch.md)
+- [Notion Daily Archive API](docs/api/notion-daily-archive.md)
+- [Next query API design](docs/api/next-query-api.md)
+- [Windows collector runbook](docs/runbooks/windows-collector.md)
+- [Dayflow engineering knowledge](docs/dayflow-engineering-knowledge/00-index.md)
