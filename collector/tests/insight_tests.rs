@@ -3,6 +3,7 @@ use tsr_collector::{
     insights::{
         LocalDailyBriefReporter, MiniMaxDailyBriefReporter, MiniMaxInsightConfig,
         MiniMaxInsightReporter, build_five_hour_report,
+        build_hourly_report_from_window_summaries,
         build_five_hour_report_from_window_summaries, observation_from_visual_summary,
         select_insight_report_provider,
     },
@@ -374,6 +375,37 @@ fn builds_five_hour_report_from_visual_window_summaries() {
     );
     assert!(report.summary_text.contains("窗口摘要"));
     assert!(report.summary_text.contains("继续调试 MiniMax 三图请求"));
+}
+
+#[test]
+fn builds_hourly_report_from_visual_window_summaries() {
+    let windows = vec![
+        sample_window_summary(
+            1,
+            "2026-06-07T02:00:00Z",
+            "2026-06-07T02:05:00Z",
+            vec![1, 3, 5],
+            "整点后开始整理前端计划。",
+        ),
+        sample_window_summary(
+            2,
+            "2026-06-07T02:55:00Z",
+            "2026-06-07T03:00:00Z",
+            vec![6, 8, 10],
+            "完成后端报告 cadence 设计。",
+        ),
+    ];
+
+    let report = build_hourly_report_from_window_summaries(
+        ts("2026-06-07T02:00:00Z"),
+        ts("2026-06-07T03:00:00Z"),
+        &windows,
+    );
+
+    assert_eq!(report.report_kind, "1h");
+    assert_eq!(report.evidence_count, 2);
+    assert!(report.summary_text.contains("1 小时"));
+    assert!(report.summary_text.contains("完成后端报告 cadence 设计"));
 }
 
 #[test]

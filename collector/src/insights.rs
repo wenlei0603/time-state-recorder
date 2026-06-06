@@ -69,16 +69,33 @@ pub fn build_five_hour_report_from_window_summaries(
     period_end: DateTime<Utc>,
     window_summaries: &[VisualWindowSummary],
 ) -> InsightReport {
+    build_report_from_window_summaries("5h", period_start, period_end, window_summaries)
+}
+
+pub fn build_hourly_report_from_window_summaries(
+    period_start: DateTime<Utc>,
+    period_end: DateTime<Utc>,
+    window_summaries: &[VisualWindowSummary],
+) -> InsightReport {
+    build_report_from_window_summaries("1h", period_start, period_end, window_summaries)
+}
+
+pub fn build_report_from_window_summaries(
+    report_kind: &str,
+    period_start: DateTime<Utc>,
+    period_end: DateTime<Utc>,
+    window_summaries: &[VisualWindowSummary],
+) -> InsightReport {
     let category_mix = category_mix_from_window_summaries(window_summaries);
     let project_hints = top_project_hints_from_window_summaries(window_summaries);
-    let summary_text = window_report_summary_text(window_summaries, &category_mix);
+    let summary_text = window_report_summary_text(report_kind, window_summaries, &category_mix);
 
     InsightReport {
         id: 0,
         period_start,
         period_end,
         generated_at: Utc::now(),
-        report_kind: "5h".into(),
+        report_kind: report_kind.into(),
         model_provider: "local_insight".into(),
         model_name: LOCAL_REPORT_PROMPT_VERSION.into(),
         summary_text,
@@ -206,11 +223,17 @@ fn report_summary_text(
 }
 
 fn window_report_summary_text(
+    report_kind: &str,
     window_summaries: &[VisualWindowSummary],
     category_mix: &[ActivityCategoryCount],
 ) -> String {
+    let duration_label = match report_kind {
+        "1h" => "1 小时",
+        "5h" => "5 小时",
+        other => other,
+    };
     if window_summaries.is_empty() {
-        return "过去 5 小时内没有可用的 5 分钟窗口摘要，暂时无法推断工作轨迹。".into();
+        return format!("{duration_label}内没有可用的 5 分钟窗口摘要，暂时无法推断工作轨迹。");
     }
 
     let dominant = category_mix
@@ -227,7 +250,7 @@ fn window_report_summary_text(
         .unwrap_or("");
 
     format!(
-        "过去 5 小时内共分析 {} 条 5 分钟窗口摘要，主要活动类型是 {}。起点：{}。最近状态：{}。",
+        "{duration_label}内共分析 {} 条 5 分钟窗口摘要，主要活动类型是 {}。起点：{}。最近状态：{}。",
         window_summaries.len(),
         dominant,
         first,
