@@ -679,14 +679,19 @@ td:nth-child(2) {
 
 .tabBar {
   display: flex;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   gap: 4px;
   margin-bottom: 20px;
   border-bottom: 2px solid #d9dfd8;
+  overflow-x: auto;
   padding-bottom: 0;
 }
 
 .tab {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
   border: none;
@@ -891,6 +896,75 @@ td:nth-child(2) {
   font-weight: 600;
 }
 
+.todayStatusCard {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: min(320px, 100%);
+  border: 1px solid #e2e6e1;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px 12px;
+}
+
+.todayStatusCard svg {
+  color: #356b63;
+}
+
+.todayStatusCard div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.todayStatusCard strong,
+.todayStatusCard span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todayStatusCard span {
+  color: #5f6d65;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.todayGlance,
+.todayFocusPanel,
+.todayCoveragePanel {
+  border: 1px solid #d9dfd8;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 12px 28px rgba(23, 33, 27, 0.06);
+  padding: 18px;
+}
+
+.todayGlance {
+  display: grid;
+  gap: 14px;
+  min-height: 220px;
+}
+
+.todayGlance .panelHeader,
+.todayFocusPanel .panelHeader,
+.todayCoveragePanel .panelHeader,
+.readableTimeline .panelHeader {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.todayNarrative {
+  max-width: 72ch;
+  margin: 0;
+  color: #29352e;
+  font-size: 0.98rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
 .flowSummary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -905,8 +979,8 @@ td:nth-child(2) {
   border: 1px solid #d9dfd8;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 12px 28px rgba(23, 33, 27, 0.06);
   padding: 14px;
+  min-width: 0;
 }
 
 .flowMetric > span:not(.metricIcon),
@@ -925,6 +999,8 @@ td:nth-child(2) {
 .flowMetric strong {
   color: #17211b;
   font-size: 1.24rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .flowMetric small,
@@ -932,9 +1008,98 @@ td:nth-child(2) {
   line-height: 1.35;
 }
 
+.todayReadingGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.todayFocusPanel,
+.todayCoveragePanel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  min-height: 190px;
+}
+
+.todayFocusBody {
+  display: grid;
+  grid-template-rows: auto auto minmax(3.2em, auto) auto;
+  min-width: 0;
+  gap: 8px;
+}
+
+.todayFocusTime {
+  color: #5f6d65;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.todayFocusBody strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #17211b;
+  font-size: 1.08rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todayFocusBody p {
+  margin: 0;
+  color: #29352e;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.todayFocusMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.todayFocusMeta > span:not(.confidencePill) {
+  color: #5f6d65;
+  font-weight: 800;
+}
+
+.todayCoverageGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.todayCoverageGrid span {
+  display: grid;
+  min-width: 0;
+  min-height: 96px;
+  align-content: center;
+  gap: 4px;
+  border: 1px solid #e2e6e1;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.todayCoverageGrid strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #17211b;
+  font-size: 1.1rem;
+}
+
+.todayCoverageGrid small {
+  color: #5f6d65;
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
 .flowBoardGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -950,12 +1115,13 @@ td:nth-child(2) {
 
 .flowLane {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 10px;
 }
 
 .flowBucket {
   display: grid;
+  grid-template-rows: auto auto minmax(1.4em, auto) auto;
   min-height: 118px;
   align-content: start;
   justify-content: stretch;
@@ -991,16 +1157,37 @@ td:nth-child(2) {
   white-space: nowrap;
 }
 
-.flowBucketTime {
+.flowBucket .flowBucketTime {
   color: #5f6d65;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.76rem;
   font-weight: 800;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.readableTimeline {
+  display: grid;
+  gap: 12px;
+}
+
+.readableTimeline .panelHeader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.readableTimeline .panelHeader span {
+  color: #5f6d65;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .evidenceDrawer {
   display: grid;
   gap: 12px;
+  min-height: 180px;
 }
 
 .evidenceFacts {
@@ -1050,7 +1237,9 @@ td:nth-child(2) {
 
 .todayScreenshotCard {
   display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 8px;
+  min-height: 280px;
   margin: 0;
   border: 1px solid #e2e6e1;
   border-radius: 8px;
@@ -1218,6 +1407,11 @@ td:nth-child(2) {
   display: grid;
   grid-template-columns: repeat(24, minmax(18px, 1fr));
   gap: 4px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 4px;
 }
 
 .heatCell {
@@ -2273,6 +2467,7 @@ td:nth-child(2) {
 
   .flowBoardHeader,
   .flowBoardGrid,
+  .todayReadingGrid,
   .aiInsightHeader,
   .aiInsightGrid {
     grid-template-columns: 1fr;
@@ -2285,6 +2480,14 @@ td:nth-child(2) {
 
   .flowSummary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .todayCoverageGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .flowLane {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
 
   .aiInsightBlock {
@@ -2320,5 +2523,20 @@ td:nth-child(2) {
 
   .confidencePill {
     width: fit-content;
+  }
+}
+
+@media (max-width: 620px) {
+  .todayStatusCard {
+    width: 100%;
+  }
+
+  .flowSummary,
+  .todayCoverageGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .flowLane {
+    grid-template-columns: 1fr;
   }
 }

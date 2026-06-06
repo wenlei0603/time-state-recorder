@@ -1,6 +1,5 @@
 import {
   Activity,
-  AlertTriangle,
   Camera,
   Keyboard,
   Shield,
@@ -68,6 +67,21 @@ export function TodayFlowBoard({
     model.buckets.find((bucket) => bucket.id === selectedBucketId) ??
     model.buckets[0];
   const selectedEvidence = selectedBucket?.evidence ?? [];
+  const primaryApp = primaryAppLabel(model.evidence);
+  const reviewRange = reviewRangeLabel(model.evidence);
+  const selectedRange = selectedBucket
+    ? formatRange(selectedBucket.startedAt, selectedBucket.endedAt)
+    : "No selected window";
+  const selectedDuration = selectedBucket
+    ? formatDuration(selectedBucket.durationSeconds)
+    : "0s";
+  const coverageDetail = `${model.screenshotCount} captured / ${model.screenshotSkippedCount} skipped`;
+  const todaySummary =
+    model.buckets.length === 0
+      ? "No time events are available yet. The board is holding a stable review layout for the next collector update."
+      : `${formatDuration(model.activeSeconds)} of known work time across ${
+          model.buckets.length
+        } flow segments. Main focus is ${primaryApp}.`;
   const selectedScreenshots = selectedBucket
     ? selectScreenshotsForBucket(screenshots, selectedBucket)
     : [];
@@ -89,7 +103,7 @@ export function TodayFlowBoard({
             {sourceLabel} - {privacyMode === "raw" ? "Raw evidence" : "Redacted evidence"}
           </p>
         </div>
-        <div className="evidencePreview" aria-label="Privacy and collector health">
+        <div className="todayStatusCard" aria-label="Privacy and collector health">
           <Shield aria-hidden="true" size={18} />
           <div>
             <strong>{privacyMode === "raw" ? "Raw mode" : "Redacted mode"}</strong>
@@ -98,65 +112,123 @@ export function TodayFlowBoard({
         </div>
       </div>
 
-      <section className="flowSummary" aria-label="Flow summary metrics">
-        <FlowMetric
-          icon={<Timer aria-hidden="true" size={18} />}
-          label="Active"
-          value={formatDuration(model.activeSeconds)}
-          detail={`${model.buckets.length} flow buckets`}
-        />
-        <FlowMetric
-          icon={<AlertTriangle aria-hidden="true" size={18} />}
-          label="Uncertain"
-          value={formatDuration(model.uncertainSeconds)}
-          detail="gaps and partial evidence"
-        />
-        <FlowMetric
-          icon={<Camera aria-hidden="true" size={18} />}
-          label="Evidence"
-          value={evidenceTotal.toString()}
-          detail={`${model.screenshotCount} captured - ${model.screenshotSkippedCount} skipped`}
-        />
-        <FlowMetric
-          icon={<Keyboard aria-hidden="true" size={18} />}
-          label="Input"
-          value={model.inputChars.toLocaleString()}
-          detail="characters summarized"
-        />
+      <section
+        className="todayGlance"
+        aria-labelledby="today-at-a-glance-heading"
+      >
+        <div className="panelHeader">
+          <Sparkles aria-hidden="true" size={20} />
+          <h3 id="today-at-a-glance-heading">Today at a glance</h3>
+        </div>
+        <p className="todayNarrative">{todaySummary}</p>
+        <div className="flowSummary" aria-label="Flow summary metrics">
+          <FlowMetric
+            icon={<Timer aria-hidden="true" size={18} />}
+            label="Known work time"
+            value={formatDuration(model.activeSeconds)}
+            detail={reviewRange}
+          />
+          <FlowMetric
+            icon={<Activity aria-hidden="true" size={18} />}
+            label="Main focus"
+            value={primaryApp}
+            detail={`${model.buckets.length} readable segments`}
+          />
+          <FlowMetric
+            icon={<Camera aria-hidden="true" size={18} />}
+            label="Evidence coverage"
+            value={evidenceTotal.toString()}
+            detail={coverageDetail}
+          />
+          <FlowMetric
+            icon={<Keyboard aria-hidden="true" size={18} />}
+            label="Input captured"
+            value={model.inputChars.toLocaleString()}
+            detail="characters summarized"
+          />
+        </div>
       </section>
 
-      <div className="flowBoardGrid">
-        <section className="flowLanePanel" aria-label="Time flow">
+      <div className="todayReadingGrid">
+        <section className="todayFocusPanel" aria-label="Current focus">
           <div className="panelHeader">
             <Activity aria-hidden="true" size={20} />
-            <h3>Time flow</h3>
+            <h3>Current focus</h3>
           </div>
-          {model.buckets.length === 0 ? (
-            <p className="emptyState">No time events are available yet.</p>
-          ) : (
-            <div className="flowLane">
-              {model.buckets.map((bucket) => (
-                <button
-                  type="button"
-                  className={`flowBucket ${bucket.confidence} ${
-                    selectedBucket?.id === bucket.id ? "selected" : ""
-                  }`}
-                  key={bucket.id}
-                  aria-controls="today-flow-evidence-drawer"
-                  aria-label={`${bucket.app}, ${formatDuration(bucket.durationSeconds)}, ${bucket.title}`}
-                  aria-pressed={selectedBucket?.id === bucket.id}
-                  onClick={() => setSelectedBucketId(bucket.id)}
-                >
-                  <span className="flowBucketTime">{formatTime(bucket.startedAt)}</span>
-                  <strong>{bucket.app}</strong>
-                  <span>{bucket.title}</span>
-                  <small>{formatDuration(bucket.durationSeconds)}</small>
-                </button>
-              ))}
+          {selectedBucket ? (
+            <div className="todayFocusBody">
+              <span className="todayFocusTime">{selectedRange}</span>
+              <strong>{selectedBucket.app}</strong>
+              <p>{selectedBucket.title}</p>
+              <div className="todayFocusMeta">
+                <span>{selectedDuration}</span>
+                <span className={`confidencePill ${selectedBucket.confidence}`}>
+                  {confidenceLabel(selectedBucket.confidence)}
+                </span>
+              </div>
             </div>
+          ) : (
+            <p className="emptyState">No current focus segment is available.</p>
           )}
         </section>
 
+        <section className="todayCoveragePanel" aria-label="Evidence coverage">
+          <div className="panelHeader">
+            <Shield aria-hidden="true" size={20} />
+            <h3>Evidence coverage</h3>
+          </div>
+          <div className="todayCoverageGrid">
+            <span>
+              <strong>{model.screenshotCount}</strong>
+              <small>screenshots captured</small>
+            </span>
+            <span>
+              <strong>{model.screenshotSkippedCount}</strong>
+              <small>screenshots skipped</small>
+            </span>
+            <span>
+              <strong>{formatDuration(model.uncertainSeconds)}</strong>
+              <small>uncertain time</small>
+            </span>
+          </div>
+        </section>
+      </div>
+
+      <section className="flowLanePanel readableTimeline" aria-label="Readable timeline">
+        <div className="panelHeader">
+          <Activity aria-hidden="true" size={20} />
+          <h3>Readable timeline</h3>
+          <span>Time flow</span>
+        </div>
+        {model.buckets.length === 0 ? (
+          <p className="emptyState">No time events are available yet.</p>
+        ) : (
+          <div className="flowLane">
+            {model.buckets.map((bucket) => (
+              <button
+                type="button"
+                className={`flowBucket ${bucket.confidence} ${
+                  selectedBucket?.id === bucket.id ? "selected" : ""
+                }`}
+                key={bucket.id}
+                aria-controls="today-flow-evidence-drawer"
+                aria-label={`${bucket.app}, ${formatDuration(bucket.durationSeconds)}, ${bucket.title}`}
+                aria-pressed={selectedBucket?.id === bucket.id}
+                onClick={() => setSelectedBucketId(bucket.id)}
+              >
+                <span className="flowBucketTime">
+                  {formatRange(bucket.startedAt, bucket.endedAt)}
+                </span>
+                <strong>{bucket.app}</strong>
+                <span>{bucket.title}</span>
+                <small>{formatDuration(bucket.durationSeconds)}</small>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <div className="flowBoardGrid">
         <section className="evidenceDrawer" aria-label="Evidence drawer">
           <div className="panelHeader">
             <Shield aria-hidden="true" size={20} />
@@ -300,6 +372,47 @@ function EvidenceRow({ evidence }: { evidence: FlowEvidence }) {
   );
 }
 
+function primaryAppLabel(evidence: FlowEvidence[]): string {
+  const totals = new Map<string, number>();
+  for (const item of evidence) {
+    if (item.kind === "lifecycle") {
+      continue;
+    }
+    totals.set(item.app, (totals.get(item.app) ?? 0) + item.durationSeconds);
+  }
+
+  const [top] = [...totals.entries()].sort(
+    (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+  );
+  return top?.[0] ?? "No active app";
+}
+
+function reviewRangeLabel(evidence: FlowEvidence[]): string {
+  let rangeStart: Date | null = null;
+  let rangeEnd: Date | null = null;
+
+  for (const item of evidence) {
+    const startedAt = parseDate(item.startedAt);
+    const endedAt = parseDate(item.endedAt ?? item.startedAt);
+    if (!startedAt || !endedAt) {
+      continue;
+    }
+
+    if (!rangeStart || startedAt < rangeStart) {
+      rangeStart = startedAt;
+    }
+    if (!rangeEnd || endedAt > rangeEnd) {
+      rangeEnd = endedAt;
+    }
+  }
+
+  if (!rangeStart || !rangeEnd) {
+    return "No review window";
+  }
+
+  return formatRangeFromDates(rangeStart, rangeEnd);
+}
+
 function healthLabel(status: CollectorHealth["status"]): string {
   switch (status) {
     case "ok":
@@ -323,7 +436,21 @@ function confidenceLabel(confidence: FlowConfidence): string {
 }
 
 function formatRange(start: string, end?: string): string {
-  return `${formatTime(start)} - ${end ? formatTime(end) : "now"}`;
+  const startedAt = parseDate(start);
+  if (!startedAt) {
+    return "Invalid";
+  }
+
+  if (!end) {
+    return `${formatClock(startedAt)} - now`;
+  }
+
+  const endedAt = parseDate(end);
+  if (!endedAt) {
+    return `${formatClock(startedAt)} - Invalid`;
+  }
+
+  return formatRangeFromDates(startedAt, endedAt);
 }
 
 function overlapsBucket(
@@ -390,9 +517,46 @@ function bucketAnchorTime(bucket: { startedAt: string; endedAt?: string }): numb
 }
 
 function formatTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
+  const date = parseDate(value);
+  if (!date) {
     return "Invalid";
   }
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return formatClock(date);
+}
+
+function parseDate(value: string): Date | null {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatRangeFromDates(startedAt: Date, endedAt: Date): string {
+  const showDate =
+    endedAt < startedAt || !isSameLocalDate(startedAt, endedAt);
+  if (showDate) {
+    return `${formatShortDateTime(startedAt)} - ${formatShortDateTime(endedAt)}`;
+  }
+
+  return `${formatClock(startedAt)} - ${formatClock(endedAt)}`;
+}
+
+function formatShortDateTime(date: Date): string {
+  return `${pad2(date.getMonth() + 1)}/${pad2(date.getDate())} ${formatClock(
+    date,
+  )}`;
+}
+
+function formatClock(date: Date): string {
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+
+function isSameLocalDate(left: Date, right: Date): boolean {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
+}
+
+function pad2(value: number): string {
+  return value.toString().padStart(2, "0");
 }
