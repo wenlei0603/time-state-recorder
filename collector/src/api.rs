@@ -26,10 +26,11 @@ use crate::{
     insights::{ConfiguredDailyBriefReporter, ConfiguredInsightReporter, LocalDailyBriefReporter},
     interval::build_time_events_with_lifecycle,
     models::{
-        ActivityBucket, BlockerHit, CollectorHealth, DailyActivityStats, DailyBrief,
-        DailyComparison, DbStats, HighResScreenshotMeta, HourlyActivityMetric, InsightReport,
-        LifecycleEvent, LifecycleType, ScreenshotMeta, SubsystemHealth, TimeEvent,
-        VisualObservation, VisualSummary, VisualWindowSummary, WindowSnapshot,
+        ActivityBucket, ActivityCategoryCount, BlockerHit, CollectorHealth, DailyActivityStats,
+        DailyAppActivity, DailyBrief, DailyComparison, DbStats, HighResScreenshotMeta,
+        HourlyActivityMetric, InsightReport, LifecycleEvent, LifecycleType, ScreenshotMeta,
+        SubsystemHealth, TimeEvent, VisualObservation, VisualSummary, VisualWindowSummary,
+        WindowSnapshot,
     },
     screenshot,
     storage::Store,
@@ -150,6 +151,32 @@ struct DailyBriefResponse {
     descriptive_stats: DailyActivityStats,
     hourly_metrics: Vec<HourlyActivityMetric>,
     comparison: DailyComparison,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NotionDailyArchiveResponse {
+    date: String,
+    generated_at: DateTime<Utc>,
+    archive_title: String,
+    daily_diary_title: String,
+    source: NotionArchiveSource,
+    status: String,
+    archive_markdown: String,
+    brief: Option<DailyBrief>,
+    five_hour_reports: Vec<InsightReport>,
+    descriptive_stats: DailyActivityStats,
+    hourly_metrics: Vec<HourlyActivityMetric>,
+    comparison: DailyComparison,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NotionArchiveSource {
+    app: String,
+    endpoint: String,
+    local_date: String,
+    timezone: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -359,6 +386,7 @@ fn router_from_state(state: AppState) -> Router {
         .route("/api/visual-window-summaries", get(visual_window_summaries))
         .route("/api/insight-reports", get(insight_reports))
         .route("/api/daily-brief", get(daily_brief))
+        .route("/api/notion/daily-archive", get(notion_daily_archive))
         .route("/api/daily-brief/generate", post(generate_daily_brief))
         .route("/api/analysis-status", get(analysis_status))
         .route("/api/screenshots/{id}/analyze", post(analyze_screenshot))
@@ -1814,6 +1842,20 @@ async fn generate_daily_brief(
     }
 }
 
+async fn notion_daily_archive(
+    State(state): State<AppState>,
+    Query(query): Query<DateQuery>,
+) -> impl IntoResponse {
+    let date_window = match date_window_from_query(&query) {
+        Ok(date_window) => date_window,
+        Err(message) => return bad_request(&message),
+    };
+    match build_notion_daily_archive_response(&state, date_window) {
+        Ok(response) => Json(response).into_response(),
+        Err(err) => internal_error(err),
+    }
+}
+
 fn build_daily_brief_response(
     state: &AppState,
     date_window: DateWindow,
@@ -1864,6 +1906,230 @@ fn build_daily_brief_response(
         hourly_metrics,
         comparison,
     })
+}
+
+fn build_notion_daily_archive_response(
+    state: &AppState,
+    date_window: DateWindow,
+) -> Result<NotionDailyArchiveResponse> {
+    let response = build_daily_brief_response(state, date_window)?;
+    let daily_diary_title = daily_diary_title(&response.date);
+    let archive_title = format!("Time State Recorder Daily Archive | {}", response.date);
+    let archive_markdown = render_notion_archive_markdown(
+        &response.date,
+        &archive_title,
+        &daily_diary_title,
+        response.brief.as_ref(),
+        &response.five_hour_reports,
+        &response.descriptive_stats,
+        &response.hourly_metrics,
+        &response.comparison,
+    );
+
+    Ok(NotionDailyArchiveResponse {
+        date: response.date.clone(),
+        generated_at: Utc::now(),
+        archive_title,
+        daily_diary_title,
+        source: NotionArchiveSource {
+            app: "time-state-recorder".into(),
+            endpoint: "/api/notion/daily-archive".into(),
+            local_date: response.date.clone(),
+            timezone: "query-local-date".into(),
+        },
+        status: response.status,
+        archive_markdown,
+        brief: response.brief,
+        five_hour_reports: response.five_hour_reports,
+        descriptive_stats: response.descriptive_stats,
+        hourly_metrics: response.hourly_metrics,
+        comparison: response.comparison,
+    })
+}
+
+fn daily_diary_title(date: &str) -> String {
+    format!("INDEX-{} | Daily Diary", date.replace('-', ""))
+}
+
+fn render_notion_archive_markdown(
+    date: &str,
+    archive_title: &str,
+    daily_diary_title: &str,
+    brief: Option<&DailyBrief>,
+    reports: &[InsightReport],
+    stats: &DailyActivityStats,
+    hourly_metrics: &[HourlyActivityMetric],
+    comparison: &DailyComparison,
+) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!("# {archive_title}"));
+    lines.push(format!("Daily Diary: {daily_diary_title}"));
+    lines.push(format!("Source date: {date}"));
+    lines.push(String::new());
+    lines.push("## Daily Summary".into());
+    if let Some(brief) = brief {
+        lines.push(brief.daily_summary_text.clone());
+        lines.push(format!("Action trajectory: {}", brief.action_trajectory));
+    } else {
+        lines.push(
+            "No generated daily brief was found; this archive uses descriptive stats and 5-hour reports only."
+                .into(),
+        );
+    }
+    lines.push(String::new());
+    lines.push("## Descriptive Statistics".into());
+    lines.push(format!("- Active time: {:.2} hours", stats.active_hours));
+    lines.push(format!("- Window switches: {}", stats.switch_count));
+    lines.push(format!("- Distinct apps: {}", stats.distinct_app_count));
+    lines.push(format!(
+        "- Input: {} chars across {} events",
+        stats.input_chars, stats.input_events
+    ));
+    lines.push(format!(
+        "- Visual evidence: {} visual windows, {} high-res screenshots",
+        stats.visual_window_count, stats.high_res_screenshot_count
+    ));
+    lines.push(format!(
+        "- First activity: {}",
+        optional_time(stats.first_activity_at)
+    ));
+    lines.push(format!(
+        "- Last activity: {}",
+        optional_time(stats.last_activity_at)
+    ));
+    lines.push(format!("- Top apps: {}", top_apps_text(&stats.top_apps)));
+    lines.push(String::new());
+    lines.push("## Parallel Projects And Time Allocation".into());
+    lines.extend(project_lines_from_reports(reports));
+    lines.push(String::new());
+    lines.push("## Workflow Pattern".into());
+    lines.extend(hourly_lines(hourly_metrics));
+    lines.push(String::new());
+    lines.push("## Five-Hour Reports".into());
+    lines.extend(report_lines(reports));
+    lines.push(String::new());
+    lines.push("## Comparison".into());
+    lines.push(comparison.explanation.clone());
+    lines.push(format!(
+        "- Active time delta: {} seconds",
+        comparison.active_seconds_delta
+    ));
+    lines.push(format!(
+        "- Switches/hour delta: {:.2}",
+        comparison.switches_per_hour_delta
+    ));
+    lines.push(format!(
+        "- Input chars delta: {}",
+        comparison.input_chars_delta
+    ));
+    lines.push(String::new());
+    lines.push("## Uncertainty And Review Notes".into());
+    lines.push(
+        "- This archive is generated from local desktop activity records, screenshots, model summaries, and daily aggregation stats."
+            .into(),
+    );
+    lines.push(
+        "- It may miss off-screen work, offline activity, or model interpretation errors; keep diary-level review available."
+            .into(),
+    );
+    lines.join("\n")
+}
+
+fn optional_time(value: Option<DateTime<Utc>>) -> String {
+    value
+        .map(|time| time.to_rfc3339())
+        .unwrap_or_else(|| "unknown".into())
+}
+
+fn top_apps_text(apps: &[DailyAppActivity]) -> String {
+    if apps.is_empty() {
+        return "unknown".into();
+    }
+    apps.iter()
+        .take(5)
+        .map(|app| format!("{} {:.0}%", app.process_name, app.share * 100.0))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn project_lines_from_reports(reports: &[InsightReport]) -> Vec<String> {
+    if reports.is_empty() {
+        return vec!["- No 5-hour reports found for this date.".into()];
+    }
+    reports
+        .iter()
+        .map(|report| {
+            let projects = if report.project_hints.is_empty() {
+                "Unknown project".into()
+            } else {
+                report.project_hints.join(", ")
+            };
+            format!(
+                "- {} to {}: {} ({})",
+                report.period_start.to_rfc3339(),
+                report.period_end.to_rfc3339(),
+                projects,
+                category_mix_text(&report.category_mix)
+            )
+        })
+        .collect()
+}
+
+fn hourly_lines(metrics: &[HourlyActivityMetric]) -> Vec<String> {
+    let active = metrics
+        .iter()
+        .filter(|metric| metric.active_seconds > 0)
+        .collect::<Vec<_>>();
+    if active.is_empty() {
+        return vec!["- No active hourly metrics for this date.".into()];
+    }
+    active
+        .into_iter()
+        .map(|metric| {
+            format!(
+                "- {:02}:00: {:.1} active minutes, dominant app {}, category {}, reports {:?}",
+                metric.hour,
+                metric.active_seconds as f64 / 60.0,
+                metric.dominant_app.as_deref().unwrap_or("unknown"),
+                metric.dominant_category.as_str(),
+                metric.five_hour_report_ids
+            )
+        })
+        .collect()
+}
+
+fn report_lines(reports: &[InsightReport]) -> Vec<String> {
+    if reports.is_empty() {
+        return vec!["- No 5-hour reports available.".into()];
+    }
+    reports
+        .iter()
+        .map(|report| {
+            let projects = if report.project_hints.is_empty() {
+                "unknown".into()
+            } else {
+                report.project_hints.join(", ")
+            };
+            format!(
+                "- {} to {} | evidence {} | projects {} | {}",
+                report.period_start.to_rfc3339(),
+                report.period_end.to_rfc3339(),
+                report.evidence_count,
+                projects,
+                report.summary_text
+            )
+        })
+        .collect()
+}
+
+fn category_mix_text(mix: &[ActivityCategoryCount]) -> String {
+    if mix.is_empty() {
+        return "unknown category mix".into();
+    }
+    mix.iter()
+        .map(|item| format!("{}:{}", item.activity_category.as_str(), item.count))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 async fn analysis_status(State(state): State<AppState>) -> impl IntoResponse {

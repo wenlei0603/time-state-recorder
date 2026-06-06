@@ -1114,6 +1114,61 @@ async fn serves_daily_brief_response_with_stats_and_same_day_reports() {
 }
 
 #[tokio::test]
+async fn serves_notion_daily_archive_with_human_readable_markdown() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let first_report_id = store
+        .insert_insight_report(&sample_insight_report(
+            0,
+            "2026-05-24T05:00:00Z",
+            "2026-05-24T10:00:00Z",
+            "上午报告。",
+        ))
+        .unwrap();
+    let second_report_id = store
+        .insert_insight_report(&sample_insight_report(
+            0,
+            "2026-05-24T10:00:00Z",
+            "2026-05-24T15:00:00Z",
+            "下午报告。",
+        ))
+        .unwrap();
+    let mut brief = sample_daily_brief("2026-05-24");
+    brief.five_hour_report_ids = vec![first_report_id, second_report_id];
+    brief.hourly_metrics[0].five_hour_report_ids = vec![first_report_id];
+    store.insert_daily_brief(&brief).unwrap();
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!(
+        "http://{addr}/api/notion/daily-archive?date=2026-05-24&tzOffsetMinutes=-480"
+    ))
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["date"], "2026-05-24");
+    assert_eq!(body["dailyDiaryTitle"], "INDEX-20260524 | Daily Diary");
+    assert_eq!(body["source"]["endpoint"], "/api/notion/daily-archive");
+    assert_eq!(body["fiveHourReports"].as_array().unwrap().len(), 2);
+    assert_eq!(body["descriptiveStats"]["activeSeconds"], 3600);
+    let markdown = body["archiveMarkdown"].as_str().unwrap();
+    assert!(markdown.contains("## Daily Summary"));
+    assert!(markdown.contains("## Parallel Projects And Time Allocation"));
+    assert!(markdown.contains("Time State Recorder"));
+    assert!(markdown.contains("上午报告。"));
+    assert!(markdown.contains("编码窗口较前一日增加。"));
+
+    server.abort();
+}
+
+#[tokio::test]
 async fn serves_analysis_status_feedback() {
     let store = Store::open_memory().unwrap();
     store.init().unwrap();
