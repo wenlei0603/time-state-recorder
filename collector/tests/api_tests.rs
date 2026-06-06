@@ -1229,6 +1229,7 @@ async fn serves_notion_daily_archive_with_human_readable_markdown() {
     assert_eq!(body["date"], "2026-05-24");
     assert_eq!(body["dailyDiaryTitle"], "INDEX-20260524 | Daily Diary");
     assert_eq!(body["source"]["endpoint"], "/api/notion/daily-archive");
+    assert_eq!(body["source"]["timezone"], "Asia/Shanghai UTC+8");
     assert_eq!(body["hourlyReports"].as_array().unwrap().len(), 1);
     assert_eq!(body["fiveHourReports"].as_array().unwrap().len(), 2);
     assert_eq!(body["descriptiveStats"]["activeSeconds"], 3600);
@@ -1239,6 +1240,12 @@ async fn serves_notion_daily_archive_with_human_readable_markdown() {
     assert!(markdown.contains("## Scheduled 5h Reports"));
     assert!(markdown.contains("## Parallel Projects And Time Allocation"));
     assert!(markdown.contains("Time State Recorder"));
+    assert!(markdown.contains("13:00-18:00"));
+    assert!(markdown.contains("18:00-23:00"));
+    assert!(markdown.contains("First activity: 2026-05-24T13:00:00+08:00"));
+    assert!(!markdown.contains("2026-05-24T05:00:00Z"));
+    assert!(!markdown.contains("2026-05-24T10:00:00Z"));
+    assert!(!markdown.contains("+00:00"));
     assert!(markdown.contains("上午报告。"));
     assert!(markdown.contains("编码窗口较前一日增加。"));
 

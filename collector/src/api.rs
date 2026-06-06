@@ -32,6 +32,7 @@ use crate::{
         SubsystemHealth, TimeEvent, VisualObservation, VisualSummary, VisualWindowSummary,
         WindowSnapshot,
     },
+    prompt_time::{human_report_range, human_report_timestamp},
     screenshot,
     storage::Store,
     visual_analysis::{
@@ -2243,7 +2244,7 @@ fn build_notion_daily_archive_response(
             app: "time-state-recorder".into(),
             endpoint: "/api/notion/daily-archive".into(),
             local_date: response.date.clone(),
-            timezone: "query-local-date".into(),
+            timezone: "Asia/Shanghai UTC+8".into(),
         },
         status: response.status,
         archive_markdown,
@@ -2301,11 +2302,11 @@ fn render_notion_archive_markdown(
     ));
     lines.push(format!(
         "- First activity: {}",
-        optional_time(stats.first_activity_at)
+        optional_human_time(stats.first_activity_at)
     ));
     lines.push(format!(
         "- Last activity: {}",
-        optional_time(stats.last_activity_at)
+        optional_human_time(stats.last_activity_at)
     ));
     lines.push(format!("- Top apps: {}", top_apps_text(&stats.top_apps)));
     lines.push(String::new());
@@ -2321,9 +2322,8 @@ fn render_notion_archive_markdown(
     } else {
         for report in hourly_reports {
             lines.push(format!(
-                "- {} - {}: {}",
-                report.period_start.with_timezone(&Local).format("%H:%M"),
-                report.period_end.with_timezone(&Local).format("%H:%M"),
+                "- {}: {}",
+                human_report_range(report.period_start, report.period_end),
                 report.summary_text
             ));
         }
@@ -2359,9 +2359,9 @@ fn render_notion_archive_markdown(
     lines.join("\n")
 }
 
-fn optional_time(value: Option<DateTime<Utc>>) -> String {
+fn optional_human_time(value: Option<DateTime<Utc>>) -> String {
     value
-        .map(|time| time.to_rfc3339())
+        .map(human_report_timestamp)
         .unwrap_or_else(|| "unknown".into())
 }
 
@@ -2389,9 +2389,8 @@ fn project_lines_from_reports(reports: &[InsightReport]) -> Vec<String> {
                 report.project_hints.join(", ")
             };
             format!(
-                "- {} to {}: {} ({})",
-                report.period_start.to_rfc3339(),
-                report.period_end.to_rfc3339(),
+                "- {}: {} ({})",
+                human_report_range(report.period_start, report.period_end),
                 projects,
                 category_mix_text(&report.category_mix)
             )
@@ -2435,9 +2434,8 @@ fn report_lines(reports: &[InsightReport]) -> Vec<String> {
                 report.project_hints.join(", ")
             };
             format!(
-                "- {} to {} | evidence {} | projects {} | {}",
-                report.period_start.to_rfc3339(),
-                report.period_end.to_rfc3339(),
+                "- {} | evidence {} | projects {} | {}",
+                human_report_range(report.period_start, report.period_end),
                 report.evidence_count,
                 projects,
                 report.summary_text
