@@ -154,15 +154,15 @@ function insightReportsResponse() {
 
 function dailyBriefResponse() {
   return jsonResponse({
-    date: "2026-05-24",
+    date: "2026-06-07",
     status: "complete",
-    nextRunAt: "2026-05-24T15:40:00Z",
+    nextRunAt: "2026-06-07T15:40:00Z",
     brief: {
       id: 5,
-      date: "2026-05-24",
-      periodStart: "2026-05-24T00:00:00Z",
-      periodEnd: "2026-05-25T00:00:00Z",
-      generatedAt: "2026-05-24T15:40:05Z",
+      date: "2026-06-07",
+      periodStart: "2026-06-07T00:00:00Z",
+      periodEnd: "2026-06-08T00:00:00Z",
+      generatedAt: "2026-06-07T15:40:05Z",
       scheduledForLocal: "23:40",
       modelProvider: "local_insight",
       modelName: "daily-brief-local-v1",
@@ -183,9 +183,9 @@ function dailyBriefResponse() {
     hourlyReports: [
       {
         id: 9,
-        periodStart: "2026-05-24T09:00:00Z",
-        periodEnd: "2026-05-24T10:00:00Z",
-        generatedAt: "2026-05-24T10:00:05Z",
+        periodStart: "2026-06-07T02:00:00Z",
+        periodEnd: "2026-06-07T03:00:00Z",
+        generatedAt: "2026-06-07T03:00:05Z",
         reportKind: "1h",
         modelProvider: "local_insight",
         modelName: "trajectory-v1",
@@ -199,9 +199,9 @@ function dailyBriefResponse() {
     fiveHourReports: [
       {
         id: 2,
-        periodStart: "2026-05-24T05:00:00Z",
-        periodEnd: "2026-05-24T10:00:00Z",
-        generatedAt: "2026-05-24T10:00:06Z",
+        periodStart: "2026-06-07T02:00:00Z",
+        periodEnd: "2026-06-07T07:00:00Z",
+        generatedAt: "2026-06-07T07:00:06Z",
         reportKind: "5h",
         modelProvider: "local_insight",
         modelName: "trajectory-v1",
@@ -213,9 +213,9 @@ function dailyBriefResponse() {
       },
       {
         id: 3,
-        periodStart: "2026-05-24T10:00:00Z",
-        periodEnd: "2026-05-24T15:00:00Z",
-        generatedAt: "2026-05-24T15:00:06Z",
+        periodStart: "2026-06-07T07:00:00Z",
+        periodEnd: "2026-06-07T12:00:00Z",
+        generatedAt: "2026-06-07T12:00:06Z",
         reportKind: "5h",
         modelProvider: "local_insight",
         modelName: "trajectory-v1",
@@ -600,9 +600,14 @@ describe("App", () => {
       await screen.findByRole("region", { name: /daily brief/i })
     ).toBeInTheDocument();
     expect(screen.getByText(/1.0h active/i)).toBeInTheDocument();
-    expect(screen.getByText(/2 reports/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 hourly \/ 2 5h/i)).toBeInTheDocument();
     expect(screen.getByText(/09:00/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /hourly reports/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /scheduled 5h reports/i })).toBeInTheDocument();
+    expect(screen.getByText("10:00 - 11:00")).toBeInTheDocument();
+    expect(screen.getByText("10:00 - 15:00")).toBeInTheDocument();
     expect(screen.queryByText("当天以编码和阅读窗口为主。")).not.toBeInTheDocument();
+    expect(screen.queryByText("09点小时报告。")).not.toBeInTheDocument();
     expect(screen.queryByText("上午报告。")).not.toBeInTheDocument();
 
     expect(
@@ -613,9 +618,11 @@ describe("App", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
 
-    expect(await screen.findByText("当天以编码和阅读窗口为主。")).toBeInTheDocument();
-    expect(await screen.findByText("上午报告。")).toBeInTheDocument();
-    expect(await screen.findByText(/上午出现编码窗口/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/当天以编码和阅读窗口为主/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/09点小时报告/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/上午报告/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/上午出现编码窗口/)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Raw report text").length).toBeGreaterThan(0);
   });
 
   it("shows raw live evidence titles on the flow board after switching privacy mode", async () => {

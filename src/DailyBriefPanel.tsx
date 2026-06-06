@@ -1,7 +1,10 @@
 import { BarChart3, Clock3, FileText, Flame, Layers } from "lucide-react";
 import type { ReactNode } from "react";
-import type { DailyBriefResponse, HourlyActivityMetric, InsightReport } from "./types";
+import { StructuredDailyNarrative } from "./StructuredDailyNarrative";
+import { StructuredReportCard } from "./StructuredReportCard";
+import { presentInsightReport } from "./lib/reportPresentation";
 import type { PrivacyMode, UiSourceMode } from "./lib/uiModel";
+import type { DailyBriefResponse, HourlyActivityMetric } from "./types";
 
 type DailyBriefPanelProps = {
   response?: DailyBriefResponse;
@@ -21,7 +24,8 @@ export function DailyBriefPanel({
   const canShowText = privacyMode === "raw";
   const stats = response?.descriptiveStats;
   const brief = response?.brief;
-  const reports = response?.fiveHourReports ?? [];
+  const hourlyReports = response?.hourlyReports ?? [];
+  const fiveHourReports = response?.fiveHourReports ?? [];
 
   return (
     <section className="dailyBriefPanel" aria-label="Daily Brief">
@@ -49,7 +53,11 @@ export function DailyBriefPanel({
         <>
           <div className="dailyBriefStats" aria-label="Daily activity statistics">
             <Metric icon={<Clock3 size={17} />} label="active" value={`${stats.activeHours.toFixed(1)}h active`} />
-            <Metric icon={<Layers size={17} />} label="reports" value={`${reports.length} reports`} />
+            <Metric
+              icon={<Layers size={17} />}
+              label="reports"
+              value={`${hourlyReports.length} hourly / ${fiveHourReports.length} 5h`}
+            />
             <Metric icon={<BarChart3 size={17} />} label="switches" value={`${stats.switchCount} switches`} />
             <Metric icon={<FileText size={17} />} label="input" value={`${stats.inputChars} chars`} />
           </div>
@@ -62,29 +70,45 @@ export function DailyBriefPanel({
           </div>
 
           <div className="dailyBriefSection">
-            <h3>5h Reports</h3>
-            {reports.length > 0 ? (
-              <div className="dailyReportList">
-                {reports.map((report) => (
-                  <ReportRow key={report.id} report={report} canShowText={canShowText} />
-                ))}
-              </div>
+            <h3>Daily Action Trajectory</h3>
+            {brief ? (
+              <StructuredDailyNarrative brief={brief} canShowText={canShowText} />
             ) : (
-              <p className="emptyState">No 5h reports for this date yet.</p>
+              <p className="emptyState">No daily narrative for this date yet.</p>
             )}
           </div>
 
           <div className="dailyBriefSection">
-            <h3>Daily Action Trajectory</h3>
-            {canShowText && brief ? (
-              <>
-                <p className="dailyBriefLead">{brief.dailySummaryText}</p>
-                <p>{brief.actionTrajectory}</p>
-              </>
+            <h3>Hourly Reports</h3>
+            {hourlyReports.length > 0 ? (
+              <div className="dailyReportList">
+                {hourlyReports.map((report) => (
+                  <StructuredReportCard
+                    key={report.id}
+                    presentation={presentInsightReport(report)}
+                    canShowText={canShowText}
+                  />
+                ))}
+              </div>
             ) : (
-              <p className="redactedText insightRedacted">
-                Daily narrative generated. Text is hidden in redacted mode.
-              </p>
+              <p className="emptyState">No hourly reports for this date yet.</p>
+            )}
+          </div>
+
+          <div className="dailyBriefSection">
+            <h3>Scheduled 5h Reports</h3>
+            {fiveHourReports.length > 0 ? (
+              <div className="dailyReportList">
+                {fiveHourReports.map((report) => (
+                  <StructuredReportCard
+                    key={report.id}
+                    presentation={presentInsightReport(report)}
+                    canShowText={canShowText}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="emptyState">No scheduled 5h reports for this date yet.</p>
             )}
           </div>
         </>
@@ -139,28 +163,6 @@ function HourlyHeatmap({ metrics }: { metrics: HourlyActivityMetric[] }) {
   );
 }
 
-function ReportRow({
-  report,
-  canShowText,
-}: {
-  report: InsightReport;
-  canShowText: boolean;
-}) {
-  return (
-    <article className="dailyReportRow">
-      <div>
-        <strong>{formatRange(report.periodStart, report.periodEnd)}</strong>
-        <span>{report.evidenceCount} windows · {report.modelProvider}</span>
-      </div>
-      {canShowText ? (
-        <p>{report.summaryText}</p>
-      ) : (
-        <p className="redactedText">Report text hidden in redacted mode.</p>
-      )}
-    </article>
-  );
-}
-
 function emptyHours(): HourlyActivityMetric[] {
   return Array.from({ length: 24 }, (_, hour) => ({
     hour,
@@ -178,16 +180,6 @@ function emptyHours(): HourlyActivityMetric[] {
     visualWindowCount: 0,
     fiveHourReportIds: [],
   }));
-}
-
-function formatRange(start: string, end: string): string {
-  return `${formatTime(start)} - ${formatTime(end)}`;
-}
-
-function formatTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Invalid";
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function formatHour(hour: number): string {
