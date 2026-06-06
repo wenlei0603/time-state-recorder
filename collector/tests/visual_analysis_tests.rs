@@ -156,10 +156,11 @@ fn minimax_request_uses_openai_chat_completions_image_content_block() {
             .starts_with("data:image/jpeg;base64,")
     );
     assert_eq!(request["thinking"]["type"], "disabled");
+    assert_eq!(request["max_completion_tokens"], 200_000);
 }
 
 #[test]
-fn minimax_window_analysis_request_defaults_to_ten_thousand_completion_tokens() {
+fn minimax_window_analysis_request_defaults_to_two_hundred_thousand_completion_tokens() {
     let dir = tempfile::tempdir().unwrap();
     let image_paths = [1, 3, 5]
         .iter()
@@ -209,7 +210,7 @@ fn minimax_window_analysis_request_defaults_to_ten_thousand_completion_tokens() 
         .as_str()
         .unwrap();
 
-    assert_eq!(request["max_completion_tokens"], 10_000);
+    assert_eq!(request["max_completion_tokens"], 200_000);
     assert!(prompt.contains("windowStart=2026-05-25T17:00:00+08:00"));
     assert!(prompt.contains("windowEnd=2026-05-25T17:05:00+08:00"));
     assert!(prompt.contains(r#""capturedAt":"2026-05-25T17:00:30+08:00""#));

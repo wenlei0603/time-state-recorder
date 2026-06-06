@@ -102,7 +102,7 @@ fn minimax_insight_report_uses_text_chat_completions() {
     );
 
     assert_eq!(request["model"], "MiniMax-M3");
-    assert_eq!(request["max_completion_tokens"], 10_000);
+    assert_eq!(request["max_completion_tokens"], 200_000);
     assert_eq!(request["messages"][1]["role"], "user");
     let prompt = request["messages"][1]["content"].as_str().unwrap();
     assert!(prompt.contains("observations="));
@@ -117,7 +117,7 @@ fn minimax_insight_report_uses_text_chat_completions() {
 }
 
 #[test]
-fn minimax_daily_brief_request_defaults_to_ten_thousand_completion_tokens() {
+fn minimax_daily_brief_request_defaults_to_two_hundred_thousand_completion_tokens() {
     let reporter = MiniMaxDailyBriefReporter::new(MiniMaxInsightConfig::new(
         "test-key",
         "https://api.minimax.test/v1",
@@ -154,7 +154,7 @@ fn minimax_daily_brief_request_defaults_to_ten_thousand_completion_tokens() {
         &reports,
     );
 
-    assert_eq!(request["max_completion_tokens"], 10_000);
+    assert_eq!(request["max_completion_tokens"], 200_000);
     let prompt = request["messages"][1]["content"].as_str().unwrap();
     assert!(prompt.contains("parallel projects"));
     assert!(prompt.contains("Asia/Shanghai UTC+8"));

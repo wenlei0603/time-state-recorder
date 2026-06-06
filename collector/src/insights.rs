@@ -14,6 +14,7 @@ use crate::prompt_time::{
 const LOCAL_REPORT_PROMPT_VERSION: &str = "trajectory-v1";
 const DAILY_BRIEF_PROMPT_VERSION: &str = "daily-brief-v1";
 const LOCAL_DAILY_BRIEF_MODEL: &str = "daily-brief-local-v1";
+const DEFAULT_MINIMAX_MAX_COMPLETION_TOKENS: u32 = 200_000;
 
 pub fn observation_from_visual_summary(
     high_res: &HighResScreenshotMeta,
@@ -713,7 +714,7 @@ impl MiniMaxInsightConfig {
             api_key: api_key.into(),
             base_url: base_url.into(),
             model: model.into(),
-            max_completion_tokens: 10_000,
+            max_completion_tokens: DEFAULT_MINIMAX_MAX_COMPLETION_TOKENS,
         }
     }
 
@@ -742,7 +743,6 @@ impl MiniMaxInsightConfig {
             .context("MINIMAX_BASE_URL is required when DAILY_BRIEF_PROVIDER=minimax")?;
         let model = std::env::var("MINIMAX_MODEL").unwrap_or_else(|_| "MiniMax-M3".to_string());
         let mut config = Self::new(api_key, base_url, model);
-        config.max_completion_tokens = 10_000;
         if let Ok(value) = std::env::var("MINIMAX_DAILY_BRIEF_MAX_COMPLETION_TOKENS")
             .or_else(|_| std::env::var("MINIMAX_MAX_COMPLETION_TOKENS"))
         {
