@@ -165,34 +165,38 @@ function WindowSummaryContent({
       </div>
       {canShowText ? (
         <>
-          <p className="reviewThesis">{note.thesis}</p>
-          {note.intent ? (
-            <p className="aiInsightHints">
-              <strong>Intent</strong>
-              <span>{note.intent}</span>
-            </p>
-          ) : null}
-          {note.continuity ? (
-            <p className="aiInsightHints">
-              <strong>Continuity</strong>
-              <span>{note.continuity}</span>
-            </p>
-          ) : null}
-          <TrajectoryList trajectory={note.trajectory} />
-          <div className="categoryMix" aria-label="Window insight labels">
-            <span>{switchingLabel(note.switchingLevel)}</span>
-            <span>{loafingLabel(note.loafingLevel)}</span>
-            {compactList(note.projectHints, 2).map((hint) => (
-              <span key={hint}>{hint}</span>
-            ))}
-          </div>
-          {note.switchingEvidence || note.loafingEvidence ? (
-            <div className="reviewEvidence">
-              {note.switchingEvidence ? <p>{note.switchingEvidence}</p> : null}
-              {note.loafingEvidence ? <p>{note.loafingEvidence}</p> : null}
+          <section
+            className="reviewReadableSummary"
+            aria-label="Window note summary"
+          >
+            <p className="reviewThesis">{note.thesis}</p>
+            <ReviewFieldGrid
+              fields={[
+                ["Intent", note.intent],
+                ["Continuity", note.continuity],
+              ]}
+            />
+            <div className="categoryMix" aria-label="Window insight labels">
+              <span>{switchingLabel(note.switchingLevel)}</span>
+              <span>{loafingLabel(note.loafingLevel)}</span>
+              {compactList(note.projectHints, 2).map((hint) => (
+                <span key={hint}>{shortText(hint, 56)}</span>
+              ))}
             </div>
+          </section>
+          <TrajectoryList trajectory={note.trajectory} />
+          {note.switchingEvidence || note.loafingEvidence ? (
+            <ReviewDetails title="Evidence notes">
+              <div className="reviewEvidence">
+                {note.switchingEvidence ? <p>{note.switchingEvidence}</p> : null}
+                {note.loafingEvidence ? <p>{note.loafingEvidence}</p> : null}
+              </div>
+            </ReviewDetails>
           ) : null}
-          <RawSummaryDetails summary={summary} />
+          <RawTextDetails
+            title="Raw window evidence"
+            text={rawWindowEvidenceText(summary, note.rawText)}
+          />
         </>
       ) : (
         <p className="redactedText insightRedacted">
@@ -283,7 +287,12 @@ function ReportContent({
       ) : null}
       {canShowText ? (
         <>
-          <p className="reviewThesis">{note.mainThread}</p>
+          <section
+            className="reviewReadableSummary"
+            aria-label="Session report summary"
+          >
+            <p className="reviewThesis">{note.mainThread}</p>
+          </section>
           <ReportPhaseList phases={note.phases} />
           {note.projects.length > 0 ? (
             <div className="reviewProjectChips" aria-label="Session projects">
@@ -296,10 +305,9 @@ function ReportContent({
             </div>
           ) : null}
           {note.fullText !== note.mainThread ? (
-            <details className="reviewDetails">
-              <summary>Show full report</summary>
+            <ReviewDetails title="Raw session report">
               <p>{note.fullText}</p>
-            </details>
+            </ReviewDetails>
           ) : null}
         </>
       ) : (
@@ -334,17 +342,64 @@ function ReportPhaseList({ phases }: { phases: ReportPhase[] }) {
   );
 }
 
-function RawSummaryDetails({ summary }: { summary: VisualWindowSummary }) {
-  if (summary.rawSummaryJson === null || summary.rawSummaryJson === undefined) {
+function ReviewFieldGrid({
+  fields,
+}: {
+  fields: Array<[label: string, value: string]>;
+}) {
+  const visibleFields = fields.filter(([, value]) => value.trim().length > 0);
+  if (visibleFields.length === 0) {
     return null;
   }
 
   return (
+    <div className="reviewFieldGrid">
+      {visibleFields.map(([label, value]) => (
+        <div className="reviewField" key={label}>
+          <strong>{label}</strong>
+          <span>{value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ReviewDetails({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
     <details className="reviewDetails">
-      <summary>Raw JSON</summary>
-      <pre>{JSON.stringify(summary.rawSummaryJson, null, 2)}</pre>
+      <summary role="button">{title}</summary>
+      {children}
     </details>
   );
+}
+
+function RawTextDetails({ title, text }: { title: string; text?: string }) {
+  if (!text) {
+    return null;
+  }
+
+  return (
+    <ReviewDetails title={title}>
+      <pre>{text}</pre>
+    </ReviewDetails>
+  );
+}
+
+function rawWindowEvidenceText(
+  summary: VisualWindowSummary,
+  rawText?: string,
+): string | undefined {
+  if (summary.rawSummaryJson !== null && summary.rawSummaryJson !== undefined) {
+    return JSON.stringify(summary.rawSummaryJson, null, 2);
+  }
+
+  return rawText;
 }
 
 function statusClass(status?: string): string {
