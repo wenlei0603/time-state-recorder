@@ -551,7 +551,7 @@ fn lists_insight_reports_between_chronologically_for_selected_day() {
         ),
     ] {
         store
-            .insert_insight_report(&sample_insight_report(start, end, summary))
+            .insert_insight_report(&sample_insight_report(start, end, "5h", summary))
             .unwrap();
     }
 
@@ -570,6 +570,38 @@ fn lists_insight_reports_between_chronologically_for_selected_day() {
             .map(|report| report.summary_text.as_str())
             .collect::<Vec<_>>(),
         vec!["跨入目标日期的夜间报告。", "上午编码报告。"]
+    );
+}
+
+#[test]
+fn detects_existing_insight_report_by_kind_and_exact_period() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let report = sample_insight_report(
+        "2026-06-07T02:00:00Z",
+        "2026-06-07T03:00:00Z",
+        "1h",
+        "整点小时报告。",
+    );
+    store.insert_insight_report(&report).unwrap();
+
+    assert!(
+        store
+            .insight_report_exists(
+                "1h",
+                ts("2026-06-07T02:00:00Z"),
+                ts("2026-06-07T03:00:00Z"),
+            )
+            .unwrap()
+    );
+    assert!(
+        !store
+            .insight_report_exists(
+                "5h",
+                ts("2026-06-07T02:00:00Z"),
+                ts("2026-06-07T03:00:00Z"),
+            )
+            .unwrap()
     );
 }
 
@@ -1036,13 +1068,13 @@ fn screenshot_reads_and_success_summary_ignore_skip_rows() {
     assert_eq!(stats.screenshots, 1);
 }
 
-fn sample_insight_report(start: &str, end: &str, summary: &str) -> InsightReport {
+fn sample_insight_report(start: &str, end: &str, report_kind: &str, summary: &str) -> InsightReport {
     InsightReport {
         id: 0,
         period_start: ts(start),
         period_end: ts(end),
         generated_at: ts(end),
-        report_kind: "5h".into(),
+        report_kind: report_kind.into(),
         model_provider: "local_insight".into(),
         model_name: "trajectory-v1".into(),
         summary_text: summary.into(),
