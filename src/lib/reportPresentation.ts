@@ -1,4 +1,5 @@
 import type { DailyBrief, InsightReport } from "../types";
+import { formatOwnerClock } from "./dateQuery";
 
 export type ReportPhase = {
   label: string;
@@ -21,7 +22,6 @@ export type StructuredReportPresentation = {
 const MAX_OVERVIEW_LENGTH = 180;
 const MAX_PHASE_BODY_LENGTH = 220;
 const MAX_CHIPS = 8;
-const OWNER_TIME_ZONE = "Asia/Shanghai";
 const RISK_PATTERN = /(不确定|可能|待|缺失|卡住|ERROR|风险|无法)/i;
 const NUMBERED_MARKER_PATTERN = /[①②③④⑤⑥⑦⑧⑨]|\d+[).、]/g;
 const TIME_SPAN_PATTERN = /\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}/g;
@@ -108,12 +108,7 @@ export function formatReportRange(startIso: string, endIso: string): string {
 }
 
 function formatClock(value: Date): string {
-  return new Intl.DateTimeFormat("zh-CN", {
-    timeZone: OWNER_TIME_ZONE,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(value);
+  return formatOwnerClock(value);
 }
 
 function reportChips(report: InsightReport): string[] {

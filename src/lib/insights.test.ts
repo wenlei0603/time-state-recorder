@@ -69,11 +69,13 @@ describe("insights API", () => {
     const summaries = await fetchVisualWindowSummaries("2026-06-03", fetcher);
 
     expect(fetcher).toHaveBeenNthCalledWith(1, "/api/insight-reports?limit=3");
-    expect(String(fetcher.mock.calls[1][0])).toMatch(
-      /^\/api\/visual-observations\?date=2026-06-03&tzOffsetMinutes=/,
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      "/api/visual-observations?date=2026-06-03&tzOffsetMinutes=-480",
     );
-    expect(String(fetcher.mock.calls[2][0])).toMatch(
-      /^\/api\/visual-window-summaries\?date=2026-06-03&tzOffsetMinutes=/,
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      "/api/visual-window-summaries?date=2026-06-03&tzOffsetMinutes=-480",
     );
     expect(reports[0].categoryMix[0].activityCategory).toBe("coding");
     expect(observations[0].highResScreenshotId).toBe(44);

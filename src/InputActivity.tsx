@@ -1,5 +1,6 @@
 import { BarChart3, Clock, Keyboard, Maximize2, TableProperties } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { formatOwnerClock } from "./lib/dateQuery";
 import {
   listSegmentApps,
   summarizeInputInsights,
@@ -22,9 +23,7 @@ type InputActivityProps = {
 };
 
 function formatTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Invalid";
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return formatOwnerClock(value);
 }
 
 export function InputActivity({

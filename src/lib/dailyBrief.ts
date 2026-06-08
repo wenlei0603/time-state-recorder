@@ -8,6 +8,7 @@ import type {
   HourlyActivityMetric,
   InsightReport,
 } from "../types";
+import { collectorDateQuery } from "./dateQuery";
 
 type Fetcher = (input: string) => Promise<Pick<Response, "ok" | "status" | "statusText" | "json">>;
 
@@ -15,7 +16,7 @@ export async function fetchDailyBrief(
   date: string,
   fetcher: Fetcher = fetch,
 ): Promise<DailyBriefResponse> {
-  const response = await fetcher(dateQuery("/api/daily-brief", date));
+  const response = await fetcher(collectorDateQuery("/api/daily-brief", date));
   if (!response.ok) {
     throw new Error(
       `Collector API failed: ${response.status} ${response.statusText}`.trim(),
@@ -27,22 +28,6 @@ export async function fetchDailyBrief(
     throw new Error("Collector API returned an invalid daily-brief response");
   }
   return toDailyBriefResponse(body);
-}
-
-function dateQuery(path: string, date: string): string {
-  const params = new URLSearchParams({
-    date,
-    tzOffsetMinutes: String(timezoneOffsetMinutes(date)),
-  });
-  return `${path}?${params.toString()}`;
-}
-
-function timezoneOffsetMinutes(date: string): number {
-  const localMidnight = new Date(`${date}T00:00:00`);
-  if (!Number.isNaN(localMidnight.getTime())) {
-    return localMidnight.getTimezoneOffset();
-  }
-  return new Date().getTimezoneOffset();
 }
 
 function toDailyBriefResponse(value: Record<string, unknown>): DailyBriefResponse {

@@ -13,7 +13,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use chrono::{DateTime, FixedOffset, Local, NaiveDate, TimeZone, Timelike, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, TimeZone, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::{sync::oneshot, time};
 use tower_http::services::ServeDir;
@@ -32,7 +32,7 @@ use crate::{
         SubsystemHealth, TimeEvent, VisualObservation, VisualSummary, VisualWindowSummary,
         WindowSnapshot,
     },
-    prompt_time::{human_report_range, human_report_timestamp},
+    prompt_time::{human_report_range, human_report_timestamp, owner_local_offset},
     screenshot,
     storage::Store,
     visual_analysis::{
@@ -419,17 +419,16 @@ fn router_from_state(state: AppState) -> Router {
 }
 
 fn date_window_from_query(query: &DateQuery) -> std::result::Result<DateWindow, String> {
-    let date = query
-        .date
-        .clone()
-        .unwrap_or_else(|| Local::now().format("%Y-%m-%d").to_string());
+    let date = query.date.clone().unwrap_or_else(|| {
+        Utc::now()
+            .with_timezone(&owner_local_offset())
+            .format("%Y-%m-%d")
+            .to_string()
+    });
     let parsed = NaiveDate::parse_from_str(&date, "%Y-%m-%d")
         .map_err(|_| "date must use YYYY-MM-DD".to_string())?;
-    let (start_utc, end_utc) = if let Some(offset_minutes) = query.tz_offset_minutes {
-        fixed_offset_day_bounds(parsed, offset_minutes)?
-    } else {
-        local_day_bounds(parsed)?
-    };
+    let _ignored_browser_offset = query.tz_offset_minutes;
+    let (start_utc, end_utc) = owner_day_bounds(parsed)?;
     Ok(DateWindow {
         date,
         start_utc,
@@ -438,7 +437,7 @@ fn date_window_from_query(query: &DateQuery) -> std::result::Result<DateWindow, 
 }
 
 fn date_window_for_local_date(date: NaiveDate) -> std::result::Result<DateWindow, String> {
-    let (start_utc, end_utc) = local_day_bounds(date)?;
+    let (start_utc, end_utc) = owner_day_bounds(date)?;
     Ok(DateWindow {
         date: date.format("%Y-%m-%d").to_string(),
         start_utc,
@@ -467,7 +466,7 @@ fn parse_daily_brief_time(value: &str) -> Option<(u32, u32)> {
     }
 }
 
-fn daily_brief_due_now(now: DateTime<Local>, schedule_label: &str) -> bool {
+fn daily_brief_due_now(now: DateTime<FixedOffset>, schedule_label: &str) -> bool {
     let Some(scheduled) = local_scheduled_at(now.date_naive(), schedule_label) else {
         return false;
     };
@@ -475,7 +474,7 @@ fn daily_brief_due_now(now: DateTime<Local>, schedule_label: &str) -> bool {
 }
 
 fn next_daily_brief_run_at(now: DateTime<Utc>, schedule_label: &str) -> Option<DateTime<Utc>> {
-    let now_local = now.with_timezone(&Local);
+    let now_local = now.with_timezone(&owner_local_offset());
     let today = now_local.date_naive();
     let today_run = local_scheduled_at(today, schedule_label)?;
     let next_local = if now_local < today_run {
@@ -487,27 +486,22 @@ fn next_daily_brief_run_at(now: DateTime<Utc>, schedule_label: &str) -> Option<D
     Some(next_local.with_timezone(&Utc))
 }
 
-fn local_scheduled_at(date: NaiveDate, schedule_label: &str) -> Option<DateTime<Local>> {
+fn local_scheduled_at(date: NaiveDate, schedule_label: &str) -> Option<DateTime<FixedOffset>> {
     let (hour, minute) = parse_daily_brief_time(schedule_label)?;
     let naive = date.and_hms_opt(hour, minute, 0)?;
-    Local.from_local_datetime(&naive).single()
+    owner_local_offset().from_local_datetime(&naive).single()
 }
 
-fn fixed_offset_day_bounds(
+fn owner_day_bounds(
     date: NaiveDate,
-    browser_offset_minutes: i32,
 ) -> std::result::Result<(DateTime<Utc>, DateTime<Utc>), String> {
-    let east_seconds = browser_offset_minutes
-        .checked_mul(-60)
-        .ok_or_else(|| "tzOffsetMinutes is out of range".to_string())?;
-    let offset = FixedOffset::east_opt(east_seconds)
-        .ok_or_else(|| "tzOffsetMinutes is out of range".to_string())?;
+    let offset = owner_local_offset();
     let start = date
         .and_hms_opt(0, 0, 0)
         .expect("midnight is valid")
         .and_local_timezone(offset)
         .single()
-        .ok_or_else(|| "date cannot be resolved for tzOffsetMinutes".to_string())?;
+        .ok_or_else(|| "date cannot be resolved for Asia/Shanghai".to_string())?;
     let end = date
         .succ_opt()
         .ok_or_else(|| "date is out of range".to_string())?
@@ -515,24 +509,7 @@ fn fixed_offset_day_bounds(
         .expect("midnight is valid")
         .and_local_timezone(offset)
         .single()
-        .ok_or_else(|| "date cannot be resolved for tzOffsetMinutes".to_string())?;
-    Ok((start.with_timezone(&Utc), end.with_timezone(&Utc)))
-}
-
-fn local_day_bounds(
-    date: NaiveDate,
-) -> std::result::Result<(DateTime<Utc>, DateTime<Utc>), String> {
-    let start = Local
-        .from_local_datetime(&date.and_hms_opt(0, 0, 0).expect("midnight is valid"))
-        .earliest()
-        .ok_or_else(|| "date cannot be resolved in the local timezone".to_string())?;
-    let end_date = date
-        .succ_opt()
-        .ok_or_else(|| "date is out of range".to_string())?;
-    let end = Local
-        .from_local_datetime(&end_date.and_hms_opt(0, 0, 0).expect("midnight is valid"))
-        .earliest()
-        .ok_or_else(|| "date cannot be resolved in the local timezone".to_string())?;
+        .ok_or_else(|| "date cannot be resolved for Asia/Shanghai".to_string())?;
     Ok((start.with_timezone(&Utc), end.with_timezone(&Utc)))
 }
 
@@ -1289,10 +1266,12 @@ fn report_cadence_cutoff_date() -> NaiveDate {
         .expect("fixed five-hour cutoff date must be valid")
 }
 
-fn completed_hourly_period(now: DateTime<Local>) -> Option<ReportPeriod> {
+fn completed_hourly_period(now: DateTime<FixedOffset>) -> Option<ReportPeriod> {
     let date = now.date_naive();
     let hour_start = date.and_hms_opt(now.hour(), 0, 0)?;
-    let local_end = Local.from_local_datetime(&hour_start).earliest()?;
+    let local_end = owner_local_offset()
+        .from_local_datetime(&hour_start)
+        .single()?;
     let local_start = local_end - chrono::Duration::seconds(HOURLY_REPORT_INTERVAL);
     Some(ReportPeriod {
         kind: HOURLY_REPORT_KIND,
@@ -1301,7 +1280,10 @@ fn completed_hourly_period(now: DateTime<Local>) -> Option<ReportPeriod> {
     })
 }
 
-fn completed_five_hour_periods(now: DateTime<Local>, cutoff_date: NaiveDate) -> Vec<ReportPeriod> {
+fn completed_five_hour_periods(
+    now: DateTime<FixedOffset>,
+    cutoff_date: NaiveDate,
+) -> Vec<ReportPeriod> {
     let today = now.date_naive();
     let mut periods = Vec::new();
     for owner_date in [today.pred_opt(), Some(today)].into_iter().flatten() {
@@ -1341,23 +1323,22 @@ fn completed_five_hour_periods(now: DateTime<Local>, cutoff_date: NaiveDate) -> 
     periods
 }
 
-fn local_time_on_date(date: NaiveDate, hour: u32, minute: u32) -> Option<DateTime<Local>> {
+fn local_time_on_date(date: NaiveDate, hour: u32, minute: u32) -> Option<DateTime<FixedOffset>> {
     let naive = date.and_hms_opt(hour, minute, 0)?;
-    Local.from_local_datetime(&naive).earliest()
+    owner_local_offset().from_local_datetime(&naive).single()
 }
 
 #[cfg(test)]
 mod report_cadence_tests {
     use super::*;
-    use chrono::{LocalResult, NaiveDate, TimeZone};
+    use chrono::NaiveDate;
 
-    fn local_ts(value: &str) -> DateTime<Local> {
+    fn local_ts(value: &str) -> DateTime<FixedOffset> {
         let naive = chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S").unwrap();
-        match Local.from_local_datetime(&naive) {
-            LocalResult::Single(value) => value,
-            LocalResult::Ambiguous(value, _) => value,
-            LocalResult::None => panic!("test timestamp cannot be represented in local timezone"),
-        }
+        owner_local_offset()
+            .from_local_datetime(&naive)
+            .single()
+            .expect("test timestamp must be representable in owner timezone")
     }
 
     #[test]
@@ -1370,7 +1351,7 @@ mod report_cadence_tests {
         assert_eq!(
             period
                 .period_start
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%H:%M")
                 .to_string(),
             "14:00"
@@ -1378,7 +1359,7 @@ mod report_cadence_tests {
         assert_eq!(
             period
                 .period_end
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%H:%M")
                 .to_string(),
             "15:00"
@@ -1398,7 +1379,7 @@ mod report_cadence_tests {
         assert_eq!(
             after[0]
                 .period_start
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%H:%M")
                 .to_string(),
             "10:00"
@@ -1406,7 +1387,7 @@ mod report_cadence_tests {
         assert_eq!(
             after[0]
                 .period_end
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%H:%M")
                 .to_string(),
             "15:00"
@@ -1414,7 +1395,7 @@ mod report_cadence_tests {
         assert_eq!(
             after[1]
                 .period_start
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%H:%M")
                 .to_string(),
             "15:00"
@@ -1422,7 +1403,7 @@ mod report_cadence_tests {
         assert_eq!(
             after[1]
                 .period_end
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%H:%M")
                 .to_string(),
             "20:00"
@@ -1438,14 +1419,14 @@ mod report_cadence_tests {
         let last = periods.last().unwrap();
         assert_eq!(
             last.period_start
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%Y-%m-%d %H:%M")
                 .to_string(),
             "2026-06-07 20:00"
         );
         assert_eq!(
             last.period_end
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%Y-%m-%d %H:%M")
                 .to_string(),
             "2026-06-08 01:00"
@@ -1483,9 +1464,12 @@ mod report_cadence_tests {
                         period.kind,
                         period
                             .period_start
-                            .with_timezone(&Local)
+                            .with_timezone(&owner_local_offset())
                             .format("%H:%M"),
-                        period.period_end.with_timezone(&Local).format("%H:%M")
+                        period
+                            .period_end
+                            .with_timezone(&owner_local_offset())
+                            .format("%H:%M")
                     )
                 })
                 .collect::<Vec<_>>(),
@@ -1563,7 +1547,7 @@ async fn maybe_generate_due_insight_reports(
 }
 
 fn due_report_periods(state: &AppState, now: DateTime<Utc>) -> Result<Vec<ReportPeriod>> {
-    let now_local = now.with_timezone(&Local);
+    let now_local = now.with_timezone(&owner_local_offset());
     let mut candidates = Vec::new();
     if let Some(hourly) = completed_hourly_period(now_local) {
         candidates.push(hourly);
@@ -1626,13 +1610,15 @@ async fn generate_insight_report_for_period(
 }
 
 fn next_report_status_time(now: DateTime<Utc>) -> DateTime<Utc> {
-    let now_local = now.with_timezone(&Local);
+    let now_local = now.with_timezone(&owner_local_offset());
     let next_hour = now_local
         .date_naive()
         .and_hms_opt(now_local.hour(), 0, 0)
         .and_then(|value| value.checked_add_signed(chrono::Duration::hours(1)))
-        .and_then(|value| Local.from_local_datetime(&value).earliest())
-        .unwrap_or_else(|| now_local + chrono::Duration::seconds(INSIGHT_REPORT_CHECK_INTERVAL as i64));
+        .and_then(|value| owner_local_offset().from_local_datetime(&value).single())
+        .unwrap_or_else(|| {
+            now_local + chrono::Duration::seconds(INSIGHT_REPORT_CHECK_INTERVAL as i64)
+        });
     next_hour.with_timezone(&Utc)
 }
 
@@ -1647,8 +1633,9 @@ fn spawn_daily_brief_loop(state: AppState) -> tokio::task::JoinHandle<()> {
                 });
             update_daily_running(&state, started_at);
 
-            if daily_brief_due_now(Local::now(), &schedule_label) {
-                let local_date = Local::now().date_naive();
+            let now_local = Utc::now().with_timezone(&owner_local_offset());
+            if daily_brief_due_now(now_local, &schedule_label) {
+                let local_date = now_local.date_naive();
                 let generation_result = match date_window_for_local_date(local_date) {
                     Ok(date_window) => {
                         async_maybe_generate_daily_brief(&state, date_window, &schedule_label).await

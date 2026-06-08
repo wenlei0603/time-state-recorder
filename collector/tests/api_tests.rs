@@ -1180,6 +1180,51 @@ async fn serves_daily_brief_response_with_stats_and_same_day_reports() {
 }
 
 #[tokio::test]
+async fn daily_brief_uses_owner_timezone_even_when_browser_offset_differs() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    store
+        .insert_insight_report(&sample_hourly_report(
+            "2026-06-08T02:00:00Z",
+            "2026-06-08T03:00:00Z",
+            "东八区上午10点小时报告。",
+        ))
+        .unwrap();
+
+    let app = api::router(store, None);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr: SocketAddr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::get(format!(
+        "http://{addr}/api/daily-brief?date=2026-06-08&tzOffsetMinutes=240"
+    ))
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["date"], "2026-06-08");
+    assert_eq!(
+        body["descriptiveStats"]["periodStart"],
+        "2026-06-07T16:00:00Z"
+    );
+    assert_eq!(
+        body["descriptiveStats"]["periodEnd"],
+        "2026-06-08T16:00:00Z"
+    );
+    assert_eq!(body["hourlyReports"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        body["hourlyReports"][0]["summaryText"],
+        "东八区上午10点小时报告。"
+    );
+
+    server.abort();
+}
+
+#[tokio::test]
 async fn serves_notion_daily_archive_with_human_readable_markdown() {
     let mut store = Store::open_memory().unwrap();
     store.init().unwrap();

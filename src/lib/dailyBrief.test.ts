@@ -24,8 +24,8 @@ describe("daily brief API", () => {
       fetcher,
     );
 
-    expect(String(fetcher.mock.calls[0][0])).toMatch(
-      /^\/api\/insight-reports\?date=2026-06-03&tzOffsetMinutes=.*&kind=5h&limit=10$/,
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/insight-reports?date=2026-06-03&tzOffsetMinutes=-480&kind=5h&limit=10",
     );
     expect(reports[0].summaryText).toBe("上午报告。");
   });
@@ -35,8 +35,8 @@ describe("daily brief API", () => {
 
     const response = await fetchDailyBrief("2026-06-03", fetcher);
 
-    expect(String(fetcher.mock.calls[0][0])).toMatch(
-      /^\/api\/daily-brief\?date=2026-06-03&tzOffsetMinutes=/,
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/daily-brief?date=2026-06-03&tzOffsetMinutes=-480",
     );
     expect(response.status).toBe("complete");
     expect(response.brief?.dailySummaryText).toBe("当天以编码和阅读窗口为主。");

@@ -1,6 +1,7 @@
 import { Activity, AlertTriangle, Clock, Database, Monitor, Server } from "lucide-react";
 import { useEffect, useState } from "react";
 import { fetchCollectorHealth } from "./lib/health";
+import { formatOwnerClock } from "./lib/dateQuery";
 import type { CollectorHealth, SubsystemHealth } from "./types";
 
 type MonitorStatus = "offline" | "connecting" | "connected";
@@ -13,9 +14,7 @@ function formatUptime(seconds: number): string {
 }
 
 function formatTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Invalid";
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return formatOwnerClock(value);
 }
 
 function formatBytes(bytes: number): string {
