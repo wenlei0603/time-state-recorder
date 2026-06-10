@@ -344,6 +344,8 @@ describe("App", () => {
   it("exposes Toggl-style source and privacy toggles", () => {
     render(<App />);
 
+    expect(screen.getByText(/local recorder/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/sample workspace/i).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /^sample$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^live$/i })).toBeInTheDocument();
     expect(

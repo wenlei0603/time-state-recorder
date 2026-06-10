@@ -68,9 +68,10 @@ export function InputActivity({
     <section className="inputActivity">
       <div className="dailyHeader">
         <div>
-          <h2>Input Activity</h2>
+          <h2>Keyboard activity</h2>
           <p className="dailyDate">
-            Keyboard capture via Raw Input · {sourceMode === "live" ? "Live" : "Sample"} input data
+            Raw Input segments grouped by application ·{" "}
+            {sourceMode === "live" ? "Live" : "Sample"} input data
           </p>
         </div>
         <div className="actions">
@@ -83,7 +84,7 @@ export function InputActivity({
           </button>
           <button type="button" onClick={onLoadLive} disabled={loading}>
             <Keyboard aria-hidden="true" size={18} />
-            <span>{loading ? "Loading..." : "Live Data"}</span>
+            <span>{loading ? "Loading..." : "Load live"}</span>
           </button>
         </div>
       </div>
@@ -119,7 +120,7 @@ export function InputActivity({
 
       {sourceMode === "sample" && (
         <p className="sampleNotice">
-          Showing sample data. Click "Live Data" when the collector is running.
+          Showing sample data. Click "Load live" when the collector is running.
         </p>
       )}
 

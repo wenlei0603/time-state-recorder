@@ -427,14 +427,18 @@ export function App() {
   return (
     <main className="shell">
       <header className="topbar">
-        <div>
-          <p className="eyebrow">v1.1.1 prototype / Toggl-style review</p>
+        <div className="titleBlock">
+          <p className="eyebrow">Local recorder</p>
           <h1>Time State Recorder</h1>
           <p className="headerMeta">
             <span className={`statusPill ${collectorStatus}`}>
               {statusLabel(collectorStatus)}
             </span>
             <span>{sourceMode === "live" ? "Live collector" : "Sample workspace"}</span>
+          </p>
+          <p className="pageLead">
+            A compact readout of time signals, app focus, screenshots, keyboard input,
+            and collector health.
           </p>
         </div>
         <div className="controlPanel" aria-label="Dashboard controls">
