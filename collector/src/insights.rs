@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::config::VisualConfig;
 use crate::models::{
     ActivityCategory, ActivityCategoryCount, DailyActivityStats, DailyBrief, DailyComparison,
     HighResScreenshotMeta, HourlyActivityMetric, InsightReport, VisualObservation, VisualSummary,
@@ -268,6 +269,22 @@ pub enum ConfiguredInsightReporter {
 }
 
 impl ConfiguredInsightReporter {
+    pub fn from_visual_config(config: &VisualConfig) -> Result<Self> {
+        let selected_provider = select_insight_report_provider(
+            Some(config.provider.as_str()),
+            config.api_key.as_deref(),
+            config.base_url.as_deref(),
+        );
+
+        match selected_provider.to_ascii_lowercase().as_str() {
+            "minimax" => Ok(Self::MiniMax(MiniMaxInsightReporter::new(
+                MiniMaxInsightConfig::from_visual_config(config, "report")?,
+            ))),
+            "local" | "local_stub" | "" => Ok(Self::Local(LocalInsightReporter)),
+            other => bail!("unsupported insight report provider: {other}"),
+        }
+    }
+
     pub fn from_env() -> Result<Self> {
         let provider = std::env::var("INSIGHT_REPORT_PROVIDER").ok();
         let api_key = std::env::var("MINIMAX_API_KEY").ok();
@@ -311,14 +328,12 @@ impl ConfiguredInsightReporter {
         window_summaries: &[VisualWindowSummary],
     ) -> Result<InsightReport> {
         match self {
-            Self::Local(reporter) => {
-                reporter.report_from_window_summaries(
-                    report_kind,
-                    period_start,
-                    period_end,
-                    window_summaries,
-                )
-            }
+            Self::Local(reporter) => reporter.report_from_window_summaries(
+                report_kind,
+                period_start,
+                period_end,
+                window_summaries,
+            ),
             Self::MiniMax(reporter) => {
                 reporter
                     .report_from_window_summaries(
@@ -396,6 +411,22 @@ pub enum ConfiguredDailyBriefReporter {
 }
 
 impl ConfiguredDailyBriefReporter {
+    pub fn from_visual_config(config: &VisualConfig) -> Result<Self> {
+        let selected_provider = select_insight_report_provider(
+            Some(config.provider.as_str()),
+            config.api_key.as_deref(),
+            config.base_url.as_deref(),
+        );
+
+        match selected_provider.to_ascii_lowercase().as_str() {
+            "minimax" => Ok(Self::MiniMax(MiniMaxDailyBriefReporter::new(
+                MiniMaxInsightConfig::from_visual_config(config, "daily brief")?,
+            ))),
+            "local" | "local_stub" | "" => Ok(Self::Local(LocalDailyBriefReporter)),
+            other => bail!("unsupported daily brief provider: {other}"),
+        }
+    }
+
     pub fn from_env() -> Result<Self> {
         let provider = std::env::var("DAILY_BRIEF_PROVIDER").ok();
         let api_key = std::env::var("MINIMAX_API_KEY").ok();
@@ -752,6 +783,21 @@ impl MiniMaxInsightConfig {
         }
         config.validate()?;
         Ok(config)
+    }
+
+    pub fn from_visual_config(config: &VisualConfig, context: &str) -> Result<Self> {
+        let api_key = config
+            .api_key
+            .clone()
+            .with_context(|| format!("apiKey is required when {context} provider is minimax"))?;
+        let base_url = config
+            .base_url
+            .clone()
+            .with_context(|| format!("baseUrl is required when {context} provider is minimax"))?;
+        let mut minimax = Self::new(api_key, base_url, config.model.clone());
+        minimax.max_completion_tokens = config.max_completion_tokens;
+        minimax.validate()?;
+        Ok(minimax)
     }
 
     fn validate(&self) -> Result<()> {

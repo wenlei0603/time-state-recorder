@@ -3,8 +3,10 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine as _, engine::general_purpose};
 use chrono::{DateTime, Duration, Utc};
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
+use crate::config::VisualConfig;
 use crate::models::{
     ActivityCategory, HighResScreenshotMeta, ScreenshotMeta, VisualSummary, VisualTrajectoryPoint,
     VisualWindowSummary,
@@ -63,6 +65,21 @@ pub enum ConfiguredVisualAnalyzer {
 }
 
 impl ConfiguredVisualAnalyzer {
+    pub fn from_visual_config(config: &VisualConfig) -> Result<Self> {
+        let selected_provider = select_visual_analyzer_provider(
+            Some(config.provider.as_str()),
+            config.api_key.as_deref(),
+            config.base_url.as_deref(),
+        );
+        match selected_provider.to_ascii_lowercase().as_str() {
+            "minimax" => Ok(Self::MiniMax(MiniMaxAnalyzer::new(
+                MiniMaxConfig::from_visual_config(config)?,
+            ))),
+            "local" | "local_stub" | "" => Ok(Self::Local(LocalMetadataAnalyzer)),
+            other => bail!("unsupported visual analyzer provider: {other}"),
+        }
+    }
+
     pub fn from_env() -> Result<Self> {
         let provider = std::env::var("VISUAL_ANALYZER_PROVIDER").ok();
         let api_key = std::env::var("MINIMAX_API_KEY").ok();
@@ -231,6 +248,22 @@ impl MiniMaxConfig {
         }
         config.validate()?;
         Ok(config)
+    }
+
+    pub fn from_visual_config(config: &VisualConfig) -> Result<Self> {
+        let api_key = config
+            .api_key
+            .clone()
+            .context("apiKey is required when visual provider is minimax")?;
+        let base_url = config
+            .base_url
+            .clone()
+            .context("baseUrl is required when visual provider is minimax")?;
+        let mut minimax = Self::new(api_key, base_url, config.model.clone());
+        minimax.image_detail = config.image_detail.clone();
+        minimax.max_completion_tokens = config.max_completion_tokens;
+        minimax.validate()?;
+        Ok(minimax)
     }
 
     fn validate(&self) -> Result<()> {
@@ -417,6 +450,16 @@ impl MiniMaxAnalyzer {
             .await
             .context("MiniMax window visual response body read failed")?;
         if !status.is_success() {
+            if is_minimax_sensitive_image_rejection(status, &response_text) {
+                return Ok(local_stub_visual_window_summary_with_risk_flags(
+                    input.window_start,
+                    input.window_end,
+                    &owned_window_samples(input),
+                    input.previous_summary.map(|summary| summary.id),
+                    created_at,
+                    vec!["minimax_sensitive_image_rejected".to_string()],
+                ));
+            }
             bail!("MiniMax window visual analysis returned {status}: {response_text}");
         }
         let content = parse_chat_completion_content(&response_text)?;
@@ -702,6 +745,17 @@ fn parse_model_window_summary_value(content: &str) -> Option<serde_json::Value> 
     crate::llm_json::parse_json_object(content)
 }
 
+fn is_minimax_sensitive_image_rejection(status: StatusCode, response_text: &str) -> bool {
+    if status != StatusCode::UNPROCESSABLE_ENTITY {
+        return false;
+    }
+    let lowered = response_text.to_ascii_lowercase();
+    lowered.contains("new_sensitive")
+        || lowered.contains("image is sensitive")
+        || lowered.contains("\"1026\"")
+        || lowered.contains("(1026)")
+}
+
 fn image_file_to_data_url(path: &Path) -> Result<String> {
     let metadata = std::fs::metadata(path)
         .with_context(|| format!("screenshot image does not exist: {}", path.display()))?;
@@ -859,6 +913,24 @@ fn local_stub_visual_window_summary(
     previous_summary_id: Option<i64>,
     created_at: DateTime<Utc>,
 ) -> VisualWindowSummary {
+    local_stub_visual_window_summary_with_risk_flags(
+        window_start,
+        window_end,
+        samples,
+        previous_summary_id,
+        created_at,
+        Vec::new(),
+    )
+}
+
+fn local_stub_visual_window_summary_with_risk_flags(
+    window_start: DateTime<Utc>,
+    window_end: DateTime<Utc>,
+    samples: &[WindowScreenshotSample],
+    previous_summary_id: Option<i64>,
+    created_at: DateTime<Utc>,
+    extra_risk_flags: Vec<String>,
+) -> VisualWindowSummary {
     let trajectory = samples
         .iter()
         .map(|sample| {
@@ -926,11 +998,13 @@ fn local_stub_visual_window_summary(
             .flat_map(|point| point.routine_tags.clone())
             .collect(),
     ));
-    let risk_flags = if samples.len() == WINDOW_SAMPLE_MARKS.len() {
+    let mut risk_flags = if samples.len() == WINDOW_SAMPLE_MARKS.len() {
         Vec::new()
     } else {
         vec!["incomplete_window_samples".to_string()]
     };
+    risk_flags.extend(extra_risk_flags);
+    risk_flags = dedupe_strings(risk_flags);
 
     VisualWindowSummary {
         id: 0,
@@ -1128,6 +1202,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn minimax_sensitive_image_rejection_matches_provider_422() {
+        let response_text = r#"{"type":"error","error":{"type":"unprocessable_entity_error","message":"input new_sensitive, messages[1]'s content[2] image is sensitive, please check your input (1026)","http_code":"422"}}"#;
+
+        assert!(is_minimax_sensitive_image_rejection(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            response_text
+        ));
+        assert!(!is_minimax_sensitive_image_rejection(
+            StatusCode::BAD_REQUEST,
+            response_text
+        ));
+    }
+
+    #[test]
+    fn sensitive_image_fallback_preserves_window_metadata_with_risk_flag() {
+        let samples = vec![
+            test_window_sample(101, 1, "Code.exe", "api.rs"),
+            test_window_sample(102, 3, "Code.exe", "visual_analysis.rs"),
+            test_window_sample(103, 5, "msedge.exe", "TSR UI"),
+        ];
+
+        let summary = local_stub_visual_window_summary_with_risk_flags(
+            test_ts("2026-06-09T04:20:00Z"),
+            test_ts("2026-06-09T04:25:00Z"),
+            &samples,
+            Some(7),
+            test_ts("2026-06-09T04:25:05Z"),
+            vec!["minimax_sensitive_image_rejected".to_string()],
+        );
+
+        assert_eq!(summary.model_provider, "local_stub");
+        assert_eq!(summary.previous_summary_id, Some(7));
+        assert_eq!(summary.sampled_screenshot_ids, vec![101, 102, 103]);
+        assert!(
+            summary
+                .risk_flags
+                .contains(&"minimax_sensitive_image_rejected".to_string())
+        );
+        assert_eq!(summary.trajectory.len(), 3);
+    }
+
+    #[test]
     fn parse_chat_completion_content_rejects_length_finish_reason() {
         let error = parse_chat_completion_content(
             r#"{
@@ -1140,5 +1256,32 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("finish_reason"));
+    }
+
+    fn test_window_sample(
+        screenshot_id: i64,
+        minute_mark: u8,
+        process_name: &str,
+        window_title: &str,
+    ) -> WindowScreenshotSample {
+        WindowScreenshotSample {
+            minute_mark,
+            screenshot: HighResScreenshotMeta {
+                id: screenshot_id,
+                captured_at: test_ts("2026-06-09T04:20:30Z"),
+                file_path: format!("2026-06-09/{screenshot_id}.jpg"),
+                width: 1920,
+                height: 1080,
+                process_name: Some(process_name.to_string()),
+                window_title: Some(window_title.to_string()),
+                capture_status: "ok".to_string(),
+            },
+        }
+    }
+
+    fn test_ts(value: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&Utc)
     }
 }

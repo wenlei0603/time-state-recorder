@@ -6,6 +6,7 @@ import {
   Keyboard,
   Layers,
   RefreshCw,
+  Settings,
   Search
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -16,6 +17,7 @@ import { DailyTracking } from "./DailyTracking";
 import { Dashboard } from "./Dashboard";
 import { InputActivity } from "./InputActivity";
 import { InsightFeedback } from "./InsightFeedback";
+import { SettingsPanel } from "./SettingsPanel";
 import { TimelineView } from "./TimelineView";
 import { TodayFlowBoard } from "./TodayFlowBoard";
 import { activitySampleBuckets } from "./data/activitySample";
@@ -60,7 +62,14 @@ import type {
 import "./styles.css";
 
 type CollectorStatus = "sample" | "loading" | "connected" | "offline";
-type ViewMode = "today" | "activity" | "dashboard" | "timeline" | "daily" | "input";
+type ViewMode =
+  | "today"
+  | "activity"
+  | "dashboard"
+  | "timeline"
+  | "daily"
+  | "input"
+  | "settings";
 type InputDataStatus = UiSourceMode;
 type RefreshContext = {
   privacyMode: PrivacyMode;
@@ -554,6 +563,14 @@ export function App() {
           <Keyboard aria-hidden="true" size={16} />
           <span>Input Activity</span>
         </button>
+        <button
+          type="button"
+          className={`tab ${viewMode === "settings" ? "active" : ""}`}
+          onClick={() => changeViewMode("settings")}
+        >
+          <Settings aria-hidden="true" size={16} />
+          <span>Settings</span>
+        </button>
       </nav>
 
       <section className="filterBand" aria-label="Timeline filters">
@@ -699,6 +716,8 @@ export function App() {
           onLoadSample={loadSample}
           onLoadLive={() => void refreshCollector()}
         />
+      ) : viewMode === "settings" ? (
+        <SettingsPanel />
       ) : viewMode === "timeline" ? (
         <TimelineView
           events={events}

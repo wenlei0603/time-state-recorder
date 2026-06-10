@@ -10,8 +10,8 @@
     "test:watch": "vitest",
     "smoke:notion-daily-archive": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-notion-daily-archive.ps1",
     "serve:app": "node scripts/web-server.mjs --host 127.0.0.1 --port 5173 --api http://127.0.0.1:4317",
-    "collector": "cargo run -p tsr-collector -- serve --db data/local.sqlite3 --addr 127.0.0.1:4317",
-    "collector:release": "cargo run -p tsr-collector --release -- serve --db data/local.sqlite3 --addr 127.0.0.1:4317"
+    "collector": "cargo run -p tsr-collector -- serve --config data/app-config.json --addr 127.0.0.1:4317",
+    "collector:release": "cargo run -p tsr-collector --release -- serve --config data/app-config.json --addr 127.0.0.1:4317"
   },
   "dependencies": {
     "react": "^19.2.3",

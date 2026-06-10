@@ -21,6 +21,7 @@ use tower_http::services::ServeDir;
 use crate::{
     activity::{ActivityBucketQuery, build_activity_buckets},
     blocker::BlockerEngine,
+    config::{AppConfig, AppConfigPatch},
     image_retention::{ImageRetentionPolicy, cleanup_expired_images},
     input,
     insights::{ConfiguredDailyBriefReporter, ConfiguredInsightReporter, LocalDailyBriefReporter},
@@ -45,6 +46,8 @@ use crate::{
 #[derive(Clone)]
 pub struct AppState {
     store: Arc<Mutex<Store>>,
+    app_config: Arc<Mutex<AppConfig>>,
+    app_config_path: Arc<Option<PathBuf>>,
     blocker_engine: Arc<BlockerEngine>,
     screenshot_dir: Arc<PathBuf>,
     screenshot_interval_secs: Arc<u64>,
@@ -258,11 +261,8 @@ struct TextSegmentsResponse {
     segments: Vec<crate::models::TextSegment>,
 }
 
-const DEFAULT_SCREENSHOT_INTERVAL: u64 = 60;
-const DEFAULT_IDLE_THRESHOLD: u64 = 120;
 const DEFAULT_SCREENSHOT_LIMIT: usize = 1440;
 const DEFAULT_HIGH_RES_SCREENSHOT_LIMIT: usize = 1440;
-const DEFAULT_HIGH_RES_SCREENSHOT_INTERVAL: u64 = 60;
 const THUMBNAIL_SCREENSHOT_MAX_WIDTH: u32 = 960;
 const THUMBNAIL_SCREENSHOT_QUALITY: u8 = 82;
 const HIGH_RES_SCREENSHOT_MAX_WIDTH: u32 = 1600;
@@ -332,19 +332,46 @@ fn default_state(
     blocker_config_path: Option<PathBuf>,
     shutdown_tx: Option<oneshot::Sender<()>>,
 ) -> AppState {
+    default_state_with_config(
+        store,
+        blocker_config_path,
+        shutdown_tx,
+        AppConfig::default_for_paths(
+            PathBuf::from("data/local.sqlite3"),
+            PathBuf::from("data/screenshots"),
+            PathBuf::from("data/high-res-screenshots"),
+        ),
+        None,
+    )
+}
+
+fn default_state_with_config(
+    store: Store,
+    blocker_config_path: Option<PathBuf>,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    app_config: AppConfig,
+    app_config_path: Option<PathBuf>,
+) -> AppState {
     let engine = blocker_config_path
         .as_deref()
         .and_then(|p| BlockerEngine::load(p).ok())
         .unwrap_or_else(BlockerEngine::empty);
     let now = Utc::now();
+    let screenshot_dir = app_config.storage.screenshot_dir.clone();
+    let high_res_screenshot_dir = app_config.storage.high_res_screenshot_dir.clone();
+    let screenshot_interval_secs = app_config.capture.screenshot_interval_secs;
+    let high_res_screenshot_interval_secs = app_config.capture.high_res_screenshot_interval_secs;
+    let idle_threshold_secs = app_config.capture.idle_threshold_secs;
     AppState {
         store: Arc::new(Mutex::new(store)),
+        app_config: Arc::new(Mutex::new(app_config)),
+        app_config_path: Arc::new(app_config_path),
         blocker_engine: Arc::new(engine),
-        screenshot_dir: Arc::new(PathBuf::from("data/screenshots")),
-        screenshot_interval_secs: Arc::new(DEFAULT_SCREENSHOT_INTERVAL),
-        high_res_screenshot_dir: Arc::new(PathBuf::from("data/high-res-screenshots")),
-        high_res_screenshot_interval_secs: Arc::new(DEFAULT_HIGH_RES_SCREENSHOT_INTERVAL),
-        idle_threshold_secs: Arc::new(DEFAULT_IDLE_THRESHOLD),
+        screenshot_dir: Arc::new(screenshot_dir),
+        screenshot_interval_secs: Arc::new(screenshot_interval_secs),
+        high_res_screenshot_dir: Arc::new(high_res_screenshot_dir),
+        high_res_screenshot_interval_secs: Arc::new(high_res_screenshot_interval_secs),
+        idle_threshold_secs: Arc::new(idle_threshold_secs),
         health: Arc::new(Mutex::new(CollectorHealth {
             status: "ok".into(),
             started_at: now,
@@ -409,6 +436,7 @@ fn router_from_state(state: AppState) -> Router {
         .route("/api/input-events", get(input_events))
         .route("/api/input-summary", get(input_summary))
         .route("/api/text-segments", get(text_segments))
+        .route("/api/config", get(app_config).patch(update_app_config))
         .route("/api/shutdown", post(shutdown))
         .nest_service("/screenshots", ServeDir::new(screenshot_dir))
         .nest_service(
@@ -572,10 +600,33 @@ fn insert_screenshot_capture(
 }
 
 pub async fn serve(
+    store: Store,
+    addr: SocketAddr,
+    poll_ms: u64,
+    blocker_config_path: Option<PathBuf>,
+) -> Result<()> {
+    serve_with_config(
+        store,
+        addr,
+        poll_ms,
+        blocker_config_path,
+        AppConfig::default_for_paths(
+            PathBuf::from("data/local.sqlite3"),
+            PathBuf::from("data/screenshots"),
+            PathBuf::from("data/high-res-screenshots"),
+        ),
+        None,
+    )
+    .await
+}
+
+pub async fn serve_with_config(
     mut store: Store,
     addr: SocketAddr,
     poll_ms: u64,
     blocker_config_path: Option<PathBuf>,
+    app_config: AppConfig,
+    app_config_path: Option<PathBuf>,
 ) -> Result<()> {
     anyhow::ensure!(poll_ms >= 100, "poll_ms must be at least 100");
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -590,7 +641,13 @@ pub async fn serve(
         serde_json::json!({ "appVersion": env!("CARGO_PKG_VERSION") }),
     )?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let state = default_state(store, blocker_config_path, Some(shutdown_tx));
+    let state = default_state_with_config(
+        store,
+        blocker_config_path,
+        Some(shutdown_tx),
+        app_config,
+        app_config_path,
+    );
 
     let window_collector = spawn_collector_loop(state.clone(), session_id.clone(), poll_ms);
     let screenshot_collector = spawn_screenshot_loop(
@@ -1187,7 +1244,8 @@ async fn process_next_visual_window_summary(
         previous_summary: pending_window.previous_summary.as_ref(),
     };
     let created_at = Utc::now();
-    let mut summary = ConfiguredVisualAnalyzer::from_env()?
+    let visual_config = visual_config_snapshot(state)?;
+    let mut summary = ConfiguredVisualAnalyzer::from_visual_config(&visual_config)?
         .analyze_window(&input, created_at)
         .await
         .with_context(|| {
@@ -1590,7 +1648,8 @@ async fn generate_insight_report_for_period(
         return Ok(None);
     }
 
-    let mut report = ConfiguredInsightReporter::from_env()?
+    let visual_config = visual_config_snapshot(state)?;
+    let mut report = ConfiguredInsightReporter::from_visual_config(&visual_config)?
         .report_from_window_summaries(
             period.kind,
             period.period_start,
@@ -1696,7 +1755,8 @@ async fn async_maybe_generate_daily_brief(
         (reports, stats, hourly_metrics, comparison)
     };
 
-    let report_result = ConfiguredDailyBriefReporter::from_env()?
+    let visual_config = visual_config_snapshot(state)?;
+    let report_result = ConfiguredDailyBriefReporter::from_visual_config(&visual_config)?
         .report(
             &date_window.date,
             date_window.start_utc,
@@ -2448,6 +2508,45 @@ async fn analysis_status(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
+async fn app_config(State(state): State<AppState>) -> impl IntoResponse {
+    match state.app_config.lock() {
+        Ok(config) => Json(config.to_public_response(false, Vec::new())).into_response(),
+        Err(_) => internal_error("app config lock poisoned"),
+    }
+}
+
+async fn update_app_config(
+    State(state): State<AppState>,
+    Json(patch): Json<AppConfigPatch>,
+) -> impl IntoResponse {
+    let (updated, restart_reasons) = {
+        let mut config = match state.app_config.lock() {
+            Ok(config) => config,
+            Err(_) => return internal_error("app config lock poisoned"),
+        };
+        let restart_reasons = match config.apply_patch(patch) {
+            Ok(reasons) => reasons,
+            Err(error) => return bad_request(error),
+        };
+        if let Some(path) = state.app_config_path.as_ref().as_ref() {
+            if let Err(error) = config.save_to_path(path) {
+                return internal_error(error);
+            }
+        }
+        (config.clone(), restart_reasons)
+    };
+
+    Json(updated.to_public_response(!restart_reasons.is_empty(), restart_reasons)).into_response()
+}
+
+fn visual_config_snapshot(state: &AppState) -> Result<crate::config::VisualConfig> {
+    let config = state
+        .app_config
+        .lock()
+        .map_err(|_| anyhow::anyhow!("app config lock poisoned"))?;
+    Ok(config.visual.clone())
+}
+
 async fn analyze_screenshot(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2473,7 +2572,11 @@ async fn analyze_screenshot(
         screenshot: &screenshot,
         image_path: image_path.as_deref(),
     };
-    let analyzer = match ConfiguredVisualAnalyzer::from_env() {
+    let visual_config = match visual_config_snapshot(&state) {
+        Ok(config) => config,
+        Err(err) => return internal_error(err),
+    };
+    let analyzer = match ConfiguredVisualAnalyzer::from_visual_config(&visual_config) {
         Ok(analyzer) => analyzer,
         Err(err) => return internal_error(err),
     };
@@ -2591,6 +2694,7 @@ async fn shutdown_signal(mut shutdown_rx: oneshot::Receiver<()>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::extract::State;
 
     #[test]
     fn window_capture_success_updates_health_after_prior_error() {
@@ -2718,6 +2822,84 @@ mod tests {
         assert_eq!(profile.max_width, 960);
         assert_eq!(profile.quality, 82);
         assert_eq!(profile.directory, PathBuf::from("data/screenshots"));
+    }
+
+    #[tokio::test]
+    async fn config_endpoint_redacts_secrets_and_persists_updates() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("settings.json");
+        let mut config = crate::config::AppConfig::default_for_paths(
+            PathBuf::from("data/local.sqlite3"),
+            PathBuf::from("data/screenshots"),
+            PathBuf::from("data/high-res-screenshots"),
+        );
+        config.visual.api_key = Some("secret-token".into());
+        config.visual.base_url = Some("https://api.example.test/v1".into());
+        config.visual.model = "MiniMax-M3".into();
+        config.save_to_path(&config_path).unwrap();
+
+        let store = Store::open_memory().unwrap();
+        store.init().unwrap();
+        let state = default_state_with_config(store, None, None, config, Some(config_path.clone()));
+
+        let response = app_config(State(state.clone())).await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let visible: crate::config::PublicAppConfigResponse =
+            serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            visible.config.visual.api_key_masked.as_deref(),
+            Some("********oken")
+        );
+        assert_eq!(visible.config.visual.api_key, None);
+
+        let update = crate::config::AppConfigPatch {
+            visual: Some(crate::config::VisualConfigPatch {
+                provider: Some("minimax".into()),
+                api_key: Some("updated-token".into()),
+                base_url: Some("https://api.updated.test/v1".into()),
+                model: Some("MiniMax-M3".into()),
+                image_detail: None,
+                max_completion_tokens: Some(120_000),
+            }),
+            storage: Some(crate::config::StorageConfigPatch {
+                database_path: Some(PathBuf::from("D:/TSR/dev.sqlite3")),
+                screenshot_dir: None,
+                high_res_screenshot_dir: None,
+            }),
+            runtime: None,
+            capture: None,
+        };
+
+        let response = update_app_config(State(state), Json(update))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let updated: crate::config::PublicAppConfigResponse =
+            serde_json::from_slice(&body).unwrap();
+
+        assert!(updated.restart_required);
+        assert!(
+            updated
+                .restart_reasons
+                .iter()
+                .any(|reason| reason == "database_path")
+        );
+        assert_eq!(
+            updated.config.visual.api_key_masked.as_deref(),
+            Some("********oken")
+        );
+        let persisted = crate::config::AppConfig::load_from_path(&config_path).unwrap();
+        assert_eq!(persisted.visual.api_key.as_deref(), Some("updated-token"));
+        assert_eq!(
+            persisted.storage.database_path,
+            PathBuf::from("D:/TSR/dev.sqlite3")
+        );
     }
 
     #[test]

@@ -233,7 +233,7 @@ try {
             $collectorExe = Ensure-CollectorExe
             $collectorArgs = @(
                 "serve",
-                "--db", "data/local.sqlite3",
+                "--config", "data/app-config.json",
                 "--addr", "127.0.0.1:$ApiPort",
                 "--poll-ms", "1000",
                 "--blocker-config", (Get-BlockerConfigPath)
