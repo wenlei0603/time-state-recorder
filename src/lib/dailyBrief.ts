@@ -51,6 +51,7 @@ function toDailyBriefResponse(value: Record<string, unknown>): DailyBriefRespons
     status: readString(value, "status"),
     nextRunAt: readOptionalString(value, "nextRunAt"),
     brief: readOptionalRecord(value, "brief", toDailyBrief),
+    hourlyReports: readOptionalArray(value, "hourlyReports", toInsightReport),
     fiveHourReports: readArray(value, "fiveHourReports", toInsightReport),
     descriptiveStats: readDailyActivityStats(value, "descriptiveStats"),
     hourlyMetrics: readArray(value, "hourlyMetrics", toHourlyActivityMetric),
@@ -186,6 +187,21 @@ function readArray<T>(
   mapper: (value: unknown) => T,
 ): T[] {
   const value = record[key];
+  if (!Array.isArray(value)) {
+    throw new Error(`API row has invalid ${key}`);
+  }
+  return value.map(mapper);
+}
+
+function readOptionalArray<T>(
+  record: Record<string, unknown>,
+  key: string,
+  mapper: (value: unknown) => T,
+): T[] {
+  const value = record[key];
+  if (value === null || value === undefined) {
+    return [];
+  }
   if (!Array.isArray(value)) {
     throw new Error(`API row has invalid ${key}`);
   }

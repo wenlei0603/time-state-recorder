@@ -30,9 +30,9 @@ async fn smoke_command_writes_agent_consumable_daily_archive_artifact() {
     assert_eq!(body["source"]["endpoint"], "/api/notion/daily-archive");
     assert_eq!(body["source"]["app"], "time-state-recorder");
     assert_eq!(body["descriptiveStats"]["fiveHourReportCount"], 2);
-    assert_eq!(body["hourlyMetrics"][0]["fiveHourReportIds"][0], 1);
-
     let reports = body["fiveHourReports"].as_array().unwrap();
+    assert_eq!(body["hourlyMetrics"][0]["fiveHourReportIds"][0], reports[0]["id"]);
+
     assert_eq!(reports.len(), 2);
     assert!(reports.iter().all(|report| report["reportKind"] == "5h"));
     assert!(

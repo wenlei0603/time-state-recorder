@@ -1357,6 +1357,31 @@ impl Store {
         Ok(items)
     }
 
+    pub fn insight_report_exists(
+        &self,
+        kind: &str,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<bool> {
+        let exists = self
+            .conn
+            .query_row(
+                r#"
+                SELECT 1
+                FROM insight_reports
+                WHERE report_kind = ?1
+                  AND period_start = ?2
+                  AND period_end = ?3
+                LIMIT 1
+                "#,
+                params![kind, start.to_rfc3339(), end.to_rfc3339()],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        Ok(exists)
+    }
+
     pub fn insert_daily_brief(&mut self, brief: &DailyBrief) -> Result<i64> {
         if let Some(existing_id) = self
             .conn

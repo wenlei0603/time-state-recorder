@@ -7,11 +7,14 @@ use crate::models::{
     HighResScreenshotMeta, HourlyActivityMetric, InsightReport, VisualObservation, VisualSummary,
     VisualWindowSummary,
 };
-use crate::prompt_time::minimax_prompt_timestamp;
+use crate::prompt_time::{
+    human_report_range, human_report_timezone_label, minimax_prompt_timestamp,
+};
 
 const LOCAL_REPORT_PROMPT_VERSION: &str = "trajectory-v1";
 const DAILY_BRIEF_PROMPT_VERSION: &str = "daily-brief-v1";
 const LOCAL_DAILY_BRIEF_MODEL: &str = "daily-brief-local-v1";
+const DEFAULT_MINIMAX_MAX_COMPLETION_TOKENS: u32 = 200_000;
 
 pub fn observation_from_visual_summary(
     high_res: &HighResScreenshotMeta,
@@ -69,16 +72,33 @@ pub fn build_five_hour_report_from_window_summaries(
     period_end: DateTime<Utc>,
     window_summaries: &[VisualWindowSummary],
 ) -> InsightReport {
+    build_report_from_window_summaries("5h", period_start, period_end, window_summaries)
+}
+
+pub fn build_hourly_report_from_window_summaries(
+    period_start: DateTime<Utc>,
+    period_end: DateTime<Utc>,
+    window_summaries: &[VisualWindowSummary],
+) -> InsightReport {
+    build_report_from_window_summaries("1h", period_start, period_end, window_summaries)
+}
+
+pub fn build_report_from_window_summaries(
+    report_kind: &str,
+    period_start: DateTime<Utc>,
+    period_end: DateTime<Utc>,
+    window_summaries: &[VisualWindowSummary],
+) -> InsightReport {
     let category_mix = category_mix_from_window_summaries(window_summaries);
     let project_hints = top_project_hints_from_window_summaries(window_summaries);
-    let summary_text = window_report_summary_text(window_summaries, &category_mix);
+    let summary_text = window_report_summary_text(report_kind, window_summaries, &category_mix);
 
     InsightReport {
         id: 0,
         period_start,
         period_end,
         generated_at: Utc::now(),
-        report_kind: "5h".into(),
+        report_kind: report_kind.into(),
         model_provider: "local_insight".into(),
         model_name: LOCAL_REPORT_PROMPT_VERSION.into(),
         summary_text,
@@ -206,11 +226,17 @@ fn report_summary_text(
 }
 
 fn window_report_summary_text(
+    report_kind: &str,
     window_summaries: &[VisualWindowSummary],
     category_mix: &[ActivityCategoryCount],
 ) -> String {
+    let duration_label = match report_kind {
+        "1h" => "1 小时",
+        "5h" => "5 小时",
+        other => other,
+    };
     if window_summaries.is_empty() {
-        return "过去 5 小时内没有可用的 5 分钟窗口摘要，暂时无法推断工作轨迹。".into();
+        return format!("{duration_label}内没有可用的 5 分钟窗口摘要，暂时无法推断工作轨迹。");
     }
 
     let dominant = category_mix
@@ -227,7 +253,7 @@ fn window_report_summary_text(
         .unwrap_or("");
 
     format!(
-        "过去 5 小时内共分析 {} 条 5 分钟窗口摘要，主要活动类型是 {}。起点：{}。最近状态：{}。",
+        "{duration_label}内共分析 {} 条 5 分钟窗口摘要，主要活动类型是 {}。起点：{}。最近状态：{}。",
         window_summaries.len(),
         dominant,
         first,
@@ -279,17 +305,24 @@ impl ConfiguredInsightReporter {
 
     pub async fn report_from_window_summaries(
         &self,
+        report_kind: &str,
         period_start: DateTime<Utc>,
         period_end: DateTime<Utc>,
         window_summaries: &[VisualWindowSummary],
     ) -> Result<InsightReport> {
         match self {
             Self::Local(reporter) => {
-                reporter.report_from_window_summaries(period_start, period_end, window_summaries)
+                reporter.report_from_window_summaries(
+                    report_kind,
+                    period_start,
+                    period_end,
+                    window_summaries,
+                )
             }
             Self::MiniMax(reporter) => {
                 reporter
                     .report_from_window_summaries(
+                        report_kind,
                         period_start,
                         period_end,
                         window_summaries,
@@ -342,11 +375,13 @@ impl LocalInsightReporter {
 
     pub fn report_from_window_summaries(
         &self,
+        report_kind: &str,
         period_start: DateTime<Utc>,
         period_end: DateTime<Utc>,
         window_summaries: &[VisualWindowSummary],
     ) -> Result<InsightReport> {
-        Ok(build_five_hour_report_from_window_summaries(
+        Ok(build_report_from_window_summaries(
+            report_kind,
             period_start,
             period_end,
             window_summaries,
@@ -459,9 +494,8 @@ impl LocalDailyBriefReporter {
                 .iter()
                 .map(|report| {
                     format!(
-                        "{} - {}：{}",
-                        report.period_start.format("%H:%M"),
-                        report.period_end.format("%H:%M"),
+                        "{}：{}",
+                        human_report_range(report.period_start, report.period_end),
                         report.summary_text
                     )
                 })
@@ -680,7 +714,7 @@ impl MiniMaxInsightConfig {
             api_key: api_key.into(),
             base_url: base_url.into(),
             model: model.into(),
-            max_completion_tokens: 10_000,
+            max_completion_tokens: DEFAULT_MINIMAX_MAX_COMPLETION_TOKENS,
         }
     }
 
@@ -709,7 +743,6 @@ impl MiniMaxInsightConfig {
             .context("MINIMAX_BASE_URL is required when DAILY_BRIEF_PROVIDER=minimax")?;
         let model = std::env::var("MINIMAX_MODEL").unwrap_or_else(|_| "MiniMax-M3".to_string());
         let mut config = Self::new(api_key, base_url, model);
-        config.max_completion_tokens = 10_000;
         if let Ok(value) = std::env::var("MINIMAX_DAILY_BRIEF_MAX_COMPLETION_TOKENS")
             .or_else(|_| std::env::var("MINIMAX_MAX_COMPLETION_TOKENS"))
         {
@@ -854,6 +887,7 @@ impl MiniMaxInsightReporter {
 
     pub async fn report_from_window_summaries(
         &self,
+        report_kind: &str,
         period_start: DateTime<Utc>,
         period_end: DateTime<Utc>,
         window_summaries: &[VisualWindowSummary],
@@ -882,6 +916,7 @@ impl MiniMaxInsightReporter {
         }
         let content = parse_chat_completion_content(&response_text)?;
         Self::report_from_window_summary_response_text(
+            report_kind,
             period_start,
             period_end,
             window_summaries,
@@ -924,6 +959,7 @@ impl MiniMaxInsightReporter {
     }
 
     pub fn report_from_window_summary_response_text(
+        report_kind: &str,
         period_start: DateTime<Utc>,
         period_end: DateTime<Utc>,
         window_summaries: &[VisualWindowSummary],
@@ -931,7 +967,8 @@ impl MiniMaxInsightReporter {
         model_name: &str,
         content: &str,
     ) -> Result<InsightReport> {
-        let local = build_five_hour_report_from_window_summaries(
+        let local = build_report_from_window_summaries(
+            report_kind,
             period_start,
             period_end,
             window_summaries,
@@ -942,7 +979,7 @@ impl MiniMaxInsightReporter {
             period_start,
             period_end,
             generated_at,
-            report_kind: "5h".into(),
+            report_kind: report_kind.into(),
             model_provider: "minimax".into(),
             model_name: model_name.into(),
             summary_text: parsed
@@ -1013,7 +1050,8 @@ fn report_prompt(
         .collect::<Vec<_>>();
 
     format!(
-        "Infer the user's work trajectory for this 5-hour window. Return JSON only with keys summaryText and projectHints. summaryText must be complete, structured, human-readable Chinese. Focus on projects, time allocation, workflow pattern, switching or loafing signs, and uncertainty; do not list every 5-minute window. periodStart={}, periodEnd={}, observations={}",
+        "Infer the user's work trajectory for this 5-hour window. All time fields are {} local time. Return JSON only with keys summaryText and projectHints. summaryText must be complete, structured, human-readable Chinese and must not emit UTC, Z, or +00:00 time labels. Focus on projects, time allocation, workflow pattern, switching or loafing signs, and uncertainty; do not list every 5-minute window. localPeriodStart={}, localPeriodEnd={}, observations={}",
+        human_report_timezone_label(),
         minimax_prompt_timestamp(period_start),
         minimax_prompt_timestamp(period_end),
         serde_json::to_string(&observations_json).unwrap_or_else(|_| "[]".to_string())
@@ -1029,8 +1067,8 @@ fn window_summary_report_prompt(
         .iter()
         .map(|summary| {
             serde_json::json!({
-                "windowStart": minimax_prompt_timestamp(summary.window_start),
-                "windowEnd": minimax_prompt_timestamp(summary.window_end),
+                "localWindowStart": minimax_prompt_timestamp(summary.window_start),
+                "localWindowEnd": minimax_prompt_timestamp(summary.window_end),
                 "summaryText": summary.summary_text,
                 "continuity": summary.continuity,
                 "primaryActivity": summary.primary_activity.as_str(),
@@ -1050,7 +1088,8 @@ fn window_summary_report_prompt(
         .collect::<Vec<_>>();
 
     format!(
-        "Infer the user's work trajectory for this 5-hour window from 5-minute structured summaries. Return JSON only with keys summaryText and projectHints. summaryText must be complete, structured, human-readable Chinese and cover: project-based work path, time allocation, possible loafing, switching frequency, long-run pattern, and uncertainty. Do not produce a 5-minute log. periodStart={}, periodEnd={}, windowSummaries={}",
+        "Infer the user's work trajectory for this 5-hour window from 5-minute structured summaries. All time fields are {} local time. Return JSON only with keys summaryText and projectHints. summaryText must be complete, structured, human-readable Chinese and cover: project-based work path, time allocation, possible loafing, switching frequency, long-run pattern, and uncertainty, and must not emit UTC, Z, or +00:00 time labels. Do not produce a 5-minute log. localPeriodStart={}, localPeriodEnd={}, windowSummaries={}",
+        human_report_timezone_label(),
         minimax_prompt_timestamp(period_start),
         minimax_prompt_timestamp(period_end),
         serde_json::to_string(&summaries_json).unwrap_or_else(|_| "[]".to_string())
@@ -1060,8 +1099,8 @@ fn window_summary_report_prompt(
 fn daily_activity_stats_prompt_value(stats: &DailyActivityStats) -> serde_json::Value {
     serde_json::json!({
         "date": &stats.date,
-        "periodStart": minimax_prompt_timestamp(stats.period_start),
-        "periodEnd": minimax_prompt_timestamp(stats.period_end),
+        "localPeriodStart": minimax_prompt_timestamp(stats.period_start),
+        "localPeriodEnd": minimax_prompt_timestamp(stats.period_end),
         "activeSeconds": stats.active_seconds,
         "activeHours": stats.active_hours,
         "windowEventCount": stats.window_event_count,
@@ -1075,8 +1114,8 @@ fn daily_activity_stats_prompt_value(stats: &DailyActivityStats) -> serde_json::
         "highResScreenshotCount": stats.high_res_screenshot_count,
         "visualWindowCount": stats.visual_window_count,
         "fiveHourReportCount": stats.five_hour_report_count,
-        "firstActivityAt": stats.first_activity_at.map(minimax_prompt_timestamp),
-        "lastActivityAt": stats.last_activity_at.map(minimax_prompt_timestamp),
+        "localFirstActivityAt": stats.first_activity_at.map(minimax_prompt_timestamp),
+        "localLastActivityAt": stats.last_activity_at.map(minimax_prompt_timestamp),
     })
 }
 
@@ -1086,8 +1125,8 @@ fn hourly_metrics_prompt_values(metrics: &[HourlyActivityMetric]) -> Vec<serde_j
         .map(|metric| {
             serde_json::json!({
                 "hour": metric.hour,
-                "startAt": minimax_prompt_timestamp(metric.start_at),
-                "endAt": minimax_prompt_timestamp(metric.end_at),
+                "localStartAt": minimax_prompt_timestamp(metric.start_at),
+                "localEndAt": minimax_prompt_timestamp(metric.end_at),
                 "activeSeconds": metric.active_seconds,
                 "activeRatio": metric.active_ratio,
                 "windowEventCount": metric.window_event_count,
@@ -1117,8 +1156,8 @@ fn daily_brief_prompt(
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct ReportPromptRow<'a> {
-        period_start: String,
-        period_end: String,
+        local_period_start: String,
+        local_period_end: String,
         summary_text: &'a str,
         category_mix: &'a [ActivityCategoryCount],
         project_hints: &'a [String],
@@ -1128,8 +1167,8 @@ fn daily_brief_prompt(
     let report_rows = reports
         .iter()
         .map(|report| ReportPromptRow {
-            period_start: minimax_prompt_timestamp(report.period_start),
-            period_end: minimax_prompt_timestamp(report.period_end),
+            local_period_start: minimax_prompt_timestamp(report.period_start),
+            local_period_end: minimax_prompt_timestamp(report.period_end),
             summary_text: &report.summary_text,
             category_mix: &report.category_mix,
             project_hints: &report.project_hints,
@@ -1140,7 +1179,8 @@ fn daily_brief_prompt(
     let hourly_metrics = hourly_metrics_prompt_values(hourly_metrics);
 
     format!(
-        "Write a neutral daily brief in Chinese. Return JSON only with keys dailySummaryText, actionTrajectory, comparisonExplanation. Do not include advice, praise, criticism, ranking, or value judgment. Avoid words equivalent to productive, wasted, efficient, inefficient, good, bad, should. actionTrajectory must be complete, human-readable, and structured around parallel projects, time allocation, workflow pattern, work mode, design/tooling activity, and important evidence; do not create a raw 5-minute log. Use uncertainty when evidence is incomplete. date={}, periodStart={}, periodEnd={}, descriptiveStats={}, hourlyMetrics={}, comparison={}, fiveHourReports={}",
+        "Write a neutral daily brief in Chinese. All time fields are {} local time. Return JSON only with keys dailySummaryText, actionTrajectory, comparisonExplanation. Do not include advice, praise, criticism, ranking, or value judgment. Avoid words equivalent to productive, wasted, efficient, inefficient, good, bad, should. actionTrajectory must be complete, human-readable, structured around parallel projects, time allocation, workflow pattern, work mode, design/tooling activity, and important evidence, and must not emit UTC, Z, or +00:00 time labels; do not create a raw 5-minute log. Use uncertainty when evidence is incomplete. date={}, localPeriodStart={}, localPeriodEnd={}, descriptiveStats={}, hourlyMetrics={}, comparison={}, fiveHourReports={}",
+        human_report_timezone_label(),
         date,
         minimax_prompt_timestamp(period_start),
         minimax_prompt_timestamp(period_end),

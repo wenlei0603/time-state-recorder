@@ -17,6 +17,7 @@ use crate::visual_labels::{
 
 const MINIMAX_PROMPT_VERSION: &str = "visual-summary-minimax-m3-v1";
 const MINIMAX_WINDOW_PROMPT_VERSION: &str = "visual-window-minimax-m3-v1";
+const DEFAULT_MINIMAX_MAX_COMPLETION_TOKENS: u32 = 200_000;
 const WINDOW_SAMPLE_MARKS: [u8; 3] = [1, 3, 5];
 const MAX_INLINE_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 
@@ -202,7 +203,7 @@ impl MiniMaxConfig {
             model: model.into(),
             image_detail: "default".to_string(),
             max_long_side_pixel: None,
-            max_completion_tokens: 10_000,
+            max_completion_tokens: DEFAULT_MINIMAX_MAX_COMPLETION_TOKENS,
         }
     }
 

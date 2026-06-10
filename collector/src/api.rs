@@ -13,7 +13,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use chrono::{DateTime, FixedOffset, Local, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, FixedOffset, Local, NaiveDate, TimeZone, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::{sync::oneshot, time};
 use tower_http::services::ServeDir;
@@ -32,6 +32,7 @@ use crate::{
         SubsystemHealth, TimeEvent, VisualObservation, VisualSummary, VisualWindowSummary,
         WindowSnapshot,
     },
+    prompt_time::{human_report_range, human_report_timestamp},
     screenshot,
     storage::Store,
     visual_analysis::{
@@ -147,6 +148,7 @@ struct DailyBriefResponse {
     status: String,
     next_run_at: Option<DateTime<Utc>>,
     brief: Option<DailyBrief>,
+    hourly_reports: Vec<InsightReport>,
     five_hour_reports: Vec<InsightReport>,
     descriptive_stats: DailyActivityStats,
     hourly_metrics: Vec<HourlyActivityMetric>,
@@ -164,6 +166,7 @@ struct NotionDailyArchiveResponse {
     status: String,
     archive_markdown: String,
     brief: Option<DailyBrief>,
+    hourly_reports: Vec<InsightReport>,
     five_hour_reports: Vec<InsightReport>,
     descriptive_stats: DailyActivityStats,
     hourly_metrics: Vec<HourlyActivityMetric>,
@@ -267,10 +270,23 @@ const HIGH_RES_SCREENSHOT_QUALITY: u8 = 88;
 const DEFAULT_IMAGE_RETENTION_DAYS: u32 = 30;
 const IMAGE_RETENTION_SCAN_INTERVAL: u64 = 12 * 60 * 60;
 const VISUAL_ANALYSIS_SCAN_INTERVAL: u64 = 30;
-const INSIGHT_REPORT_INTERVAL: u64 = 5 * 60 * 60;
+const HOURLY_REPORT_KIND: &str = "1h";
+const FIVE_HOUR_REPORT_KIND: &str = "5h";
+const HOURLY_REPORT_INTERVAL: i64 = 60 * 60;
 const INSIGHT_REPORT_CHECK_INTERVAL: u64 = 5 * 60;
+const REPORT_GENERATION_BATCH_LIMIT: usize = 6;
+const FIXED_FIVE_HOUR_START_DATE: &str = "2026-06-07";
+const FIXED_FIVE_HOUR_SLOTS: [(u32, u32, u32, u32); 3] =
+    [(10, 0, 15, 0), (15, 0, 20, 0), (20, 0, 1, 0)];
 const VISUAL_WINDOW_INTERVAL: i64 = 5 * 60;
 const VISUAL_WINDOW_LOOKBACK_HOURS: i64 = 6;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReportPeriod {
+    kind: &'static str,
+    period_start: DateTime<Utc>,
+    period_end: DateTime<Utc>,
+}
 const DAILY_BRIEF_CHECK_INTERVAL: u64 = 60;
 const DEFAULT_DAILY_BRIEF_LOCAL_TIME: &str = "23:40";
 
@@ -1268,6 +1284,239 @@ fn floor_to_visual_window(value: DateTime<Utc>) -> DateTime<Utc> {
         .expect("floored timestamp must be valid")
 }
 
+fn report_cadence_cutoff_date() -> NaiveDate {
+    NaiveDate::parse_from_str(FIXED_FIVE_HOUR_START_DATE, "%Y-%m-%d")
+        .expect("fixed five-hour cutoff date must be valid")
+}
+
+fn completed_hourly_period(now: DateTime<Local>) -> Option<ReportPeriod> {
+    let date = now.date_naive();
+    let hour_start = date.and_hms_opt(now.hour(), 0, 0)?;
+    let local_end = Local.from_local_datetime(&hour_start).earliest()?;
+    let local_start = local_end - chrono::Duration::seconds(HOURLY_REPORT_INTERVAL);
+    Some(ReportPeriod {
+        kind: HOURLY_REPORT_KIND,
+        period_start: local_start.with_timezone(&Utc),
+        period_end: local_end.with_timezone(&Utc),
+    })
+}
+
+fn completed_five_hour_periods(now: DateTime<Local>, cutoff_date: NaiveDate) -> Vec<ReportPeriod> {
+    let today = now.date_naive();
+    let mut periods = Vec::new();
+    for owner_date in [today.pred_opt(), Some(today)].into_iter().flatten() {
+        if owner_date < cutoff_date {
+            continue;
+        }
+        for (start_hour, start_minute, end_hour, end_minute) in FIXED_FIVE_HOUR_SLOTS {
+            let Some(local_start) = local_time_on_date(owner_date, start_hour, start_minute) else {
+                continue;
+            };
+            let end_date = if end_hour < start_hour {
+                owner_date.succ_opt()
+            } else {
+                Some(owner_date)
+            };
+            let Some(end_date) = end_date else {
+                continue;
+            };
+            let Some(local_end) = local_time_on_date(end_date, end_hour, end_minute) else {
+                continue;
+            };
+            if now >= local_end {
+                periods.push(ReportPeriod {
+                    kind: FIVE_HOUR_REPORT_KIND,
+                    period_start: local_start.with_timezone(&Utc),
+                    period_end: local_end.with_timezone(&Utc),
+                });
+            }
+        }
+    }
+    periods.sort_by_key(|period| period.period_end);
+    periods.dedup_by(|left, right| {
+        left.kind == right.kind
+            && left.period_start == right.period_start
+            && left.period_end == right.period_end
+    });
+    periods
+}
+
+fn local_time_on_date(date: NaiveDate, hour: u32, minute: u32) -> Option<DateTime<Local>> {
+    let naive = date.and_hms_opt(hour, minute, 0)?;
+    Local.from_local_datetime(&naive).earliest()
+}
+
+#[cfg(test)]
+mod report_cadence_tests {
+    use super::*;
+    use chrono::{LocalResult, NaiveDate, TimeZone};
+
+    fn local_ts(value: &str) -> DateTime<Local> {
+        let naive = chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S").unwrap();
+        match Local.from_local_datetime(&naive) {
+            LocalResult::Single(value) => value,
+            LocalResult::Ambiguous(value, _) => value,
+            LocalResult::None => panic!("test timestamp cannot be represented in local timezone"),
+        }
+    }
+
+    #[test]
+    fn hourly_candidate_uses_previous_complete_local_hour() {
+        let now = local_ts("2026-06-06 15:03:10");
+
+        let period = completed_hourly_period(now).unwrap();
+
+        assert_eq!(period.kind, HOURLY_REPORT_KIND);
+        assert_eq!(
+            period
+                .period_start
+                .with_timezone(&Local)
+                .format("%H:%M")
+                .to_string(),
+            "14:00"
+        );
+        assert_eq!(
+            period
+                .period_end
+                .with_timezone(&Local)
+                .format("%H:%M")
+                .to_string(),
+            "15:00"
+        );
+    }
+
+    #[test]
+    fn fixed_five_hour_candidates_start_on_cutoff_date() {
+        let cutoff = NaiveDate::from_ymd_opt(2026, 6, 7).unwrap();
+
+        let before = completed_five_hour_periods(local_ts("2026-06-06 20:01:00"), cutoff);
+        let after = completed_five_hour_periods(local_ts("2026-06-07 20:01:00"), cutoff);
+
+        assert!(before.is_empty());
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[0].kind, FIVE_HOUR_REPORT_KIND);
+        assert_eq!(
+            after[0]
+                .period_start
+                .with_timezone(&Local)
+                .format("%H:%M")
+                .to_string(),
+            "10:00"
+        );
+        assert_eq!(
+            after[0]
+                .period_end
+                .with_timezone(&Local)
+                .format("%H:%M")
+                .to_string(),
+            "15:00"
+        );
+        assert_eq!(
+            after[1]
+                .period_start
+                .with_timezone(&Local)
+                .format("%H:%M")
+                .to_string(),
+            "15:00"
+        );
+        assert_eq!(
+            after[1]
+                .period_end
+                .with_timezone(&Local)
+                .format("%H:%M")
+                .to_string(),
+            "20:00"
+        );
+    }
+
+    #[test]
+    fn fixed_five_hour_cross_midnight_slot_belongs_to_previous_owner_date() {
+        let cutoff = NaiveDate::from_ymd_opt(2026, 6, 7).unwrap();
+
+        let periods = completed_five_hour_periods(local_ts("2026-06-08 01:02:00"), cutoff);
+
+        let last = periods.last().unwrap();
+        assert_eq!(
+            last.period_start
+                .with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string(),
+            "2026-06-07 20:00"
+        );
+        assert_eq!(
+            last.period_end
+                .with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string(),
+            "2026-06-08 01:00"
+        );
+    }
+
+    #[test]
+    fn due_report_periods_skip_existing_kind_and_exact_period() {
+        let mut store = Store::open_memory().unwrap();
+        store.init().unwrap();
+        store
+            .insert_insight_report(&sample_report(
+                HOURLY_REPORT_KIND,
+                "2026-06-07T11:00:00+08:00",
+                "2026-06-07T12:00:00+08:00",
+            ))
+            .unwrap();
+        store
+            .insert_insight_report(&sample_report(
+                FIVE_HOUR_REPORT_KIND,
+                "2026-06-07T10:00:00+08:00",
+                "2026-06-07T15:00:00+08:00",
+            ))
+            .unwrap();
+        let state = default_state(store, None, None);
+
+        let due = due_report_periods(&state, local_ts("2026-06-07 20:01:00").with_timezone(&Utc))
+            .unwrap();
+
+        assert_eq!(
+            due.iter()
+                .map(|period| {
+                    format!(
+                        "{} {}-{}",
+                        period.kind,
+                        period
+                            .period_start
+                            .with_timezone(&Local)
+                            .format("%H:%M"),
+                        period.period_end.with_timezone(&Local).format("%H:%M")
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec!["1h 19:00-20:00", "5h 15:00-20:00"]
+        );
+    }
+
+    fn sample_report(kind: &str, start: &str, end: &str) -> InsightReport {
+        InsightReport {
+            id: 0,
+            period_start: DateTime::parse_from_rfc3339(start)
+                .unwrap()
+                .with_timezone(&Utc),
+            period_end: DateTime::parse_from_rfc3339(end)
+                .unwrap()
+                .with_timezone(&Utc),
+            generated_at: DateTime::parse_from_rfc3339(end)
+                .unwrap()
+                .with_timezone(&Utc),
+            report_kind: kind.into(),
+            model_provider: "local_insight".into(),
+            model_name: "trajectory-v1".into(),
+            summary_text: "已有报告。".into(),
+            category_mix: Vec::new(),
+            project_hints: Vec::new(),
+            evidence_count: 0,
+            error: None,
+        }
+    }
+}
+
 fn spawn_insight_report_loop(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         loop {
@@ -1275,16 +1524,16 @@ fn spawn_insight_report_loop(state: AppState) -> tokio::task::JoinHandle<()> {
             let next_run_at =
                 started_at + chrono::Duration::seconds(INSIGHT_REPORT_CHECK_INTERVAL as i64);
             update_report_running(&state, started_at);
-            match maybe_generate_insight_report(&state, started_at).await {
-                Ok(Some(report)) => {
-                    let next_report_at = report.period_end
-                        + chrono::Duration::seconds(INSIGHT_REPORT_INTERVAL as i64);
-                    update_report_success(&state, Utc::now(), next_report_at, report);
+            match maybe_generate_due_insight_reports(&state, started_at).await {
+                Ok(reports) if !reports.is_empty() => {
+                    let latest = reports.last().cloned().expect("reports is not empty");
+                    let next_report_at = next_report_status_time(Utc::now());
+                    update_report_success(&state, Utc::now(), next_report_at, latest);
                 }
-                Ok(None) => {
+                Ok(_) => {
                     if let Ok(mut status) = state.analysis_status.lock() {
                         status.report.status = "idle".into();
-                        status.report.next_run_at = Some(next_run_at);
+                        status.report.next_run_at = Some(next_report_status_time(Utc::now()));
                     }
                 }
                 Err(error) => {
@@ -1297,26 +1546,58 @@ fn spawn_insight_report_loop(state: AppState) -> tokio::task::JoinHandle<()> {
     })
 }
 
-async fn maybe_generate_insight_report(
+async fn maybe_generate_due_insight_reports(
     state: &AppState,
-    period_end: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Result<Vec<InsightReport>> {
+    let mut generated = Vec::new();
+    for period in due_report_periods(state, now)? {
+        if let Some(report) = generate_insight_report_for_period(state, &period).await? {
+            generated.push(report);
+        }
+        if generated.len() >= REPORT_GENERATION_BATCH_LIMIT {
+            break;
+        }
+    }
+    Ok(generated)
+}
+
+fn due_report_periods(state: &AppState, now: DateTime<Utc>) -> Result<Vec<ReportPeriod>> {
+    let now_local = now.with_timezone(&Local);
+    let mut candidates = Vec::new();
+    if let Some(hourly) = completed_hourly_period(now_local) {
+        candidates.push(hourly);
+    }
+    candidates.extend(completed_five_hour_periods(
+        now_local,
+        report_cadence_cutoff_date(),
+    ));
+    candidates.sort_by_key(|period| period.period_end);
+
+    let store = state
+        .store
+        .lock()
+        .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
+    let mut due = Vec::new();
+    for period in candidates {
+        if !store.insight_report_exists(period.kind, period.period_start, period.period_end)? {
+            due.push(period);
+        }
+    }
+    Ok(due)
+}
+
+async fn generate_insight_report_for_period(
+    state: &AppState,
+    period: &ReportPeriod,
 ) -> Result<Option<InsightReport>> {
-    let period_start = period_end - chrono::Duration::seconds(INSIGHT_REPORT_INTERVAL as i64);
     let window_summaries = {
         let store = state
             .store
             .lock()
             .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
-        if let Some(latest) = store.list_insight_reports(1)?.into_iter().next() {
-            let next_due =
-                latest.period_end + chrono::Duration::seconds(INSIGHT_REPORT_INTERVAL as i64);
-            if period_end < next_due {
-                return Ok(None);
-            }
-        }
-
         store
-            .list_visual_window_summaries_between(period_start, period_end, 1000)?
+            .list_visual_window_summaries_between(period.period_start, period.period_end, 1000)?
             .into_iter()
             .filter(|summary| summary.error.is_none())
             .collect::<Vec<_>>()
@@ -1326,7 +1607,12 @@ async fn maybe_generate_insight_report(
     }
 
     let mut report = ConfiguredInsightReporter::from_env()?
-        .report_from_window_summaries(period_start, period_end, &window_summaries)
+        .report_from_window_summaries(
+            period.kind,
+            period.period_start,
+            period.period_end,
+            &window_summaries,
+        )
         .await?;
     let report_id = {
         let mut store = state
@@ -1337,6 +1623,17 @@ async fn maybe_generate_insight_report(
     };
     report.id = report_id;
     Ok(Some(report))
+}
+
+fn next_report_status_time(now: DateTime<Utc>) -> DateTime<Utc> {
+    let now_local = now.with_timezone(&Local);
+    let next_hour = now_local
+        .date_naive()
+        .and_hms_opt(now_local.hour(), 0, 0)
+        .and_then(|value| value.checked_add_signed(chrono::Duration::hours(1)))
+        .and_then(|value| Local.from_local_datetime(&value).earliest())
+        .unwrap_or_else(|| now_local + chrono::Duration::seconds(INSIGHT_REPORT_CHECK_INTERVAL as i64));
+    next_hour.with_timezone(&Utc)
 }
 
 fn spawn_daily_brief_loop(state: AppState) -> tokio::task::JoinHandle<()> {
@@ -1865,10 +2162,16 @@ fn build_daily_brief_response(
         .store
         .lock()
         .map_err(|_| anyhow::anyhow!("store lock poisoned"))?;
-    let reports = store.list_insight_reports_between(
+    let hourly_reports = store.list_insight_reports_between(
         date_window.start_utc,
         date_window.end_utc,
-        Some("5h"),
+        Some(HOURLY_REPORT_KIND),
+        500,
+    )?;
+    let five_hour_reports = store.list_insight_reports_between(
+        date_window.start_utc,
+        date_window.end_utc,
+        Some(FIVE_HOUR_REPORT_KIND),
         100,
     )?;
     let brief = store.get_daily_brief_by_date(&date_window.date, &schedule_label)?;
@@ -1879,13 +2182,17 @@ fn build_daily_brief_response(
             &date_window.date,
             date_window.start_utc,
             date_window.end_utc,
-            &reports,
+            &five_hour_reports,
         )?
     };
     let hourly_metrics = if let Some(brief) = &brief {
         brief.hourly_metrics.clone()
     } else {
-        store.build_hourly_activity_metrics(date_window.start_utc, date_window.end_utc, &reports)?
+        store.build_hourly_activity_metrics(
+            date_window.start_utc,
+            date_window.end_utc,
+            &five_hour_reports,
+        )?
     };
     let comparison = if let Some(brief) = &brief {
         brief.comparison.clone()
@@ -1901,7 +2208,8 @@ fn build_daily_brief_response(
         status,
         next_run_at: next_daily_brief_run_at(Utc::now(), &schedule_label),
         brief,
-        five_hour_reports: reports,
+        hourly_reports,
+        five_hour_reports,
         descriptive_stats: stats,
         hourly_metrics,
         comparison,
@@ -1920,6 +2228,7 @@ fn build_notion_daily_archive_response(
         &archive_title,
         &daily_diary_title,
         response.brief.as_ref(),
+        &response.hourly_reports,
         &response.five_hour_reports,
         &response.descriptive_stats,
         &response.hourly_metrics,
@@ -1935,11 +2244,12 @@ fn build_notion_daily_archive_response(
             app: "time-state-recorder".into(),
             endpoint: "/api/notion/daily-archive".into(),
             local_date: response.date.clone(),
-            timezone: "query-local-date".into(),
+            timezone: "Asia/Shanghai UTC+8".into(),
         },
         status: response.status,
         archive_markdown,
         brief: response.brief,
+        hourly_reports: response.hourly_reports,
         five_hour_reports: response.five_hour_reports,
         descriptive_stats: response.descriptive_stats,
         hourly_metrics: response.hourly_metrics,
@@ -1956,6 +2266,7 @@ fn render_notion_archive_markdown(
     archive_title: &str,
     daily_diary_title: &str,
     brief: Option<&DailyBrief>,
+    hourly_reports: &[InsightReport],
     reports: &[InsightReport],
     stats: &DailyActivityStats,
     hourly_metrics: &[HourlyActivityMetric],
@@ -1991,11 +2302,11 @@ fn render_notion_archive_markdown(
     ));
     lines.push(format!(
         "- First activity: {}",
-        optional_time(stats.first_activity_at)
+        optional_human_time(stats.first_activity_at)
     ));
     lines.push(format!(
         "- Last activity: {}",
-        optional_time(stats.last_activity_at)
+        optional_human_time(stats.last_activity_at)
     ));
     lines.push(format!("- Top apps: {}", top_apps_text(&stats.top_apps)));
     lines.push(String::new());
@@ -2005,7 +2316,20 @@ fn render_notion_archive_markdown(
     lines.push("## Workflow Pattern".into());
     lines.extend(hourly_lines(hourly_metrics));
     lines.push(String::new());
-    lines.push("## Five-Hour Reports".into());
+    lines.push("## Hourly Reports".into());
+    if hourly_reports.is_empty() {
+        lines.push("- No hourly reports for this date yet.".into());
+    } else {
+        for report in hourly_reports {
+            lines.push(format!(
+                "- {}: {}",
+                human_report_range(report.period_start, report.period_end),
+                report.summary_text
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.push("## Scheduled 5h Reports".into());
     lines.extend(report_lines(reports));
     lines.push(String::new());
     lines.push("## Comparison".into());
@@ -2035,9 +2359,9 @@ fn render_notion_archive_markdown(
     lines.join("\n")
 }
 
-fn optional_time(value: Option<DateTime<Utc>>) -> String {
+fn optional_human_time(value: Option<DateTime<Utc>>) -> String {
     value
-        .map(|time| time.to_rfc3339())
+        .map(human_report_timestamp)
         .unwrap_or_else(|| "unknown".into())
 }
 
@@ -2065,9 +2389,8 @@ fn project_lines_from_reports(reports: &[InsightReport]) -> Vec<String> {
                 report.project_hints.join(", ")
             };
             format!(
-                "- {} to {}: {} ({})",
-                report.period_start.to_rfc3339(),
-                report.period_end.to_rfc3339(),
+                "- {}: {} ({})",
+                human_report_range(report.period_start, report.period_end),
                 projects,
                 category_mix_text(&report.category_mix)
             )
@@ -2111,9 +2434,8 @@ fn report_lines(reports: &[InsightReport]) -> Vec<String> {
                 report.project_hints.join(", ")
             };
             format!(
-                "- {} to {} | evidence {} | projects {} | {}",
-                report.period_start.to_rfc3339(),
-                report.period_end.to_rfc3339(),
+                "- {} | evidence {} | projects {} | {}",
+                human_report_range(report.period_start, report.period_end),
                 report.evidence_count,
                 projects,
                 report.summary_text

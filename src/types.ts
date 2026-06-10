@@ -331,6 +331,7 @@ export type DailyBriefResponse = {
   status: "missing" | "pending" | "running" | "complete" | "error" | string;
   nextRunAt?: string;
   brief?: DailyBrief;
+  hourlyReports: InsightReport[];
   fiveHourReports: InsightReport[];
   descriptiveStats: DailyActivityStats;
   hourlyMetrics: HourlyActivityMetric[];

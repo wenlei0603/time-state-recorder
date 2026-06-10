@@ -16,10 +16,13 @@ The endpoint is read-only. It is intended for local Notion Principles OS archiva
 - `status`: daily brief status, or `missing` when the generated daily brief does not exist yet.
 - `archiveMarkdown`: human-readable diary text.
 - `brief`: generated daily brief when available.
-- `fiveHourReports`: same-day 5-hour reports.
+- `hourlyReports`: same-day 1-hour reports generated at top-of-hour boundaries from 5-minute visual window summaries.
+- `fiveHourReports`: same-day scheduled 5-hour reports. Starting 2026-06-07 local date, expected slots are 10:00-15:00, 15:00-20:00, and 20:00-01:00.
 - `descriptiveStats`: activity, input, screenshot, app, category, and report counts.
 - `hourlyMetrics`: hourly workflow metrics and linked 5-hour report IDs.
 - `comparison`: comparison against recent baseline days.
+
+`archiveMarkdown` contains separate `Hourly Reports` and `Scheduled 5h Reports` sections. `periodStart`, `periodEnd`, and `generatedAt` remain UTC JSON machine fields; human-facing markdown and report text should use the owner local clock.
 
 ## Notion Principles OS Use
 

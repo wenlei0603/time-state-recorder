@@ -3,6 +3,7 @@ use tsr_collector::{
     insights::{
         LocalDailyBriefReporter, MiniMaxDailyBriefReporter, MiniMaxInsightConfig,
         MiniMaxInsightReporter, build_five_hour_report,
+        build_hourly_report_from_window_summaries,
         build_five_hour_report_from_window_summaries, observation_from_visual_summary,
         select_insight_report_provider,
     },
@@ -101,20 +102,22 @@ fn minimax_insight_report_uses_text_chat_completions() {
     );
 
     assert_eq!(request["model"], "MiniMax-M3");
-    assert_eq!(request["max_completion_tokens"], 10_000);
+    assert_eq!(request["max_completion_tokens"], 200_000);
     assert_eq!(request["messages"][1]["role"], "user");
     let prompt = request["messages"][1]["content"].as_str().unwrap();
     assert!(prompt.contains("observations="));
-    assert!(prompt.contains("periodStart=2026-06-03T13:00:00+08:00"));
-    assert!(prompt.contains("periodEnd=2026-06-03T18:00:00+08:00"));
+    assert!(prompt.contains("Asia/Shanghai UTC+8"));
+    assert!(prompt.contains("localPeriodStart=2026-06-03T13:00:00+08:00"));
+    assert!(prompt.contains("localPeriodEnd=2026-06-03T18:00:00+08:00"));
     assert!(prompt.contains(r#""capturedAt":"2026-06-03T13:05:00+08:00""#));
+    assert!(prompt.contains("must not emit UTC, Z, or +00:00"));
     assert!(!prompt.contains("2026-06-03T05:00:00Z"));
     assert!(!prompt.contains("2026-06-03T05:05:00Z"));
     assert_eq!(request["thinking"]["type"], "disabled");
 }
 
 #[test]
-fn minimax_daily_brief_request_defaults_to_ten_thousand_completion_tokens() {
+fn minimax_daily_brief_request_defaults_to_two_hundred_thousand_completion_tokens() {
     let reporter = MiniMaxDailyBriefReporter::new(MiniMaxInsightConfig::new(
         "test-key",
         "https://api.minimax.test/v1",
@@ -151,14 +154,16 @@ fn minimax_daily_brief_request_defaults_to_ten_thousand_completion_tokens() {
         &reports,
     );
 
-    assert_eq!(request["max_completion_tokens"], 10_000);
+    assert_eq!(request["max_completion_tokens"], 200_000);
     let prompt = request["messages"][1]["content"].as_str().unwrap();
     assert!(prompt.contains("parallel projects"));
-    assert!(prompt.contains("periodStart=2026-06-03T08:00:00+08:00"));
-    assert!(prompt.contains("periodEnd=2026-06-04T08:00:00+08:00"));
-    assert!(prompt.contains(r#""firstActivityAt":"2026-06-03T13:00:00+08:00""#));
-    assert!(prompt.contains(r#""startAt":"2026-06-03T17:00:00+08:00""#));
-    assert!(prompt.contains(r#""periodStart":"2026-06-03T13:00:00+08:00""#));
+    assert!(prompt.contains("Asia/Shanghai UTC+8"));
+    assert!(prompt.contains("localPeriodStart=2026-06-03T08:00:00+08:00"));
+    assert!(prompt.contains("localPeriodEnd=2026-06-04T08:00:00+08:00"));
+    assert!(prompt.contains(r#""localFirstActivityAt":"2026-06-03T13:00:00+08:00""#));
+    assert!(prompt.contains(r#""localStartAt":"2026-06-03T17:00:00+08:00""#));
+    assert!(prompt.contains(r#""localPeriodStart":"2026-06-03T13:00:00+08:00""#));
+    assert!(prompt.contains("must not emit UTC, Z, or +00:00"));
     assert!(!prompt.contains("2026-06-03T05:00:00Z"));
     assert!(!prompt.contains("2026-06-03T09:00:00Z"));
 }
@@ -377,6 +382,37 @@ fn builds_five_hour_report_from_visual_window_summaries() {
 }
 
 #[test]
+fn builds_hourly_report_from_visual_window_summaries() {
+    let windows = vec![
+        sample_window_summary(
+            1,
+            "2026-06-07T02:00:00Z",
+            "2026-06-07T02:05:00Z",
+            vec![1, 3, 5],
+            "整点后开始整理前端计划。",
+        ),
+        sample_window_summary(
+            2,
+            "2026-06-07T02:55:00Z",
+            "2026-06-07T03:00:00Z",
+            vec![6, 8, 10],
+            "完成后端报告 cadence 设计。",
+        ),
+    ];
+
+    let report = build_hourly_report_from_window_summaries(
+        ts("2026-06-07T02:00:00Z"),
+        ts("2026-06-07T03:00:00Z"),
+        &windows,
+    );
+
+    assert_eq!(report.report_kind, "1h");
+    assert_eq!(report.evidence_count, 2);
+    assert!(report.summary_text.contains("1 小时"));
+    assert!(report.summary_text.contains("完成后端报告 cadence 设计"));
+}
+
+#[test]
 fn local_daily_brief_builds_neutral_action_trajectory_from_five_hour_reports() {
     let reporter = LocalDailyBriefReporter;
     let reports = vec![
@@ -427,6 +463,10 @@ fn local_daily_brief_builds_neutral_action_trajectory_from_five_hour_reports() {
     assert!(brief.daily_summary_text.contains("1.0 小时"));
     assert!(brief.action_trajectory.contains("课程邮件"));
     assert!(brief.action_trajectory.contains("AMR 论文"));
+    assert!(brief.action_trajectory.contains("13:00-18:00"));
+    assert!(brief.action_trajectory.contains("18:00-23:00"));
+    assert!(!brief.action_trajectory.contains("05:00 - 10:00"));
+    assert!(!brief.action_trajectory.contains("10:00 - 15:00"));
     assert!(!brief.action_trajectory.contains("高效"));
     assert!(!brief.action_trajectory.contains("浪费"));
 }
@@ -457,9 +497,12 @@ fn minimax_insight_report_request_uses_window_summaries() {
     assert!(!prompt.contains("observations="));
     assert!(prompt.contains("switchingLevel"));
     assert!(prompt.contains("loafingLevel"));
-    assert!(prompt.contains("periodStart=2026-06-03T13:00:00+08:00"));
-    assert!(prompt.contains("periodEnd=2026-06-03T18:00:00+08:00"));
-    assert!(prompt.contains(r#""windowStart":"2026-06-03T13:00:00+08:00""#));
+    assert!(prompt.contains("Asia/Shanghai UTC+8"));
+    assert!(prompt.contains("localPeriodStart=2026-06-03T13:00:00+08:00"));
+    assert!(prompt.contains("localPeriodEnd=2026-06-03T18:00:00+08:00"));
+    assert!(prompt.contains(r#""localWindowStart":"2026-06-03T13:00:00+08:00""#));
+    assert!(prompt.contains(r#""localWindowEnd":"2026-06-03T13:05:00+08:00""#));
+    assert!(prompt.contains("must not emit UTC, Z, or +00:00"));
     assert!(!prompt.contains("2026-06-03T05:00:00Z"));
 }
 

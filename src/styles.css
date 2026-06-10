@@ -1455,11 +1455,6 @@ td:nth-child(2) {
   line-height: 1.65;
 }
 
-.dailyBriefLead {
-  font-weight: 700;
-  margin-bottom: 8px !important;
-}
-
 .hourlyHeatmap {
   display: grid;
   grid-template-columns: repeat(24, minmax(18px, 1fr));
@@ -1493,27 +1488,146 @@ td:nth-child(2) {
   gap: 10px;
 }
 
-.dailyReportRow {
+.structuredReportCard {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  padding: 12px;
   background: color-mix(in srgb, var(--surface) 88%, var(--surface-muted));
+  padding: 13px;
 }
 
-.dailyReportRow div {
-  display: flex;
-  justify-content: space-between;
+.structuredReportHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
-  margin-bottom: 8px;
+  align-items: start;
 }
 
-.dailyReportRow strong {
+.structuredReportHeader h4 {
+  margin: 2px 0 0;
+  color: var(--ink);
   font-family: var(--font-serif);
+  font-size: 1rem;
 }
 
-.dailyReportRow span {
+.structuredReportHeader .statusPill {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  white-space: nowrap;
+}
+
+.reportChipRow,
+.reportEvidenceList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.reportChipRow span,
+.reportEvidenceList span {
+  display: inline-flex;
+  max-width: min(100%, 240px);
+  overflow: hidden;
+  border-radius: 999px;
+  background: #f2f6f1;
+  color: #52635a;
+  font-size: 0.74rem;
+  font-weight: 750;
+  padding: 4px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reportEvidenceList span {
+  background: #edf3ee;
+  color: #356b63;
+}
+
+.structuredReportLead {
+  max-width: 72ch;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.reportPhaseList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reportPhaseList li {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) minmax(0, 1fr);
+  gap: 6px 10px;
+  align-items: start;
+  border-top: 1px solid #edf1ec;
+  padding-top: 8px;
+}
+
+.reportPhaseList strong {
+  color: var(--pine);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.reportPhaseList p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.reportPhaseList span {
+  grid-column: 2;
   color: var(--muted);
-  font-size: 0.86rem;
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
+.reportUncertainty {
+  display: grid;
+  gap: 6px;
+  border-left: 3px solid #d85c48;
+  background: #fff8f6;
+  color: #7c342e;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.45;
+  padding: 8px 10px;
+}
+
+.reportUncertainty span {
+  overflow-wrap: anywhere;
+}
+
+.rawReportDetails {
+  border-top: 1px solid #edf1ec;
+  color: var(--muted);
+  font-size: 0.82rem;
+  padding-top: 8px;
+}
+
+.rawReportDetails summary {
+  width: fit-content;
+  color: var(--pine);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.rawReportDetails p {
+  max-height: 220px;
+  overflow: auto;
+  margin-top: 8px;
+  border-radius: 6px;
+  background: #f6f8f3;
+  color: #233028;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  padding: 10px;
+  white-space: pre-wrap;
 }
 
 /* Daily Tracking */
