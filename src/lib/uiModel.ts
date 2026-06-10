@@ -1,4 +1,5 @@
 import type { TextSegment, TimeEvent } from "../types";
+import { OWNER_LOCAL_OFFSET_MINUTES } from "./dateQuery";
 import { summarizeByApplication, toDurationSeconds } from "./statistics";
 
 export type UiSourceMode = "sample" | "live";
@@ -135,7 +136,7 @@ export function visibleTimelineTitle(
 
 export function buildHourlyTimelineItems(
   events: TimeEvent[],
-  timeZoneOffsetMinutes = -new Date().getTimezoneOffset()
+  timeZoneOffsetMinutes = OWNER_LOCAL_OFFSET_MINUTES
 ): TimelineItem[] {
   const buckets = new Map<string, TimelineItem>();
   const offsetMs = timeZoneOffsetMinutes * 60 * 1000;

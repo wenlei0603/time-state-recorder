@@ -7,12 +7,11 @@ import {
 } from "./screenshots";
 
 function expectedDateQuery(path: string, date: string): string {
-  const offset = new Date(`${date}T00:00:00`).getTimezoneOffset();
-  return `${path}?date=${date}&tzOffsetMinutes=${offset}`;
+  return `${path}?date=${date}&tzOffsetMinutes=-480`;
 }
 
 describe("screenshot date queries", () => {
-  it("includes the browser timezone offset for local-day filtering", async () => {
+  it("uses the owner Asia/Shanghai offset for local-day filtering", async () => {
     const fetcher = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({

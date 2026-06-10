@@ -1,5 +1,6 @@
 import { Clock, Layers, ShieldAlert } from "lucide-react";
 import { useMemo } from "react";
+import { formatOwnerClock } from "./lib/dateQuery";
 import type { TimeEvent } from "./types";
 import {
   buildHourlyTimelineItems,
@@ -89,9 +90,5 @@ export function TimelineView({
 }
 
 function formatTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "Invalid";
-  }
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return formatOwnerClock(value);
 }

@@ -4,8 +4,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tokio::time;
 use tsr_collector::{
-    api, models::LifecycleType, notion_smoke::run_notion_daily_archive_smoke, storage::Store,
-    window::sample_foreground_window,
+    api, config::AppConfig, models::LifecycleType, notion_smoke::run_notion_daily_archive_smoke,
+    storage::Store, window::sample_foreground_window,
 };
 
 #[derive(Debug, Parser)]
@@ -28,14 +28,16 @@ enum Command {
         poll_ms: u64,
     },
     Serve {
-        #[arg(long, default_value = "data/local.sqlite3")]
-        db: PathBuf,
+        #[arg(long)]
+        db: Option<PathBuf>,
         #[arg(long, default_value = "127.0.0.1:4317")]
         addr: SocketAddr,
         #[arg(long, default_value_t = 1000)]
         poll_ms: u64,
         #[arg(long, default_value = "blocker_config.json")]
         blocker_config: PathBuf,
+        #[arg(long, default_value = "data/app-config.json")]
+        config: PathBuf,
     },
     NotionDailyArchiveSmoke {
         #[arg(long, default_value = "reports/notion-daily-archive-smoke.json")]
@@ -79,11 +81,23 @@ async fn main() -> Result<()> {
             addr,
             poll_ms,
             blocker_config,
+            config,
         } => {
-            ensure_poll_ms(poll_ms)?;
-            let store = Store::open(db)?;
+            let app_config = load_serve_config(&config, db, addr, poll_ms)?;
+            ensure_poll_ms(app_config.runtime.poll_ms)?;
+            let store = Store::open(app_config.storage.database_path.clone())?;
             store.init()?;
-            api::serve(store, addr, poll_ms, Some(blocker_config)).await?;
+            let listen_addr: SocketAddr = app_config.runtime.api_addr.parse()?;
+            let runtime_poll_ms = app_config.runtime.poll_ms;
+            api::serve_with_config(
+                store,
+                listen_addr,
+                runtime_poll_ms,
+                Some(blocker_config),
+                app_config,
+                Some(config),
+            )
+            .await?;
         }
         Command::NotionDailyArchiveSmoke { artifact } => {
             let summary = run_notion_daily_archive_smoke(&artifact).await?;
@@ -101,6 +115,31 @@ fn load_local_env() {
 fn ensure_poll_ms(poll_ms: u64) -> Result<()> {
     anyhow::ensure!(poll_ms >= 100, "--poll-ms must be at least 100");
     Ok(())
+}
+
+fn load_serve_config(
+    config_path: &PathBuf,
+    db_override: Option<PathBuf>,
+    addr: SocketAddr,
+    poll_ms: u64,
+) -> Result<AppConfig> {
+    let mut config = if config_path.exists() {
+        AppConfig::load_from_path(config_path)?
+    } else {
+        AppConfig::default_for_paths(
+            PathBuf::from("data/local.sqlite3"),
+            PathBuf::from("data/screenshots"),
+            PathBuf::from("data/high-res-screenshots"),
+        )
+    };
+
+    if let Some(db) = db_override {
+        config.storage.database_path = db;
+    }
+    config.runtime.api_addr = addr.to_string();
+    config.runtime.poll_ms = poll_ms;
+    config.save_to_path(config_path)?;
+    Ok(config)
 }
 
 async fn record_for(store: &mut Store, session_id: &str, seconds: u64, poll_ms: u64) -> Result<()> {

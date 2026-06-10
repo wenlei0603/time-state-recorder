@@ -244,6 +244,115 @@ h2 {
   min-height: 38px;
 }
 
+.settingsWorkspace {
+  display: block;
+}
+
+.settingsPanel {
+  display: grid;
+  gap: 16px;
+  border: 1px solid #d9dfd8;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 12px 28px rgba(23, 33, 27, 0.06);
+  padding: 18px;
+}
+
+.settingsHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settingsGrid {
+  display: grid;
+  grid-template-columns: minmax(280px, 1.15fr) minmax(280px, 1fr);
+  gap: 14px;
+}
+
+.settingsSection {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  border: 1px solid #d9dfd8;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.settingsSection:last-child {
+  grid-column: 1 / -1;
+}
+
+.settingsFields {
+  display: grid;
+  gap: 12px;
+}
+
+.twoColumnFields {
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+}
+
+.settingsFields label {
+  display: grid;
+  gap: 5px;
+}
+
+.settingsFields label > span,
+.settingsHint {
+  color: #5f6d65;
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.settingsFields input,
+.settingsFields select {
+  min-height: 38px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #c6d2c9;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #17211b;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  padding: 0 10px;
+}
+
+.settingsFields input:focus-visible,
+.settingsFields select:focus-visible {
+  outline: 2px solid #8fb6a7;
+  outline-offset: 2px;
+}
+
+.settingsHint {
+  margin: -2px 0 0;
+  text-transform: none;
+}
+
+.settingsNotice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 1px solid #c6d2c9;
+  border-radius: 8px;
+  background: #f7faf6;
+  color: #2f635c;
+  font-size: 0.86rem;
+  font-weight: 800;
+  padding: 8px 10px;
+}
+
+.settingsNotice.restart {
+  border-color: #d4b45c;
+  background: #fff9df;
+  color: #71581a;
+}
+
 .filterBand {
   display: flex;
   flex-wrap: wrap;
@@ -2767,9 +2876,16 @@ td:nth-child(2) {
 
   .sectionHeader,
   .activityReviewGrid,
-  .activityReviewGrid.wide {
+  .activityReviewGrid.wide,
+  .settingsHeader,
+  .settingsGrid,
+  .twoColumnFields {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .settingsSection:last-child {
+    grid-column: auto;
   }
 
   .activityBucketButton {

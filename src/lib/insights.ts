@@ -12,6 +12,7 @@ import type {
   VisualTrajectoryPoint,
   VisualWindowSummary,
 } from "../types";
+import { collectorDateQuery, OWNER_TZ_OFFSET_MINUTES } from "./dateQuery";
 
 type Fetcher = (input: string) => Promise<Pick<Response, "ok" | "status" | "statusText" | "json">>;
 type InsightReportsQuery = number | {
@@ -76,7 +77,7 @@ function insightReportsPath(query: InsightReportsQuery): string {
   const params = new URLSearchParams();
   if (query.date) {
     params.set("date", query.date);
-    params.set("tzOffsetMinutes", String(timezoneOffsetMinutes(query.date)));
+    params.set("tzOffsetMinutes", String(OWNER_TZ_OFFSET_MINUTES));
   }
   if (query.kind) {
     params.set("kind", query.kind);
@@ -92,7 +93,7 @@ export async function fetchVisualObservations(
   date: string,
   fetcher: Fetcher = fetch,
 ): Promise<VisualObservation[]> {
-  const response = await fetcher(dateQuery("/api/visual-observations", date));
+  const response = await fetcher(collectorDateQuery("/api/visual-observations", date));
   if (!response.ok) {
     throw new Error(
       `Collector API failed: ${response.status} ${response.statusText}`.trim(),
@@ -111,7 +112,7 @@ export async function fetchVisualWindowSummaries(
   date: string,
   fetcher: Fetcher = fetch,
 ): Promise<VisualWindowSummary[]> {
-  const response = await fetcher(dateQuery("/api/visual-window-summaries", date));
+  const response = await fetcher(collectorDateQuery("/api/visual-window-summaries", date));
   if (!response.ok) {
     throw new Error(
       `Collector API failed: ${response.status} ${response.statusText}`.trim(),
@@ -124,22 +125,6 @@ export async function fetchVisualWindowSummaries(
   }
 
   return body.summaries.map(toVisualWindowSummary);
-}
-
-function dateQuery(path: string, date: string): string {
-  const params = new URLSearchParams({
-    date,
-    tzOffsetMinutes: String(timezoneOffsetMinutes(date)),
-  });
-  return `${path}?${params.toString()}`;
-}
-
-function timezoneOffsetMinutes(date: string): number {
-  const localMidnight = new Date(`${date}T00:00:00`);
-  if (!Number.isNaN(localMidnight.getTime())) {
-    return localMidnight.getTimezoneOffset();
-  }
-  return new Date().getTimezoneOffset();
 }
 
 function toWorkerStatus(value: unknown): AnalysisWorkerStatus {

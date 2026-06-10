@@ -446,3 +446,50 @@ export type CollectorHealth = {
   screenshotCollector: SubsystemHealth;
   dbStats: DbStats;
 };
+
+export type AppStorageConfig = {
+  databasePath: string;
+  screenshotDir: string;
+  highResScreenshotDir: string;
+};
+
+export type AppRuntimeConfig = {
+  apiAddr: string;
+  pollMs: number;
+};
+
+export type AppCaptureConfig = {
+  screenshotIntervalSecs: number;
+  highResScreenshotIntervalSecs: number;
+  idleThresholdSecs: number;
+};
+
+export type AppVisualConfig = {
+  provider: "local" | "minimax" | string;
+  apiKey?: string | null;
+  apiKeyMasked?: string;
+  baseUrl?: string;
+  model: string;
+  imageDetail: "low" | "default" | "high" | string;
+  maxCompletionTokens: number;
+};
+
+export type AppConfig = {
+  storage: AppStorageConfig;
+  runtime: AppRuntimeConfig;
+  capture: AppCaptureConfig;
+  visual: AppVisualConfig;
+};
+
+export type AppConfigResponse = {
+  config: AppConfig;
+  restartRequired: boolean;
+  restartReasons: string[];
+};
+
+export type AppConfigPatch = {
+  storage?: Partial<AppStorageConfig>;
+  runtime?: Partial<AppRuntimeConfig>;
+  capture?: Partial<AppCaptureConfig>;
+  visual?: Partial<AppVisualConfig>;
+};

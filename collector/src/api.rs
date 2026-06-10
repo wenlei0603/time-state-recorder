@@ -13,7 +13,7 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use chrono::{DateTime, FixedOffset, Local, NaiveDate, TimeZone, Timelike, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, TimeZone, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::{sync::oneshot, time};
 use tower_http::services::ServeDir;
@@ -21,6 +21,7 @@ use tower_http::services::ServeDir;
 use crate::{
     activity::{ActivityBucketQuery, build_activity_buckets},
     blocker::BlockerEngine,
+    config::{AppConfig, AppConfigPatch},
     image_retention::{ImageRetentionPolicy, cleanup_expired_images},
     input,
     insights::{ConfiguredDailyBriefReporter, ConfiguredInsightReporter, LocalDailyBriefReporter},
@@ -32,7 +33,7 @@ use crate::{
         SubsystemHealth, TimeEvent, VisualObservation, VisualSummary, VisualWindowSummary,
         WindowSnapshot,
     },
-    prompt_time::{human_report_range, human_report_timestamp},
+    prompt_time::{human_report_range, human_report_timestamp, owner_local_offset},
     screenshot,
     storage::Store,
     visual_analysis::{
@@ -45,6 +46,8 @@ use crate::{
 #[derive(Clone)]
 pub struct AppState {
     store: Arc<Mutex<Store>>,
+    app_config: Arc<Mutex<AppConfig>>,
+    app_config_path: Arc<Option<PathBuf>>,
     blocker_engine: Arc<BlockerEngine>,
     screenshot_dir: Arc<PathBuf>,
     screenshot_interval_secs: Arc<u64>,
@@ -258,11 +261,8 @@ struct TextSegmentsResponse {
     segments: Vec<crate::models::TextSegment>,
 }
 
-const DEFAULT_SCREENSHOT_INTERVAL: u64 = 60;
-const DEFAULT_IDLE_THRESHOLD: u64 = 120;
 const DEFAULT_SCREENSHOT_LIMIT: usize = 1440;
 const DEFAULT_HIGH_RES_SCREENSHOT_LIMIT: usize = 1440;
-const DEFAULT_HIGH_RES_SCREENSHOT_INTERVAL: u64 = 60;
 const THUMBNAIL_SCREENSHOT_MAX_WIDTH: u32 = 960;
 const THUMBNAIL_SCREENSHOT_QUALITY: u8 = 82;
 const HIGH_RES_SCREENSHOT_MAX_WIDTH: u32 = 1600;
@@ -332,19 +332,46 @@ fn default_state(
     blocker_config_path: Option<PathBuf>,
     shutdown_tx: Option<oneshot::Sender<()>>,
 ) -> AppState {
+    default_state_with_config(
+        store,
+        blocker_config_path,
+        shutdown_tx,
+        AppConfig::default_for_paths(
+            PathBuf::from("data/local.sqlite3"),
+            PathBuf::from("data/screenshots"),
+            PathBuf::from("data/high-res-screenshots"),
+        ),
+        None,
+    )
+}
+
+fn default_state_with_config(
+    store: Store,
+    blocker_config_path: Option<PathBuf>,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    app_config: AppConfig,
+    app_config_path: Option<PathBuf>,
+) -> AppState {
     let engine = blocker_config_path
         .as_deref()
         .and_then(|p| BlockerEngine::load(p).ok())
         .unwrap_or_else(BlockerEngine::empty);
     let now = Utc::now();
+    let screenshot_dir = app_config.storage.screenshot_dir.clone();
+    let high_res_screenshot_dir = app_config.storage.high_res_screenshot_dir.clone();
+    let screenshot_interval_secs = app_config.capture.screenshot_interval_secs;
+    let high_res_screenshot_interval_secs = app_config.capture.high_res_screenshot_interval_secs;
+    let idle_threshold_secs = app_config.capture.idle_threshold_secs;
     AppState {
         store: Arc::new(Mutex::new(store)),
+        app_config: Arc::new(Mutex::new(app_config)),
+        app_config_path: Arc::new(app_config_path),
         blocker_engine: Arc::new(engine),
-        screenshot_dir: Arc::new(PathBuf::from("data/screenshots")),
-        screenshot_interval_secs: Arc::new(DEFAULT_SCREENSHOT_INTERVAL),
-        high_res_screenshot_dir: Arc::new(PathBuf::from("data/high-res-screenshots")),
-        high_res_screenshot_interval_secs: Arc::new(DEFAULT_HIGH_RES_SCREENSHOT_INTERVAL),
-        idle_threshold_secs: Arc::new(DEFAULT_IDLE_THRESHOLD),
+        screenshot_dir: Arc::new(screenshot_dir),
+        screenshot_interval_secs: Arc::new(screenshot_interval_secs),
+        high_res_screenshot_dir: Arc::new(high_res_screenshot_dir),
+        high_res_screenshot_interval_secs: Arc::new(high_res_screenshot_interval_secs),
+        idle_threshold_secs: Arc::new(idle_threshold_secs),
         health: Arc::new(Mutex::new(CollectorHealth {
             status: "ok".into(),
             started_at: now,
@@ -409,6 +436,7 @@ fn router_from_state(state: AppState) -> Router {
         .route("/api/input-events", get(input_events))
         .route("/api/input-summary", get(input_summary))
         .route("/api/text-segments", get(text_segments))
+        .route("/api/config", get(app_config).patch(update_app_config))
         .route("/api/shutdown", post(shutdown))
         .nest_service("/screenshots", ServeDir::new(screenshot_dir))
         .nest_service(
@@ -419,17 +447,16 @@ fn router_from_state(state: AppState) -> Router {
 }
 
 fn date_window_from_query(query: &DateQuery) -> std::result::Result<DateWindow, String> {
-    let date = query
-        .date
-        .clone()
-        .unwrap_or_else(|| Local::now().format("%Y-%m-%d").to_string());
+    let date = query.date.clone().unwrap_or_else(|| {
+        Utc::now()
+            .with_timezone(&owner_local_offset())
+            .format("%Y-%m-%d")
+            .to_string()
+    });
     let parsed = NaiveDate::parse_from_str(&date, "%Y-%m-%d")
         .map_err(|_| "date must use YYYY-MM-DD".to_string())?;
-    let (start_utc, end_utc) = if let Some(offset_minutes) = query.tz_offset_minutes {
-        fixed_offset_day_bounds(parsed, offset_minutes)?
-    } else {
-        local_day_bounds(parsed)?
-    };
+    let _ignored_browser_offset = query.tz_offset_minutes;
+    let (start_utc, end_utc) = owner_day_bounds(parsed)?;
     Ok(DateWindow {
         date,
         start_utc,
@@ -438,7 +465,7 @@ fn date_window_from_query(query: &DateQuery) -> std::result::Result<DateWindow, 
 }
 
 fn date_window_for_local_date(date: NaiveDate) -> std::result::Result<DateWindow, String> {
-    let (start_utc, end_utc) = local_day_bounds(date)?;
+    let (start_utc, end_utc) = owner_day_bounds(date)?;
     Ok(DateWindow {
         date: date.format("%Y-%m-%d").to_string(),
         start_utc,
@@ -467,7 +494,7 @@ fn parse_daily_brief_time(value: &str) -> Option<(u32, u32)> {
     }
 }
 
-fn daily_brief_due_now(now: DateTime<Local>, schedule_label: &str) -> bool {
+fn daily_brief_due_now(now: DateTime<FixedOffset>, schedule_label: &str) -> bool {
     let Some(scheduled) = local_scheduled_at(now.date_naive(), schedule_label) else {
         return false;
     };
@@ -475,7 +502,7 @@ fn daily_brief_due_now(now: DateTime<Local>, schedule_label: &str) -> bool {
 }
 
 fn next_daily_brief_run_at(now: DateTime<Utc>, schedule_label: &str) -> Option<DateTime<Utc>> {
-    let now_local = now.with_timezone(&Local);
+    let now_local = now.with_timezone(&owner_local_offset());
     let today = now_local.date_naive();
     let today_run = local_scheduled_at(today, schedule_label)?;
     let next_local = if now_local < today_run {
@@ -487,27 +514,22 @@ fn next_daily_brief_run_at(now: DateTime<Utc>, schedule_label: &str) -> Option<D
     Some(next_local.with_timezone(&Utc))
 }
 
-fn local_scheduled_at(date: NaiveDate, schedule_label: &str) -> Option<DateTime<Local>> {
+fn local_scheduled_at(date: NaiveDate, schedule_label: &str) -> Option<DateTime<FixedOffset>> {
     let (hour, minute) = parse_daily_brief_time(schedule_label)?;
     let naive = date.and_hms_opt(hour, minute, 0)?;
-    Local.from_local_datetime(&naive).single()
+    owner_local_offset().from_local_datetime(&naive).single()
 }
 
-fn fixed_offset_day_bounds(
+fn owner_day_bounds(
     date: NaiveDate,
-    browser_offset_minutes: i32,
 ) -> std::result::Result<(DateTime<Utc>, DateTime<Utc>), String> {
-    let east_seconds = browser_offset_minutes
-        .checked_mul(-60)
-        .ok_or_else(|| "tzOffsetMinutes is out of range".to_string())?;
-    let offset = FixedOffset::east_opt(east_seconds)
-        .ok_or_else(|| "tzOffsetMinutes is out of range".to_string())?;
+    let offset = owner_local_offset();
     let start = date
         .and_hms_opt(0, 0, 0)
         .expect("midnight is valid")
         .and_local_timezone(offset)
         .single()
-        .ok_or_else(|| "date cannot be resolved for tzOffsetMinutes".to_string())?;
+        .ok_or_else(|| "date cannot be resolved for Asia/Shanghai".to_string())?;
     let end = date
         .succ_opt()
         .ok_or_else(|| "date is out of range".to_string())?
@@ -515,24 +537,7 @@ fn fixed_offset_day_bounds(
         .expect("midnight is valid")
         .and_local_timezone(offset)
         .single()
-        .ok_or_else(|| "date cannot be resolved for tzOffsetMinutes".to_string())?;
-    Ok((start.with_timezone(&Utc), end.with_timezone(&Utc)))
-}
-
-fn local_day_bounds(
-    date: NaiveDate,
-) -> std::result::Result<(DateTime<Utc>, DateTime<Utc>), String> {
-    let start = Local
-        .from_local_datetime(&date.and_hms_opt(0, 0, 0).expect("midnight is valid"))
-        .earliest()
-        .ok_or_else(|| "date cannot be resolved in the local timezone".to_string())?;
-    let end_date = date
-        .succ_opt()
-        .ok_or_else(|| "date is out of range".to_string())?;
-    let end = Local
-        .from_local_datetime(&end_date.and_hms_opt(0, 0, 0).expect("midnight is valid"))
-        .earliest()
-        .ok_or_else(|| "date cannot be resolved in the local timezone".to_string())?;
+        .ok_or_else(|| "date cannot be resolved for Asia/Shanghai".to_string())?;
     Ok((start.with_timezone(&Utc), end.with_timezone(&Utc)))
 }
 
@@ -595,10 +600,33 @@ fn insert_screenshot_capture(
 }
 
 pub async fn serve(
+    store: Store,
+    addr: SocketAddr,
+    poll_ms: u64,
+    blocker_config_path: Option<PathBuf>,
+) -> Result<()> {
+    serve_with_config(
+        store,
+        addr,
+        poll_ms,
+        blocker_config_path,
+        AppConfig::default_for_paths(
+            PathBuf::from("data/local.sqlite3"),
+            PathBuf::from("data/screenshots"),
+            PathBuf::from("data/high-res-screenshots"),
+        ),
+        None,
+    )
+    .await
+}
+
+pub async fn serve_with_config(
     mut store: Store,
     addr: SocketAddr,
     poll_ms: u64,
     blocker_config_path: Option<PathBuf>,
+    app_config: AppConfig,
+    app_config_path: Option<PathBuf>,
 ) -> Result<()> {
     anyhow::ensure!(poll_ms >= 100, "poll_ms must be at least 100");
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -613,7 +641,13 @@ pub async fn serve(
         serde_json::json!({ "appVersion": env!("CARGO_PKG_VERSION") }),
     )?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let state = default_state(store, blocker_config_path, Some(shutdown_tx));
+    let state = default_state_with_config(
+        store,
+        blocker_config_path,
+        Some(shutdown_tx),
+        app_config,
+        app_config_path,
+    );
 
     let window_collector = spawn_collector_loop(state.clone(), session_id.clone(), poll_ms);
     let screenshot_collector = spawn_screenshot_loop(
@@ -1210,7 +1244,8 @@ async fn process_next_visual_window_summary(
         previous_summary: pending_window.previous_summary.as_ref(),
     };
     let created_at = Utc::now();
-    let mut summary = ConfiguredVisualAnalyzer::from_env()?
+    let visual_config = visual_config_snapshot(state)?;
+    let mut summary = ConfiguredVisualAnalyzer::from_visual_config(&visual_config)?
         .analyze_window(&input, created_at)
         .await
         .with_context(|| {
@@ -1289,10 +1324,12 @@ fn report_cadence_cutoff_date() -> NaiveDate {
         .expect("fixed five-hour cutoff date must be valid")
 }
 
-fn completed_hourly_period(now: DateTime<Local>) -> Option<ReportPeriod> {
+fn completed_hourly_period(now: DateTime<FixedOffset>) -> Option<ReportPeriod> {
     let date = now.date_naive();
     let hour_start = date.and_hms_opt(now.hour(), 0, 0)?;
-    let local_end = Local.from_local_datetime(&hour_start).earliest()?;
+    let local_end = owner_local_offset()
+        .from_local_datetime(&hour_start)
+        .single()?;
     let local_start = local_end - chrono::Duration::seconds(HOURLY_REPORT_INTERVAL);
     Some(ReportPeriod {
         kind: HOURLY_REPORT_KIND,
@@ -1301,7 +1338,10 @@ fn completed_hourly_period(now: DateTime<Local>) -> Option<ReportPeriod> {
     })
 }
 
-fn completed_five_hour_periods(now: DateTime<Local>, cutoff_date: NaiveDate) -> Vec<ReportPeriod> {
+fn completed_five_hour_periods(
+    now: DateTime<FixedOffset>,
+    cutoff_date: NaiveDate,
+) -> Vec<ReportPeriod> {
     let today = now.date_naive();
     let mut periods = Vec::new();
     for owner_date in [today.pred_opt(), Some(today)].into_iter().flatten() {
@@ -1341,23 +1381,22 @@ fn completed_five_hour_periods(now: DateTime<Local>, cutoff_date: NaiveDate) -> 
     periods
 }
 
-fn local_time_on_date(date: NaiveDate, hour: u32, minute: u32) -> Option<DateTime<Local>> {
+fn local_time_on_date(date: NaiveDate, hour: u32, minute: u32) -> Option<DateTime<FixedOffset>> {
     let naive = date.and_hms_opt(hour, minute, 0)?;
-    Local.from_local_datetime(&naive).earliest()
+    owner_local_offset().from_local_datetime(&naive).single()
 }
 
 #[cfg(test)]
 mod report_cadence_tests {
     use super::*;
-    use chrono::{LocalResult, NaiveDate, TimeZone};
+    use chrono::NaiveDate;
 
-    fn local_ts(value: &str) -> DateTime<Local> {
+    fn local_ts(value: &str) -> DateTime<FixedOffset> {
         let naive = chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S").unwrap();
-        match Local.from_local_datetime(&naive) {
-            LocalResult::Single(value) => value,
-            LocalResult::Ambiguous(value, _) => value,
-            LocalResult::None => panic!("test timestamp cannot be represented in local timezone"),
-        }
+        owner_local_offset()
+            .from_local_datetime(&naive)
+            .single()
+            .expect("test timestamp must be representable in owner timezone")
     }
 
     #[test]
@@ -1370,7 +1409,7 @@ mod report_cadence_tests {
         assert_eq!(
             period
                 .period_start
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%H:%M")
                 .to_string(),
             "14:00"
@@ -1378,7 +1417,7 @@ mod report_cadence_tests {
         assert_eq!(
             period
                 .period_end
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%H:%M")
                 .to_string(),
             "15:00"
@@ -1398,7 +1437,7 @@ mod report_cadence_tests {
         assert_eq!(
             after[0]
                 .period_start
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%H:%M")
                 .to_string(),
             "10:00"
@@ -1406,7 +1445,7 @@ mod report_cadence_tests {
         assert_eq!(
             after[0]
                 .period_end
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%H:%M")
                 .to_string(),
             "15:00"
@@ -1414,7 +1453,7 @@ mod report_cadence_tests {
         assert_eq!(
             after[1]
                 .period_start
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%H:%M")
                 .to_string(),
             "15:00"
@@ -1422,7 +1461,7 @@ mod report_cadence_tests {
         assert_eq!(
             after[1]
                 .period_end
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%H:%M")
                 .to_string(),
             "20:00"
@@ -1438,14 +1477,14 @@ mod report_cadence_tests {
         let last = periods.last().unwrap();
         assert_eq!(
             last.period_start
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%Y-%m-%d %H:%M")
                 .to_string(),
             "2026-06-07 20:00"
         );
         assert_eq!(
             last.period_end
-                .with_timezone(&Local)
+                .with_timezone(&owner_local_offset())
                 .format("%Y-%m-%d %H:%M")
                 .to_string(),
             "2026-06-08 01:00"
@@ -1483,9 +1522,12 @@ mod report_cadence_tests {
                         period.kind,
                         period
                             .period_start
-                            .with_timezone(&Local)
+                            .with_timezone(&owner_local_offset())
                             .format("%H:%M"),
-                        period.period_end.with_timezone(&Local).format("%H:%M")
+                        period
+                            .period_end
+                            .with_timezone(&owner_local_offset())
+                            .format("%H:%M")
                     )
                 })
                 .collect::<Vec<_>>(),
@@ -1563,7 +1605,7 @@ async fn maybe_generate_due_insight_reports(
 }
 
 fn due_report_periods(state: &AppState, now: DateTime<Utc>) -> Result<Vec<ReportPeriod>> {
-    let now_local = now.with_timezone(&Local);
+    let now_local = now.with_timezone(&owner_local_offset());
     let mut candidates = Vec::new();
     if let Some(hourly) = completed_hourly_period(now_local) {
         candidates.push(hourly);
@@ -1606,7 +1648,8 @@ async fn generate_insight_report_for_period(
         return Ok(None);
     }
 
-    let mut report = ConfiguredInsightReporter::from_env()?
+    let visual_config = visual_config_snapshot(state)?;
+    let mut report = ConfiguredInsightReporter::from_visual_config(&visual_config)?
         .report_from_window_summaries(
             period.kind,
             period.period_start,
@@ -1626,13 +1669,15 @@ async fn generate_insight_report_for_period(
 }
 
 fn next_report_status_time(now: DateTime<Utc>) -> DateTime<Utc> {
-    let now_local = now.with_timezone(&Local);
+    let now_local = now.with_timezone(&owner_local_offset());
     let next_hour = now_local
         .date_naive()
         .and_hms_opt(now_local.hour(), 0, 0)
         .and_then(|value| value.checked_add_signed(chrono::Duration::hours(1)))
-        .and_then(|value| Local.from_local_datetime(&value).earliest())
-        .unwrap_or_else(|| now_local + chrono::Duration::seconds(INSIGHT_REPORT_CHECK_INTERVAL as i64));
+        .and_then(|value| owner_local_offset().from_local_datetime(&value).single())
+        .unwrap_or_else(|| {
+            now_local + chrono::Duration::seconds(INSIGHT_REPORT_CHECK_INTERVAL as i64)
+        });
     next_hour.with_timezone(&Utc)
 }
 
@@ -1647,8 +1692,9 @@ fn spawn_daily_brief_loop(state: AppState) -> tokio::task::JoinHandle<()> {
                 });
             update_daily_running(&state, started_at);
 
-            if daily_brief_due_now(Local::now(), &schedule_label) {
-                let local_date = Local::now().date_naive();
+            let now_local = Utc::now().with_timezone(&owner_local_offset());
+            if daily_brief_due_now(now_local, &schedule_label) {
+                let local_date = now_local.date_naive();
                 let generation_result = match date_window_for_local_date(local_date) {
                     Ok(date_window) => {
                         async_maybe_generate_daily_brief(&state, date_window, &schedule_label).await
@@ -1709,7 +1755,8 @@ async fn async_maybe_generate_daily_brief(
         (reports, stats, hourly_metrics, comparison)
     };
 
-    let report_result = ConfiguredDailyBriefReporter::from_env()?
+    let visual_config = visual_config_snapshot(state)?;
+    let report_result = ConfiguredDailyBriefReporter::from_visual_config(&visual_config)?
         .report(
             &date_window.date,
             date_window.start_utc,
@@ -2461,6 +2508,45 @@ async fn analysis_status(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
+async fn app_config(State(state): State<AppState>) -> impl IntoResponse {
+    match state.app_config.lock() {
+        Ok(config) => Json(config.to_public_response(false, Vec::new())).into_response(),
+        Err(_) => internal_error("app config lock poisoned"),
+    }
+}
+
+async fn update_app_config(
+    State(state): State<AppState>,
+    Json(patch): Json<AppConfigPatch>,
+) -> impl IntoResponse {
+    let (updated, restart_reasons) = {
+        let mut config = match state.app_config.lock() {
+            Ok(config) => config,
+            Err(_) => return internal_error("app config lock poisoned"),
+        };
+        let restart_reasons = match config.apply_patch(patch) {
+            Ok(reasons) => reasons,
+            Err(error) => return bad_request(error),
+        };
+        if let Some(path) = state.app_config_path.as_ref().as_ref() {
+            if let Err(error) = config.save_to_path(path) {
+                return internal_error(error);
+            }
+        }
+        (config.clone(), restart_reasons)
+    };
+
+    Json(updated.to_public_response(!restart_reasons.is_empty(), restart_reasons)).into_response()
+}
+
+fn visual_config_snapshot(state: &AppState) -> Result<crate::config::VisualConfig> {
+    let config = state
+        .app_config
+        .lock()
+        .map_err(|_| anyhow::anyhow!("app config lock poisoned"))?;
+    Ok(config.visual.clone())
+}
+
 async fn analyze_screenshot(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -2486,7 +2572,11 @@ async fn analyze_screenshot(
         screenshot: &screenshot,
         image_path: image_path.as_deref(),
     };
-    let analyzer = match ConfiguredVisualAnalyzer::from_env() {
+    let visual_config = match visual_config_snapshot(&state) {
+        Ok(config) => config,
+        Err(err) => return internal_error(err),
+    };
+    let analyzer = match ConfiguredVisualAnalyzer::from_visual_config(&visual_config) {
         Ok(analyzer) => analyzer,
         Err(err) => return internal_error(err),
     };
@@ -2604,6 +2694,7 @@ async fn shutdown_signal(mut shutdown_rx: oneshot::Receiver<()>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::extract::State;
 
     #[test]
     fn window_capture_success_updates_health_after_prior_error() {
@@ -2731,6 +2822,84 @@ mod tests {
         assert_eq!(profile.max_width, 960);
         assert_eq!(profile.quality, 82);
         assert_eq!(profile.directory, PathBuf::from("data/screenshots"));
+    }
+
+    #[tokio::test]
+    async fn config_endpoint_redacts_secrets_and_persists_updates() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("settings.json");
+        let mut config = crate::config::AppConfig::default_for_paths(
+            PathBuf::from("data/local.sqlite3"),
+            PathBuf::from("data/screenshots"),
+            PathBuf::from("data/high-res-screenshots"),
+        );
+        config.visual.api_key = Some("secret-token".into());
+        config.visual.base_url = Some("https://api.example.test/v1".into());
+        config.visual.model = "MiniMax-M3".into();
+        config.save_to_path(&config_path).unwrap();
+
+        let store = Store::open_memory().unwrap();
+        store.init().unwrap();
+        let state = default_state_with_config(store, None, None, config, Some(config_path.clone()));
+
+        let response = app_config(State(state.clone())).await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let visible: crate::config::PublicAppConfigResponse =
+            serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            visible.config.visual.api_key_masked.as_deref(),
+            Some("********oken")
+        );
+        assert_eq!(visible.config.visual.api_key, None);
+
+        let update = crate::config::AppConfigPatch {
+            visual: Some(crate::config::VisualConfigPatch {
+                provider: Some("minimax".into()),
+                api_key: Some("updated-token".into()),
+                base_url: Some("https://api.updated.test/v1".into()),
+                model: Some("MiniMax-M3".into()),
+                image_detail: None,
+                max_completion_tokens: Some(120_000),
+            }),
+            storage: Some(crate::config::StorageConfigPatch {
+                database_path: Some(PathBuf::from("D:/TSR/dev.sqlite3")),
+                screenshot_dir: None,
+                high_res_screenshot_dir: None,
+            }),
+            runtime: None,
+            capture: None,
+        };
+
+        let response = update_app_config(State(state), Json(update))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let updated: crate::config::PublicAppConfigResponse =
+            serde_json::from_slice(&body).unwrap();
+
+        assert!(updated.restart_required);
+        assert!(
+            updated
+                .restart_reasons
+                .iter()
+                .any(|reason| reason == "database_path")
+        );
+        assert_eq!(
+            updated.config.visual.api_key_masked.as_deref(),
+            Some("********oken")
+        );
+        let persisted = crate::config::AppConfig::load_from_path(&config_path).unwrap();
+        assert_eq!(persisted.visual.api_key.as_deref(), Some("updated-token"));
+        assert_eq!(
+            persisted.storage.database_path,
+            PathBuf::from("D:/TSR/dev.sqlite3")
+        );
     }
 
     #[test]

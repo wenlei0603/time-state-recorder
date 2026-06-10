@@ -6,6 +6,7 @@ import {
   formatBucketMinutes,
   summarizeActivityBuckets
 } from "./lib/activity";
+import { formatOwnerClock } from "./lib/dateQuery";
 import type { UiSourceMode } from "./lib/uiModel";
 
 type ActivityReviewProps = {
@@ -271,12 +272,5 @@ function isInsideBucket(value: string, start: string, end: string): boolean {
 }
 
 function timeLabel(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return date.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+  return formatOwnerClock(value, value);
 }

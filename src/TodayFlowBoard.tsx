@@ -8,6 +8,11 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import {
+  formatOwnerClock,
+  formatOwnerShortDateTime,
+  isSameOwnerDate,
+} from "./lib/dateQuery";
 import { buildTodayFlowModel } from "./lib/flowModel";
 import { formatDuration } from "./lib/uiModel";
 import type {
@@ -531,7 +536,7 @@ function parseDate(value: string): Date | null {
 
 function formatRangeFromDates(startedAt: Date, endedAt: Date): string {
   const showDate =
-    endedAt < startedAt || !isSameLocalDate(startedAt, endedAt);
+    endedAt < startedAt || !isSameOwnerDate(startedAt, endedAt);
   if (showDate) {
     return `${formatShortDateTime(startedAt)} - ${formatShortDateTime(endedAt)}`;
   }
@@ -540,23 +545,9 @@ function formatRangeFromDates(startedAt: Date, endedAt: Date): string {
 }
 
 function formatShortDateTime(date: Date): string {
-  return `${pad2(date.getMonth() + 1)}/${pad2(date.getDate())} ${formatClock(
-    date,
-  )}`;
+  return formatOwnerShortDateTime(date);
 }
 
 function formatClock(date: Date): string {
-  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
-}
-
-function isSameLocalDate(left: Date, right: Date): boolean {
-  return (
-    left.getFullYear() === right.getFullYear() &&
-    left.getMonth() === right.getMonth() &&
-    left.getDate() === right.getDate()
-  );
-}
-
-function pad2(value: number): string {
-  return value.toString().padStart(2, "0");
+  return formatOwnerClock(date);
 }

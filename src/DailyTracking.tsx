@@ -1,6 +1,7 @@
 import { Camera, Clock, ImageIcon, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { DailyBriefPanel } from "./DailyBriefPanel";
+import { formatOwnerClock, ownerHour } from "./lib/dateQuery";
 import type { PrivacyMode, UiSourceMode } from "./lib/uiModel";
 import type {
   DailyBriefResponse,
@@ -29,18 +30,7 @@ interface DailyTrackingProps {
 }
 
 function formatTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Invalid";
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-function toLocalDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  return formatOwnerClock(value);
 }
 
 function ScreenshotFrame({
@@ -100,7 +90,10 @@ export function DailyTracking({
   const grouped = useMemo(() => {
     const map = new Map<string, ScreenshotMeta[]>();
     for (const shot of screenshots) {
-      const hour = new Date(shot.capturedAt).getHours();
+      const hour = ownerHour(shot.capturedAt);
+      if (hour === undefined) {
+        continue;
+      }
       const label = `${String(hour).padStart(2, "0")}:00`;
       const list = map.get(label);
       if (list) {
