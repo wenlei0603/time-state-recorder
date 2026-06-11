@@ -5,6 +5,12 @@ import type {
   DailyBrief,
   DailyBriefResponse,
   DailyComparison,
+  DiaryDashboard,
+  DiaryDashboardEntity,
+  DiaryDashboardRole,
+  DiaryDashboardTeam,
+  DiaryDashboardTimeBlock,
+  DiaryRoleHeterogeneity,
   HourlyActivityMetric,
   InsightReport,
 } from "../types";
@@ -41,6 +47,7 @@ function toDailyBriefResponse(value: Record<string, unknown>): DailyBriefRespons
     descriptiveStats: readDailyActivityStats(value, "descriptiveStats"),
     hourlyMetrics: readArray(value, "hourlyMetrics", toHourlyActivityMetric),
     comparison: readDailyComparison(value, "comparison"),
+    diaryDashboard: readOptionalRecord(value, "diaryDashboard", toDiaryDashboard),
   };
 }
 
@@ -158,6 +165,94 @@ function readDailyComparison(record: Record<string, unknown>, key: string): Dail
   };
 }
 
+function toDiaryDashboard(value: unknown): DiaryDashboard {
+  const row = assertRecord(value, "diary dashboard");
+  return {
+    overview: readString(row, "overview"),
+    collaborators: readOptionalArray(row, "collaborators", toDiaryDashboardEntity),
+    locations: readOptionalArray(row, "locations", toDiaryDashboardEntity),
+    workTypes: readOptionalArray(row, "workTypes", toDiaryDashboardEntity),
+    roles: readOptionalArray(row, "roles", toDiaryDashboardRole),
+    roleHeterogeneity:
+      readOptionalRecord(row, "roleHeterogeneity", toDiaryRoleHeterogeneity) ??
+      emptyRoleHeterogeneity(),
+    teamCount: readNumber(row, "teamCount"),
+    teams: readOptionalArray(row, "teams", toDiaryDashboardTeam),
+    timeDistribution: readOptionalArray(row, "timeDistribution", toDiaryDashboardTimeBlock),
+    evidenceSummary: readOptionalString(row, "evidenceSummary") ?? "",
+    uncertainty: readOptionalString(row, "uncertainty") ?? "",
+  };
+}
+
+function toDiaryDashboardEntity(value: unknown): DiaryDashboardEntity {
+  const row = assertRecord(value, "diary dashboard entity");
+  return {
+    label: readString(row, "label"),
+    description: readOptionalString(row, "description") ?? "",
+    activeSeconds: readOptionalNumber(row, "activeSeconds"),
+    share: readOptionalNumber(row, "share"),
+    evidence: readOptionalStringArray(row, "evidence"),
+    confidence: readOptionalNumber(row, "confidence"),
+  };
+}
+
+function toDiaryDashboardRole(value: unknown): DiaryDashboardRole {
+  const row = assertRecord(value, "diary dashboard role");
+  return {
+    label: readString(row, "label"),
+    description: readOptionalString(row, "description") ?? "",
+    activeSeconds: readOptionalNumber(row, "activeSeconds"),
+    share: readOptionalNumber(row, "share"),
+    teams: readOptionalStringArray(row, "teams"),
+    evidence: readOptionalStringArray(row, "evidence"),
+  };
+}
+
+function toDiaryRoleHeterogeneity(value: unknown): DiaryRoleHeterogeneity {
+  const row = assertRecord(value, "role heterogeneity");
+  return {
+    level: readOptionalString(row, "level") ?? "unknown",
+    score: readOptionalNumber(row, "score") ?? 0,
+    summary: readOptionalString(row, "summary") ?? "",
+    distinctRoleCount: readOptionalNumber(row, "distinctRoleCount") ?? 0,
+  };
+}
+
+function toDiaryDashboardTeam(value: unknown): DiaryDashboardTeam {
+  const row = assertRecord(value, "diary dashboard team");
+  return {
+    name: readString(row, "name"),
+    activeSeconds: readOptionalNumber(row, "activeSeconds"),
+    share: readOptionalNumber(row, "share"),
+    workTypes: readOptionalStringArray(row, "workTypes"),
+    role: readOptionalString(row, "role") ?? "",
+    evidence: readOptionalStringArray(row, "evidence"),
+  };
+}
+
+function toDiaryDashboardTimeBlock(value: unknown): DiaryDashboardTimeBlock {
+  const row = assertRecord(value, "diary dashboard time block");
+  return {
+    label: readString(row, "label"),
+    startAt: readOptionalString(row, "startAt"),
+    endAt: readOptionalString(row, "endAt"),
+    activeSeconds: readOptionalNumber(row, "activeSeconds") ?? 0,
+    primaryTeam: readOptionalString(row, "primaryTeam"),
+    primaryWorkType: readOptionalString(row, "primaryWorkType"),
+    role: readOptionalString(row, "role"),
+    summary: readOptionalString(row, "summary") ?? "",
+  };
+}
+
+function emptyRoleHeterogeneity(): DiaryRoleHeterogeneity {
+  return {
+    level: "unknown",
+    score: 0,
+    summary: "",
+    distinctRoleCount: 0,
+  };
+}
+
 function toCategoryCount(value: unknown): ActivityCategoryCount {
   const row = assertRecord(value, "category count");
   return {
@@ -257,6 +352,17 @@ function readOptionalNumber(record: Record<string, unknown>, key: string): numbe
 function readNumberArray(record: Record<string, unknown>, key: string): number[] {
   const value = record[key];
   if (!Array.isArray(value) || value.some((item) => typeof item !== "number")) {
+    throw new Error(`API row has invalid ${key}`);
+  }
+  return value;
+}
+
+function readOptionalStringArray(record: Record<string, unknown>, key: string): string[] {
+  const value = record[key];
+  if (value === null || value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
     throw new Error(`API row has invalid ${key}`);
   }
   return value;

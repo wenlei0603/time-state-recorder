@@ -1,5 +1,6 @@
 import { BarChart3, Clock3, FileText, Flame, Layers } from "lucide-react";
 import type { ReactNode } from "react";
+import { StructuredDiaryDashboard } from "./StructuredDiaryDashboard";
 import { StructuredDailyNarrative } from "./StructuredDailyNarrative";
 import { StructuredReportCard } from "./StructuredReportCard";
 import { presentInsightReport } from "./lib/reportPresentation";
@@ -63,6 +64,16 @@ export function DailyBriefPanel({
           </div>
 
           <HourlyHeatmap metrics={response?.hourlyMetrics ?? []} />
+
+          {response?.diaryDashboard ? (
+            <div className="dailyBriefSection">
+              <h3>Diary Dashboard</h3>
+              <StructuredDiaryDashboard
+                dashboard={response.diaryDashboard}
+                canShowText={canShowText}
+              />
+            </div>
+          ) : null}
 
           <div className="dailyBriefSection">
             <h3>Past Comparison</h3>

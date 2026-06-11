@@ -2,6 +2,7 @@ pub mod activity;
 pub mod api;
 pub mod blocker;
 pub mod config;
+pub mod diary_dashboard;
 pub mod image_retention;
 pub mod input;
 pub mod insights;
