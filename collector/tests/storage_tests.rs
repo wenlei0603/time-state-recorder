@@ -5,8 +5,9 @@ use tsr_collector::{
     models::{
         ActivityCategory, ActivityCategoryCount, CaptureStatus, DailyActivityStats,
         DailyAppActivity, DailyBrief, DailyComparison, HighResScreenshotMeta, HourlyActivityMetric,
-        InsightReport, LifecycleType, ScreenshotMeta, VisualObservation, VisualSummary,
-        VisualTrajectoryPoint, VisualWindowSummary, WindowSnapshot,
+        InputEvent, InputEventType, InsightReport, LifecycleType, ScreenshotMeta, TextSegment,
+        VisualObservation, VisualSummary, VisualTrajectoryPoint, VisualWindowSummary,
+        WindowSnapshot,
     },
     storage::Store,
 };
@@ -717,6 +718,18 @@ fn daily_activity_stats_do_not_extend_closed_sessions_into_selected_day() {
     store
         .close_session(&current_session, ts("2026-06-04T01:00:00Z"), "service_stop")
         .unwrap();
+    insert_input_burst(
+        &mut store,
+        "current-code-input",
+        "Code.exe",
+        &[("2026-06-04T00:00:00Z", InputEventType::KeyDown)],
+    );
+    insert_input_burst(
+        &mut store,
+        "current-browser-input",
+        "Browser.exe",
+        &[("2026-06-04T00:30:00Z", InputEventType::KeyDown)],
+    );
 
     let stats = store
         .build_daily_activity_stats(
@@ -727,7 +740,7 @@ fn daily_activity_stats_do_not_extend_closed_sessions_into_selected_day() {
         )
         .unwrap();
 
-    assert_eq!(stats.active_seconds, 3600);
+    assert_eq!(stats.active_seconds, 600);
     assert_eq!(stats.distinct_app_count, 2);
     assert!(
         !stats
@@ -768,6 +781,64 @@ fn daily_activity_stats_do_not_extend_open_sessions_into_future_hours() {
 
     assert_eq!(stats.active_seconds, 0);
     assert_eq!(stats.active_hours, 0.0);
+}
+
+#[test]
+fn daily_activity_stats_use_input_activity_instead_of_window_focus_span() {
+    let mut store = Store::open_memory().unwrap();
+    store.init().unwrap();
+    let session_id = store.create_session("0.1.0", "input-active").unwrap();
+    store
+        .insert_window_focus(
+            &session_id,
+            &WindowSnapshot {
+                captured_at: ts("2026-06-04T00:00:00Z"),
+                hwnd: 40,
+                pid: 40,
+                process_name: "Code.exe".into(),
+                exe_path_hash: None,
+                window_title: Some("input work".into()),
+                capture_status: CaptureStatus::Ok,
+            },
+        )
+        .unwrap();
+    store
+        .close_session(&session_id, ts("2026-06-04T01:00:00Z"), "service_stop")
+        .unwrap();
+    insert_input_burst(
+        &mut store,
+        "input-active-burst",
+        "Code.exe",
+        &[
+            ("2026-06-04T00:05:00Z", InputEventType::KeyDown),
+            ("2026-06-04T00:05:10Z", InputEventType::KeyUp),
+        ],
+    );
+
+    let stats = store
+        .build_daily_activity_stats(
+            "2026-06-04",
+            ts("2026-06-04T00:00:00Z"),
+            ts("2026-06-05T00:00:00Z"),
+            &[],
+        )
+        .unwrap();
+    let hourly = store
+        .build_hourly_activity_metrics(
+            ts("2026-06-04T00:00:00Z"),
+            ts("2026-06-05T00:00:00Z"),
+            &[],
+        )
+        .unwrap();
+
+    assert_eq!(stats.active_seconds, 310);
+    assert_eq!(stats.active_hours, 310.0 / 3600.0);
+    assert_eq!(stats.first_activity_at, Some(ts("2026-06-04T00:05:00Z")));
+    assert_eq!(stats.last_activity_at, Some(ts("2026-06-04T00:05:10Z")));
+    assert_eq!(stats.top_apps[0].process_name, "Code.exe");
+    assert_eq!(stats.top_apps[0].active_seconds, 310);
+    assert_eq!(hourly[0].active_seconds, 310);
+    assert_eq!(hourly[1].active_seconds, 0);
 }
 
 #[test]
@@ -1116,6 +1187,49 @@ fn sample_daily_stats() -> DailyActivityStats {
         first_activity_at: Some(ts("2026-06-03T09:00:00Z")),
         last_activity_at: Some(ts("2026-06-03T18:00:00Z")),
     }
+}
+
+fn insert_input_burst(
+    store: &mut Store,
+    segment_id: &str,
+    process_name: &str,
+    events: &[(&str, InputEventType)],
+) {
+    let first = ts(events.first().unwrap().0);
+    let last = ts(events.last().unwrap().0);
+    let segment = TextSegment {
+        id: segment_id.into(),
+        started_at: first,
+        ended_at: Some(last),
+        text_content: String::new(),
+        key_count: events
+            .iter()
+            .filter(|(_, event_type)| *event_type == InputEventType::KeyDown)
+            .count(),
+        backspace_count: 0,
+        delete_count: 0,
+        foreground_hwnd: 1,
+        foreground_pid: 1,
+        process_name: Some(process_name.into()),
+        window_title: Some("input activity".into()),
+    };
+    let input_events = events
+        .iter()
+        .map(|(event_ts, event_type)| InputEvent {
+            id: 0,
+            event_ts: ts(event_ts),
+            event_type: event_type.clone(),
+            vk_code: 65,
+            scan_code: 30,
+            character: None,
+            segment_id: segment_id.into(),
+            foreground_hwnd: 1,
+            foreground_pid: 1,
+            process_name: Some(process_name.into()),
+            window_title: Some("input activity".into()),
+        })
+        .collect::<Vec<_>>();
+    store.insert_input_segment(&segment, &input_events).unwrap();
 }
 
 fn sample_hourly_metric(

@@ -22,16 +22,17 @@ use crate::{
     activity::{ActivityBucketQuery, build_activity_buckets},
     blocker::BlockerEngine,
     config::{AppConfig, AppConfigPatch},
+    diary_dashboard::build_diary_dashboard,
     image_retention::{ImageRetentionPolicy, cleanup_expired_images},
     input,
     insights::{ConfiguredDailyBriefReporter, ConfiguredInsightReporter, LocalDailyBriefReporter},
     interval::build_time_events_with_lifecycle,
     models::{
         ActivityBucket, ActivityCategoryCount, BlockerHit, CollectorHealth, DailyActivityStats,
-        DailyAppActivity, DailyBrief, DailyComparison, DbStats, HighResScreenshotMeta,
-        HourlyActivityMetric, InsightReport, LifecycleEvent, LifecycleType, ScreenshotMeta,
-        SubsystemHealth, TimeEvent, VisualObservation, VisualSummary, VisualWindowSummary,
-        WindowSnapshot,
+        DailyAppActivity, DailyBrief, DailyComparison, DbStats, DiaryDashboard,
+        HighResScreenshotMeta, HourlyActivityMetric, InsightReport, LifecycleEvent, LifecycleType,
+        ScreenshotMeta, SubsystemHealth, TimeEvent, VisualObservation, VisualSummary,
+        VisualWindowSummary, WindowSnapshot,
     },
     prompt_time::{human_report_range, human_report_timestamp, owner_local_offset},
     screenshot,
@@ -156,6 +157,7 @@ struct DailyBriefResponse {
     descriptive_stats: DailyActivityStats,
     hourly_metrics: Vec<HourlyActivityMetric>,
     comparison: DailyComparison,
+    diary_dashboard: DiaryDashboard,
 }
 
 #[derive(Debug, Serialize)]
@@ -2246,6 +2248,8 @@ fn build_daily_brief_response(
     } else {
         store.build_daily_comparison(&date_window.date, &stats)?
     };
+    let diary_dashboard =
+        build_diary_dashboard(brief.as_ref(), &stats, &hourly_metrics, &five_hour_reports);
     let status = brief
         .as_ref()
         .map(|brief| brief.status.clone())
@@ -2260,6 +2264,7 @@ fn build_daily_brief_response(
         descriptive_stats: stats,
         hourly_metrics,
         comparison,
+        diary_dashboard,
     })
 }
 

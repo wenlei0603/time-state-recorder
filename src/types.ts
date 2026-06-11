@@ -326,6 +326,65 @@ export type DailyBrief = {
   error?: string;
 };
 
+export type DiaryDashboardEntity = {
+  label: string;
+  description: string;
+  activeSeconds?: number;
+  share?: number;
+  evidence: string[];
+  confidence?: number;
+};
+
+export type DiaryDashboardRole = {
+  label: string;
+  description: string;
+  activeSeconds?: number;
+  share?: number;
+  teams: string[];
+  evidence: string[];
+};
+
+export type DiaryRoleHeterogeneity = {
+  level: string;
+  score: number;
+  summary: string;
+  distinctRoleCount: number;
+};
+
+export type DiaryDashboardTeam = {
+  name: string;
+  activeSeconds?: number;
+  share?: number;
+  workTypes: string[];
+  role: string;
+  evidence: string[];
+};
+
+export type DiaryDashboardTimeBlock = {
+  label: string;
+  startAt?: string;
+  endAt?: string;
+  activeSeconds: number;
+  primaryTeam?: string;
+  primaryWorkType?: string;
+  role?: string;
+  summary: string;
+};
+
+export type DiaryDashboard = {
+  overview: string;
+  collaborators: DiaryDashboardEntity[];
+  locations: DiaryDashboardEntity[];
+  workTypes: DiaryDashboardEntity[];
+  roles: DiaryDashboardRole[];
+  roleHeterogeneity: DiaryRoleHeterogeneity;
+  teamCount: number;
+  teams: DiaryDashboardTeam[];
+  timeDistribution: DiaryDashboardTimeBlock[];
+  evidenceSummary: string;
+  uncertainty: string;
+};
+
 export type DailyBriefResponse = {
   date: string;
   status: "missing" | "pending" | "running" | "complete" | "error" | string;
@@ -336,6 +395,7 @@ export type DailyBriefResponse = {
   descriptiveStats: DailyActivityStats;
   hourlyMetrics: HourlyActivityMetric[];
   comparison: DailyComparison;
+  diaryDashboard?: DiaryDashboard;
 };
 
 export type AnalysisWorkerStatus = {

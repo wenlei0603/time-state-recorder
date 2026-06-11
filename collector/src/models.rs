@@ -508,6 +508,106 @@ pub struct DailyBrief {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DiaryDashboard {
+    #[serde(default)]
+    pub overview: String,
+    #[serde(default)]
+    pub collaborators: Vec<DiaryDashboardEntity>,
+    #[serde(default)]
+    pub locations: Vec<DiaryDashboardEntity>,
+    #[serde(default)]
+    pub work_types: Vec<DiaryDashboardEntity>,
+    #[serde(default)]
+    pub roles: Vec<DiaryDashboardRole>,
+    #[serde(default)]
+    pub role_heterogeneity: DiaryRoleHeterogeneity,
+    #[serde(default)]
+    pub team_count: usize,
+    #[serde(default)]
+    pub teams: Vec<DiaryDashboardTeam>,
+    #[serde(default)]
+    pub time_distribution: Vec<DiaryDashboardTimeBlock>,
+    #[serde(default)]
+    pub evidence_summary: String,
+    #[serde(default)]
+    pub uncertainty: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DiaryDashboardEntity {
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+    pub active_seconds: Option<i64>,
+    pub share: Option<f64>,
+    #[serde(default)]
+    pub evidence: Vec<String>,
+    pub confidence: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DiaryDashboardRole {
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+    pub active_seconds: Option<i64>,
+    pub share: Option<f64>,
+    #[serde(default)]
+    pub teams: Vec<String>,
+    #[serde(default)]
+    pub evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DiaryRoleHeterogeneity {
+    #[serde(default)]
+    pub level: String,
+    #[serde(default)]
+    pub score: f64,
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub distinct_role_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DiaryDashboardTeam {
+    #[serde(default)]
+    pub name: String,
+    pub active_seconds: Option<i64>,
+    pub share: Option<f64>,
+    #[serde(default)]
+    pub work_types: Vec<String>,
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DiaryDashboardTimeBlock {
+    #[serde(default)]
+    pub label: String,
+    pub start_at: Option<String>,
+    pub end_at: Option<String>,
+    #[serde(default)]
+    pub active_seconds: i64,
+    pub primary_team: Option<String>,
+    pub primary_work_type: Option<String>,
+    pub role: Option<String>,
+    #[serde(default)]
+    pub summary: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScreenshotSummary {
