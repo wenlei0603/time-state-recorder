@@ -14,9 +14,10 @@
     "collector:release": "cargo run -p tsr-collector --release -- serve --config data/app-config.json --addr 127.0.0.1:4317"
   },
   "dependencies": {
+    "echarts": "^6.1.0",
+    "lucide-react": "^0.561.0",
     "react": "^19.2.3",
-    "react-dom": "^19.2.3",
-    "lucide-react": "^0.561.0"
+    "react-dom": "^19.2.3"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",

@@ -9,12 +9,12 @@ import {
   Settings,
   Search
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityReview } from "./ActivityReview";
 import { CollectorMonitor } from "./CollectorMonitor";
 import { DailyBriefPanel } from "./DailyBriefPanel";
 import { DailyTracking } from "./DailyTracking";
-import { Dashboard } from "./Dashboard";
+import { DataScreen } from "./DataScreen";
 import { InputActivity } from "./InputActivity";
 import { InsightFeedback } from "./InsightFeedback";
 import { SettingsPanel } from "./SettingsPanel";
@@ -39,7 +39,6 @@ import {
 } from "./lib/screenshots";
 import {
   defaultLayerVisibility,
-  toVisibleDashboardEvents,
   type DensityMode,
   type LayerKey,
   type LayerVisibility,
@@ -131,21 +130,12 @@ export function App() {
   const collectorRequestGeneration = useRef(0);
   latestRefreshContext.current = { privacyMode, layers, viewMode, date: queryDate };
 
-  const visibleDashboardEvents = useMemo(
-    () => toVisibleDashboardEvents(events, layers),
-    [events, layers]
-  );
-  const visibleDashboardSegments = useMemo(
-    () => (layers.input ? segments : []),
-    [layers.input, segments]
-  );
-
   useEffect(() => {
     void refreshCollector();
   }, []);
 
   useEffect(() => {
-    if (sourceMode !== "live") {
+    if (sourceMode !== "live" || viewMode === "dashboard") {
       return;
     }
     const intervalId = window.setInterval(() => {
@@ -155,7 +145,7 @@ export function App() {
       );
     }, 15_000);
     return () => window.clearInterval(intervalId);
-  }, [sourceMode]);
+  }, [sourceMode, viewMode]);
 
   function loadSample() {
     collectorRequestGeneration.current += 1;
@@ -732,14 +722,7 @@ export function App() {
         />
       ) : (
         <>
-          <Dashboard
-            events={visibleDashboardEvents}
-            segments={visibleDashboardSegments}
-            layers={layers}
-            densityMode={densityMode}
-            privacyMode={privacyMode}
-            inputSourceMode={inputStatus}
-          />
+          <DataScreen anchorDate={queryDate} />
           <section className="workspace dashboardMonitor">
             <CollectorMonitor />
           </section>
