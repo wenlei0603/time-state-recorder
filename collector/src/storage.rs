@@ -48,9 +48,12 @@ pub struct StoredScreenshotFile {
 struct ActivitySlice {
     start: DateTime<Utc>,
     end: DateTime<Utc>,
+    signal_at: DateTime<Utc>,
     seconds: i64,
     app: String,
 }
+
+const INPUT_ACTIVITY_GRACE_SECONDS: i64 = 300;
 
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -1538,7 +1541,7 @@ impl Store {
         five_hour_reports: &[InsightReport],
     ) -> Result<DailyActivityStats> {
         let activity_end = end.min(Utc::now());
-        let slices = self.window_activity_slices(start, activity_end)?;
+        let slices = self.input_activity_slices(start, activity_end)?;
         let mut app_seconds: HashMap<String, i64> = HashMap::new();
         let mut distinct_apps = HashSet::new();
         let mut first_activity_at: Option<DateTime<Utc>> = None;
@@ -1550,9 +1553,9 @@ impl Store {
             distinct_apps.insert(slice.app.clone());
             *app_seconds.entry(slice.app.clone()).or_default() += slice.seconds;
             first_activity_at =
-                Some(first_activity_at.map_or(slice.start, |value| value.min(slice.start)));
+                Some(first_activity_at.map_or(slice.signal_at, |value| value.min(slice.signal_at)));
             last_activity_at =
-                Some(last_activity_at.map_or(slice.end, |value| value.max(slice.end)));
+                Some(last_activity_at.map_or(slice.signal_at, |value| value.max(slice.signal_at)));
         }
 
         let mut top_apps = app_seconds
@@ -1616,7 +1619,7 @@ impl Store {
         five_hour_reports: &[InsightReport],
     ) -> Result<Vec<HourlyActivityMetric>> {
         let activity_end = end.min(Utc::now());
-        let slices = self.window_activity_slices(start, activity_end)?;
+        let slices = self.input_activity_slices(start, activity_end)?;
         let mut metrics = Vec::with_capacity(24);
         for hour in 0..24 {
             let hour_start = start + chrono::Duration::hours(hour);
@@ -1712,89 +1715,54 @@ impl Store {
         })
     }
 
-    fn window_activity_slices(
+    fn input_activity_slices(
         &self,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> Result<Vec<ActivitySlice>> {
+        let query_start = start - chrono::Duration::seconds(INPUT_ACTIVITY_GRACE_SECONDS);
         let mut statement = self.conn.prepare(
             r#"
-            SELECT
-              r.id AS raw_event_id,
-              r.session_id,
-              r.event_ts,
-              w.hwnd,
-              w.pid,
-              w.process_name,
-              w.exe_path_hash,
-              w.window_title,
-              w.capture_status,
-              c.ended_at
-            FROM raw_events r
-            JOIN window_events w ON w.raw_event_id = r.id
-            JOIN capture_sessions c ON c.id = r.session_id
-            WHERE r.event_type = 'window_focus'
-              AND r.event_ts < ?1
-            ORDER BY r.session_id ASC, r.event_ts ASC, r.id ASC
+            SELECT event_ts, process_name
+            FROM input_events
+            WHERE event_ts >= ?1
+              AND event_ts < ?2
+            ORDER BY event_ts ASC, id ASC
             "#,
         )?;
-        let rows = statement.query_map(params![end.to_rfc3339()], |row| {
-            let event_ts: String = row.get(2)?;
-            let capture_status: String = row.get(8)?;
-            let session_ended_at: Option<String> = row.get(9)?;
-            Ok((
-                StoredWindowEvent {
-                    raw_event_id: row.get(0)?,
-                    session_id: row.get(1)?,
-                    event_ts: parse_ts(&event_ts)?,
-                    hwnd: row.get(3)?,
-                    pid: row.get(4)?,
-                    process_name: row.get(5)?,
-                    exe_path_hash: row.get(6)?,
-                    window_title: row.get(7)?,
-                    capture_status: CaptureStatus::from_db(&capture_status),
-                },
-                session_ended_at.as_deref().map(parse_ts).transpose()?,
-            ))
-        })?;
+        let rows =
+            statement.query_map(params![query_start.to_rfc3339(), end.to_rfc3339()], |row| {
+                let event_ts: String = row.get(0)?;
+                let process_name: Option<String> = row.get(1)?;
+                Ok((
+                    parse_ts(&event_ts)?,
+                    process_name
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or_else(|| "Unknown".into()),
+                ))
+            })?;
         let mut events = Vec::new();
         for row in rows {
             events.push(row?);
         }
 
         let mut slices = Vec::new();
-        for (index, (event, session_ended_at)) in events.iter().enumerate() {
-            if event.capture_status != CaptureStatus::Ok {
-                continue;
-            }
-            let next_at = events
-                .iter()
-                .skip(index + 1)
-                .map(|(candidate, _)| candidate)
-                .find(|candidate| candidate.session_id == event.session_id)
-                .map(|candidate| candidate.event_ts);
-            let inferred_end = match (next_at, *session_ended_at) {
-                (Some(next_at), Some(ended_at)) => next_at.min(ended_at),
-                (Some(next_at), None) => next_at,
-                (None, Some(ended_at)) => ended_at,
-                (None, None) => end,
-            };
-            let slice_start = event.event_ts.max(start);
+        for (index, (event_ts, app)) in events.iter().enumerate() {
+            let grace_end = *event_ts + chrono::Duration::seconds(INPUT_ACTIVITY_GRACE_SECONDS);
+            let next_at = events.get(index + 1).map(|(next_ts, _)| *next_ts);
+            let inferred_end = next_at.map_or(grace_end, |next_at| next_at.min(grace_end));
+            let slice_start = (*event_ts).max(start);
             let slice_end = inferred_end.min(end);
             if slice_end > slice_start {
                 slices.push(ActivitySlice {
                     start: slice_start,
                     end: slice_end,
+                    signal_at: (*event_ts).max(start),
                     seconds: (slice_end - slice_start).num_seconds().max(0),
-                    app: event.process_name.clone(),
+                    app: app.clone(),
                 });
             }
         }
-        slices.sort_by(|left, right| {
-            left.start
-                .cmp(&right.start)
-                .then_with(|| left.app.cmp(&right.app))
-        });
         Ok(slices)
     }
 
