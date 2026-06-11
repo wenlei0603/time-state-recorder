@@ -327,9 +327,10 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: /dashboard/i }));
 
     expect(
-      screen.getByRole("heading", { name: /dashboard/i })
+      screen.getByRole("heading", { name: /data screen dashboard/i })
     ).toBeInTheDocument();
-    expect(screen.getByText(/active time/i)).toBeInTheDocument();
+    expect(screen.getByText("No dashboard snapshot loaded.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /update screen/i })).toBeInTheDocument();
   });
 
   it("opens the activity review view from the tab bar", () => {
@@ -403,7 +404,7 @@ describe("App", () => {
     );
 
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /dashboard/i }));
+    fireEvent.click(screen.getByRole("button", { name: /timeline/i }));
 
     expect(await screen.findAllByText("Arc")).not.toHaveLength(0);
     expect(screen.queryByText("Planner")).not.toBeInTheDocument();
@@ -417,7 +418,7 @@ describe("App", () => {
 
     expect(await screen.findAllByText("Hidden in redacted mode")).not.toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: /dashboard/i }));
-    expect(screen.getAllByText("Code")).not.toHaveLength(0);
+    expect(screen.getByText("No dashboard snapshot loaded.")).toBeInTheDocument();
     expect(screen.queryByText("Sensitive client roadmap")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /timeline/i }));

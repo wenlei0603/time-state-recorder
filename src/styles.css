@@ -832,6 +832,27 @@ td:nth-child(2) {
     display: grid;
   }
 
+  .dataScreenHeader {
+    grid-template-columns: 1fr;
+  }
+
+  .dataScreenControls {
+    justify-content: flex-start;
+  }
+
+  .dataScreenKpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dataScreenChartGrid,
+  .dataScreenSignals {
+    grid-template-columns: 1fr;
+  }
+
+  .chartCanvas {
+    height: 240px;
+  }
+
   .statsGrid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -917,6 +938,196 @@ td:nth-child(2) {
 .dashboardMonitor {
   grid-template-columns: minmax(0, 1fr);
   margin-top: 16px;
+}
+
+.dataScreen {
+  display: grid;
+  gap: 18px;
+}
+
+.dataScreenHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+}
+
+.dataScreenHeader h2 {
+  margin: 0;
+  font-size: 1.35rem;
+}
+
+.dataScreenHeader p {
+  margin: 4px 0 0;
+  color: #5f6d65;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.dataScreenControls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.dataScreenKpis {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.dataScreenKpi {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid #d9dfd8;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.dataScreenKpi span,
+.dataScreenKpi small {
+  overflow: hidden;
+  color: #5f6d65;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.dataScreenKpi strong {
+  color: #1e2925;
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.dataScreenKpi small {
+  text-transform: none;
+}
+
+.dataScreenChartGrid,
+.dataScreenSignals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.chartPanel,
+.signalList,
+.trajectoryPanel,
+.textSignalPanel {
+  min-width: 0;
+  border: 1px solid #d9dfd8;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.chartCanvas {
+  width: 100%;
+  height: 280px;
+}
+
+.emptyDashboardSnapshot {
+  display: grid;
+  min-height: 280px;
+  place-items: center;
+  border: 1px dashed #b8c4bc;
+  border-radius: 8px;
+  background: #f7faf8;
+  color: #5f6d65;
+  text-align: center;
+}
+
+.rankRows {
+  display: grid;
+  gap: 10px;
+}
+
+.rankRow {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(70px, 1.4fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  font-size: 0.84rem;
+}
+
+.rankRow > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rankRow strong {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.82rem;
+}
+
+.rankTrack {
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: #e6ece8;
+}
+
+.rankTrack span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #356b63;
+}
+
+.trajectoryPanel,
+.textSignalPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.trajectoryLane {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.trajectoryNode {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #dfe5df;
+  border-left: 4px solid #356b63;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.trajectoryNode time {
+  color: #5f6d65;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.trajectoryNode strong,
+.trajectoryNode span,
+.trajectoryNode small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trajectoryNode span,
+.trajectoryNode small {
+  color: #5f6d65;
+  font-size: 0.82rem;
+}
+
+.signalBullets {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+  color: #394640;
 }
 
 .panelHeader h3 {
@@ -2803,6 +3014,23 @@ td:nth-child(2) {
 
   .statsGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dataScreenKpis {
+    grid-template-columns: 1fr;
+  }
+
+  .rankRow {
+    grid-template-columns: minmax(0, 1fr) 72px;
+  }
+
+  .rankTrack {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+
+  .trajectoryLane {
+    grid-template-columns: 1fr;
   }
 
   .tabBar {
