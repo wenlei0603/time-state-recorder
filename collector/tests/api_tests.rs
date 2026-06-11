@@ -1175,6 +1175,25 @@ async fn serves_daily_brief_response_with_stats_and_same_day_reports() {
     assert_eq!(body["hourlyReports"][0]["summaryText"], "09点小时报告。");
     assert_eq!(body["fiveHourReports"].as_array().unwrap().len(), 2);
     assert_eq!(body["fiveHourReports"][0]["summaryText"], "上午报告。");
+    assert_eq!(
+        body["diaryDashboard"]["overview"],
+        "当天围绕两个团队推进后端报告和论文阅读。"
+    );
+    assert_eq!(body["diaryDashboard"]["teamCount"], 2);
+    assert_eq!(
+        body["diaryDashboard"]["collaborators"][0]["label"],
+        "课程助教"
+    );
+    assert_eq!(body["diaryDashboard"]["locations"][0]["label"], "VS Code");
+    assert_eq!(body["diaryDashboard"]["workTypes"][0]["label"], "coding");
+    assert_eq!(
+        body["diaryDashboard"]["roleHeterogeneity"]["level"],
+        "medium"
+    );
+    assert_eq!(
+        body["diaryDashboard"]["teams"][0]["name"],
+        "Time State Recorder"
+    );
 
     server.abort();
 }
@@ -1506,7 +1525,81 @@ fn sample_daily_brief(date: &str) -> DailyBrief {
         action_trajectory: "上午出现编码窗口，下午出现阅读窗口。".into(),
         raw_summary_json: serde_json::json!({
             "dailySummaryText": "当天以编码和阅读窗口为主。",
-            "actionTrajectory": "上午出现编码窗口，下午出现阅读窗口。"
+            "actionTrajectory": "上午出现编码窗口，下午出现阅读窗口。",
+            "diaryDashboard": {
+                "overview": "当天围绕两个团队推进后端报告和论文阅读。",
+                "collaborators": [
+                    {
+                        "label": "课程助教",
+                        "description": "从邮件和课程窗口推断存在教学协作。",
+                        "activeSeconds": null,
+                        "share": null,
+                        "evidence": ["课程邮件"],
+                        "confidence": 0.62
+                    }
+                ],
+                "locations": [
+                    {
+                        "label": "VS Code",
+                        "description": "主要数字工作场所。",
+                        "activeSeconds": 2400,
+                        "share": 0.67,
+                        "evidence": ["Code.exe"],
+                        "confidence": 0.8
+                    }
+                ],
+                "workTypes": [
+                    {
+                        "label": "coding",
+                        "description": "后端报告与 API 调试。",
+                        "activeSeconds": 2400,
+                        "share": 0.67,
+                        "evidence": ["上午报告"],
+                        "confidence": 0.8
+                    }
+                ],
+                "roles": [
+                    {
+                        "label": "backend implementer",
+                        "description": "实现和验证后端功能。",
+                        "activeSeconds": 2400,
+                        "share": 0.67,
+                        "teams": ["Time State Recorder"],
+                        "evidence": ["API 测试"]
+                    }
+                ],
+                "roleHeterogeneity": {
+                    "level": "medium",
+                    "score": 0.5,
+                    "summary": "编码和研究阅读并行。",
+                    "distinctRoleCount": 2
+                },
+                "teamCount": 2,
+                "teams": [
+                    {
+                        "name": "Time State Recorder",
+                        "activeSeconds": 2400,
+                        "share": 0.67,
+                        "workTypes": ["coding"],
+                        "role": "backend implementer",
+                        "evidence": ["上午报告"]
+                    }
+                ],
+                "timeDistribution": [
+                    {
+                        "label": "morning",
+                        "startAt": "2026-05-24T05:00:00Z",
+                        "endAt": "2026-05-24T10:00:00Z",
+                        "activeSeconds": 2400,
+                        "primaryTeam": "Time State Recorder",
+                        "primaryWorkType": "coding",
+                        "role": "backend implementer",
+                        "summary": "上午集中在后端报告。"
+                    }
+                ],
+                "evidenceSummary": "基于 daily brief、hourly metrics 和 5h reports。",
+                "uncertainty": "无法从窗口数据可靠识别全部真实人员。"
+            }
         }),
         error: None,
     }

@@ -228,8 +228,86 @@ function dailyBriefResponse() {
     ],
     descriptiveStats: dailyStats(),
     hourlyMetrics: [hourlyMetric()],
-    comparison: dailyComparison()
+    comparison: dailyComparison(),
+    diaryDashboard: diaryDashboardResponse()
   });
+}
+
+function diaryDashboardResponse() {
+  return {
+    overview: "当天围绕两个团队推进后端报告和论文阅读。",
+    collaborators: [
+      {
+        label: "课程助教",
+        description: "从邮件和课程窗口推断存在教学协作。",
+        activeSeconds: null,
+        share: null,
+        evidence: ["课程邮件"],
+        confidence: 0.62
+      }
+    ],
+    locations: [
+      {
+        label: "VS Code",
+        description: "主要数字工作场所。",
+        activeSeconds: 2400,
+        share: 0.67,
+        evidence: ["Code.exe"],
+        confidence: 0.8
+      }
+    ],
+    workTypes: [
+      {
+        label: "coding",
+        description: "后端报告与 API 调试。",
+        activeSeconds: 2400,
+        share: 0.67,
+        evidence: ["上午报告"],
+        confidence: 0.8
+      }
+    ],
+    roles: [
+      {
+        label: "backend implementer",
+        description: "实现和验证后端功能。",
+        activeSeconds: 2400,
+        share: 0.67,
+        teams: ["Time State Recorder"],
+        evidence: ["API 测试"]
+      }
+    ],
+    roleHeterogeneity: {
+      level: "medium",
+      score: 0.5,
+      summary: "编码和研究阅读并行。",
+      distinctRoleCount: 2
+    },
+    teamCount: 2,
+    teams: [
+      {
+        name: "Time State Recorder",
+        activeSeconds: 2400,
+        share: 0.67,
+        workTypes: ["coding"],
+        role: "backend implementer",
+        evidence: ["上午报告"]
+      }
+    ],
+    timeDistribution: [
+      {
+        label: "morning",
+        startAt: "2026-06-07T02:00:00Z",
+        endAt: "2026-06-07T07:00:00Z",
+        activeSeconds: 2400,
+        primaryTeam: "Time State Recorder",
+        primaryWorkType: "coding",
+        role: "backend implementer",
+        summary: "上午集中在后端报告。"
+      }
+    ],
+    evidenceSummary: "基于 daily brief、hourly metrics 和 5h reports。",
+    uncertainty: "无法从窗口数据可靠识别全部真实人员。"
+  };
 }
 
 function dailyStats() {
@@ -606,9 +684,12 @@ describe("App", () => {
     expect(screen.getByText(/09:00/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /hourly reports/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /scheduled 5h reports/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /diary dashboard/i })).toBeInTheDocument();
+    expect(screen.getByText(/2 teams/i)).toBeInTheDocument();
     expect(screen.getByText("10:00 - 11:00")).toBeInTheDocument();
     expect(screen.getByText("10:00 - 15:00")).toBeInTheDocument();
     expect(screen.queryByText("当天以编码和阅读窗口为主。")).not.toBeInTheDocument();
+    expect(screen.queryByText("当天围绕两个团队推进后端报告和论文阅读。")).not.toBeInTheDocument();
     expect(screen.queryByText("09点小时报告。")).not.toBeInTheDocument();
     expect(screen.queryByText("上午报告。")).not.toBeInTheDocument();
 
@@ -621,6 +702,8 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: /^raw$/i }));
 
     expect((await screen.findAllByText(/当天以编码和阅读窗口为主/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/当天围绕两个团队推进后端报告和论文阅读/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/backend implementer/)).length).toBeGreaterThan(0);
     expect((await screen.findAllByText(/09点小时报告/)).length).toBeGreaterThan(0);
     expect((await screen.findAllByText(/上午报告/)).length).toBeGreaterThan(0);
     expect((await screen.findAllByText(/上午出现编码窗口/)).length).toBeGreaterThan(0);

@@ -3,9 +3,8 @@ use tsr_collector::{
     insights::{
         LocalDailyBriefReporter, MiniMaxDailyBriefReporter, MiniMaxInsightConfig,
         MiniMaxInsightReporter, build_five_hour_report,
-        build_hourly_report_from_window_summaries,
-        build_five_hour_report_from_window_summaries, observation_from_visual_summary,
-        select_insight_report_provider,
+        build_five_hour_report_from_window_summaries, build_hourly_report_from_window_summaries,
+        observation_from_visual_summary, select_insight_report_provider,
     },
     models::{
         ActivityCategory, ActivityCategoryCount, DailyActivityStats, DailyAppActivity,
@@ -157,6 +156,16 @@ fn minimax_daily_brief_request_defaults_to_two_hundred_thousand_completion_token
     assert_eq!(request["max_completion_tokens"], 200_000);
     let prompt = request["messages"][1]["content"].as_str().unwrap();
     assert!(prompt.contains("parallel projects"));
+    assert!(prompt.contains("diaryDashboard"));
+    assert!(prompt.contains("collaborators"));
+    assert!(prompt.contains("locations"));
+    assert!(prompt.contains("workTypes"));
+    assert!(prompt.contains("roles"));
+    assert!(prompt.contains("roleHeterogeneity"));
+    assert!(prompt.contains("teamCount"));
+    assert!(prompt.contains("teamDistribution"));
+    assert!(prompt.contains("duration distribution"));
+    assert!(prompt.contains("work overview"));
     assert!(prompt.contains("Asia/Shanghai UTC+8"));
     assert!(prompt.contains("localPeriodStart=2026-06-03T08:00:00+08:00"));
     assert!(prompt.contains("localPeriodEnd=2026-06-04T08:00:00+08:00"));
