@@ -686,7 +686,7 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: /hourly reports/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /scheduled 5h reports/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /diary dashboard/i })).toBeInTheDocument();
-    expect(screen.getByText(/2 teams/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 domains/i)).toBeInTheDocument();
     expect(screen.getByText("10:00 - 11:00")).toBeInTheDocument();
     expect(screen.getByText("10:00 - 15:00")).toBeInTheDocument();
     expect(screen.queryByText("当天以编码和阅读窗口为主。")).not.toBeInTheDocument();

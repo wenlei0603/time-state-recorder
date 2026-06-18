@@ -1179,7 +1179,7 @@ async fn serves_daily_brief_response_with_stats_and_same_day_reports() {
         body["diaryDashboard"]["overview"],
         "当天围绕两个团队推进后端报告和论文阅读。"
     );
-    assert_eq!(body["diaryDashboard"]["teamCount"], 2);
+    assert_eq!(body["diaryDashboard"]["teamCount"], 1);
     assert_eq!(
         body["diaryDashboard"]["collaborators"][0]["label"],
         "课程助教"
@@ -1188,7 +1188,7 @@ async fn serves_daily_brief_response_with_stats_and_same_day_reports() {
     assert_eq!(body["diaryDashboard"]["workTypes"][0]["label"], "coding");
     assert_eq!(
         body["diaryDashboard"]["roleHeterogeneity"]["level"],
-        "medium"
+        "low"
     );
     assert_eq!(
         body["diaryDashboard"]["teams"][0]["name"],

@@ -22,18 +22,18 @@ export function StructuredDiaryDashboard({
       <div className="diaryDashboardStats" aria-label="Diary dashboard metrics">
         <DashboardMetric
           icon={<Users size={16} />}
-          value={`${dashboard.teamCount} teams`}
-          label="team spread"
+          value={`${dashboard.teamCount} domains`}
+          label="work domains"
         />
         <DashboardMetric
           icon={<Shuffle size={16} />}
           value={dashboard.roleHeterogeneity.level || "unknown"}
-          label="role mix"
+          label="mode mix"
         />
         <DashboardMetric
           icon={<BriefcaseBusiness size={16} />}
           value={`${dashboard.workTypes.length} types`}
-          label="work types"
+          label="activity types"
         />
         <DashboardMetric
           icon={<Clock3 size={16} />}
@@ -47,21 +47,21 @@ export function StructuredDiaryDashboard({
           <p className="diaryDashboardOverview">{dashboard.overview}</p>
           <div className="diaryDashboardGrid">
             <DashboardList
-              title="Teams"
+              title="Work Domains"
               items={dashboard.teams}
               renderItem={(team) => (
                 <TeamRow key={team.name} team={team} />
               )}
             />
             <DashboardList
-              title="Roles"
+              title="Contribution Modes"
               items={dashboard.roles}
               renderItem={(role) => (
                 <RoleRow key={role.label} role={role} />
               )}
             />
             <DashboardList
-              title="Work Types"
+              title="Activity Types"
               items={dashboard.workTypes}
               renderItem={(item) => (
                 <EntityRow key={item.label} item={item} />
@@ -187,7 +187,11 @@ function TeamRow({ team }: { team: DiaryDashboardTeam }) {
       <div>
         <strong>{team.name}</strong>
         <p>
-          {[team.role, ...team.workTypes].filter(Boolean).join(" / ") || "Unclassified"}
+          {team.workTypes.length > 0
+            ? `Activities: ${team.workTypes.join(" / ")}`
+            : team.role
+              ? `Mode: ${team.role}`
+              : "Unclassified"}
         </p>
       </div>
       <span>{formatShareAndDuration(team.share, team.activeSeconds)}</span>
